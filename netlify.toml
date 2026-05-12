@@ -1,0 +1,19 @@
+[build]
+  command = "npm install"
+  functions = "netlify/functions"
+  publish = "."
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api"
+  status = 200
+
+[[redirects]]
+  from = "/booking"
+  to = "/booking.html"
+  status = 200
+
+[[redirects]]
+  from = "/book"
+  to = "/booking.html"
+  status = 200
