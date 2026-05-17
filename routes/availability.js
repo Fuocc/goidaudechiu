@@ -239,7 +239,14 @@ async function getAvailabilityForBranch({ branchId, date, guestCount, durationMi
   // 5) Generate slots
   const slots = [];
 
-  for (let h = OPEN_HOUR; h < CLOSE_HOUR; h++) {
+  // Determine open hour: 9:00 for Sat/Sun (0/6), 10:00 for other days
+  // Parse YYYY-MM-DD manually to be completely timezone-independent
+  const [year, month, day] = date.split('-').map(Number);
+  const d = new Date(year, month - 1, day);
+  const dayOfWeek = d.getDay(); // 0 is Sunday, 6 is Saturday
+  const openHour = (dayOfWeek === 0 || dayOfWeek === 6) ? 9 : OPEN_HOUR;
+
+  for (let h = openHour; h < CLOSE_HOUR; h++) {
     for (let m = 0; m < 60; m += SLOT_STEP_MINUTES) {
       const startMinutes = h * 60 + m;
       const endMinutes = startMinutes + duration;

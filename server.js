@@ -10,6 +10,9 @@ const PORT = process.env.PORT || 3000;
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
+  /^http:\/\/192\.168\.\d+\.\d+(:\d+)?$/, // Allow local 192.168.x.x Wi-Fi IPs
+  /^http:\/\/10\.\d+\.\d+\.\d+(:\d+)?$/,   // Allow local 10.x.x.x Wi-Fi IPs
+  /^http:\/\/172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+(:\d+)?$/, // Allow local 172.16.x.x-172.31.x.x Wi-Fi IPs
   /\.netlify\.app$/,
   'https://spa-booking-system-v2.netlify.app/'
 ];
@@ -76,10 +79,49 @@ app.use('/api/*', (req, res) => {
 });
 
 if (require.main === module) {
-  app.listen(PORT, () => {
-    console.log(`✅ YOi Landing Page + Booking API running on http://localhost:${PORT}`);
-    console.log(`🏠 Landing Page: http://localhost:${PORT}`);
+  const os = require('os');
+  
+  // Helper to discover all active local IPv4 addresses
+  function getLocalIps() {
+    const interfaces = os.networkInterfaces();
+    const results = [];
+    
+    for (const name of Object.keys(interfaces)) {
+      const lowerName = name.toLowerCase();
+      // Skip loopback and VM adapters if possible, but keep list of all just in case
+      if (lowerName.includes('loopback')) {
+        continue;
+      }
+      
+      for (const net of interfaces[name]) {
+        if (net.family === 'IPv4' && !net.internal) {
+          results.push({ name, address: net.address });
+        }
+      }
+    }
+    return results;
+  }
+
+  const localIps = getLocalIps();
+
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`\n======================================================`);
+    console.log(`✅ YOi Landing Page + Booking API running on port ${PORT}`);
+    console.log(`🏠 Host Machine: http://localhost:${PORT}`);
     console.log(`📅 Booking Page: http://localhost:${PORT}/booking`);
+    console.log(`------------------------------------------------------`);
+    console.log(`📱 Access from Mobile/Tablet on the SAME Wi-Fi network:`);
+    
+    if (localIps.length === 0) {
+      console.log(`   (Không tìm thấy mạng WiFi, hãy kiểm tra kết nối)`);
+    } else {
+      localIps.forEach(ip => {
+        console.log(`   👉 Mạng [${ip.name}]:`);
+        console.log(`      🏠 Landing Page: http://${ip.address}:${PORT}`);
+        console.log(`      📅 Booking Page: http://${ip.address}:${PORT}/booking`);
+      });
+    }
+    console.log(`======================================================\n`);
   });
 }
 

@@ -3,16 +3,27 @@
 
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="description" content="Đặt lịch spa YOi - Trải nghiệm thư giãn tuyệt vời.">
   <title>Đặt Lịch | YOi Spa</title>
   <link rel="icon" type="image/png" href="./public/favicon-256x256.png" />
+  <!-- DNS prefetch for API calls -->
+  <link rel="dns-prefetch" href="https://fonts.googleapis.com">
+  <link rel="dns-prefetch" href="https://fonts.gstatic.com">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <!-- Preload critical font files -->
+  <link rel="preload" href="./fonts/Lato-Regular.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="./fonts/Lato-Bold.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="./fonts/DanhDa-Bold.woff2" as="font" type="font/woff2" crossorigin>
   <link
     href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&family=Lato:wght@300;400;700&display=swap"
     rel="stylesheet">
   <link rel="stylesheet" href="/style.css">
+  <!-- Swiper CSS for premium mobile sliding -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.css" />
+  <!-- Prefetch app.js for faster execution -->
+  <link rel="modulepreload" href="/app.js">
 </head>
 
 <body>
@@ -27,6 +38,13 @@
             </svg>
           </button>
           <span class="wizard-title" id="wizard-title">Chọn dịch vụ</span>
+          <!-- Mobile header guest selector (Figma: shown on services step) -->
+          <select class="header-guests-select" id="header-guests-select">
+            <option value="1">1 người</option>
+            <option value="2">2 người</option>
+            <option value="3">3 người</option>
+            <option value="4">4 người</option>
+          </select>
         </header>
         <div class="booking-wrap">
           <form id="booking-form" autocomplete="off">
@@ -46,13 +64,13 @@
                   <span class="cal-month" id="cal-month-label">Tháng 5, 2026</span>
                   <div class="cal-nav">
                     <button type="button" class="cal-nav-btn" id="cal-prev" title="Tuần trước">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                         stroke-width="2.5">
                         <path d="M15 18l-6-6 6-6" />
                       </svg>
                     </button>
                     <button type="button" class="cal-nav-btn" id="cal-next" title="Tuần sau">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                         stroke-width="2.5">
                         <path d="M9 18l6-6-6-6" />
                       </svg>
@@ -61,8 +79,10 @@
                 </div>
 
                 <!-- Horizontal date strip (7 days visible) -->
-                <div class="cal-strip" id="cal-strip">
-                  <!-- Dynamically populated -->
+                <div class="swiper cal-swiper">
+                  <div class="swiper-wrapper cal-strip" id="cal-strip">
+                    <!-- Dynamically populated -->
+                  </div>
                 </div>
 
                 <!-- Time slots -->
@@ -125,14 +145,14 @@
                       <div class="success-label">Ngày & Giờ</div>
                       <div class="success-val">
                         <h4 id="conf-date-time">Thứ 5. Ngày 22 tháng 4, 2026</h4>
-                        <p id="conf-time-range">10:15 AM — 11:15 AM</p>
+                        <p id="conf-time-range">10:15 AM - 11:15 AM</p>
                       </div>
                     </div>
                     <div class="success-row">
                       <div class="success-label">Dịch vụ</div>
                       <div class="success-val">
                         <h4 id="conf-service-name">Ý dễ chịu</h4>
-                        <p id="conf-service-price">179.000đ — 60 phút</p>
+                        <p id="conf-service-price">179,000đ — 60 phút</p>
                       </div>
                     </div>
                     <div class="success-row">
@@ -152,7 +172,12 @@
                       <div class="success-label">Địa điểm</div>
                       <div class="success-val">
                         <h4 id="conf-branch-name">31/26 Hoàng Hoa Thám, Phường Tân Bình, TP. HCM</h4>
-                        <a href="#" class="conf-direction">Chỉ đường Google Map ></a>
+                        <a href="#" target="_blank" class="conf-direction">Chỉ đường Google Map <svg width="20"
+                            height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M9 18l6-6-6-6" />
+                          </svg></a>
+                        <p style="color: var(--_colours---paragraph-dark);">Thanh toán tại spa</p>
                       </div>
                     </div>
                   </div>
@@ -160,7 +185,11 @@
                   <div class="summary-divider"></div>
 
                   <div class="conf-btn-wrap">
-                    <button type="button" class="btn-primary conf-btn-primary">Tạo Nhắc Hẹn</button>
+                    <button type="button" class="btn-primary conf-btn-primary">Tạo Nhắc Hẹn <svg
+                        xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="m6 9 6 6 6-6" />
+                      </svg></button>
                     <button type="button" class="btn-secondary" id="btn-new-booking">Đặt lịch khác</button>
                   </div>
                 </div>
@@ -171,11 +200,15 @@
                 <div class="success-row">
                   <div class="success-label">Note</div>
                   <div class="success-val">
-                    <p>Ý cảm ơn [tên khách] đã đặt lịch tới spa! Mình hãy tới spa đúng giờ đã đặt để có trải nghiệm tốt
+                    <p>Ý cảm ơn <strong id="conf-footer-customer-name">[tên khách]</strong> đã đặt lịch tới spa! Mình
+                      hãy tới spa đúng giờ đã đặt để có trải nghiệm tốt
                       nhất nghen.
                       <br /><br />
                       Bên Ý xin phép giữ lịch cho mình trong vòng 15p sau giờ đã đặt ạ. Nếu cần gì anh/chị hãy nhắn tin
-                      cho Ý qua <u><strong>fanpage</strong></u> hoặc <u><strong>Zalo</strong></u> để được hỗ trợ nhé.
+                      cho Ý qua <a rel="noopener noreferrer"
+                        href="https://www.facebook.com/p/%C3%9D-%C6%A1i-Spa-G%E1%BB%99i-%C4%91%E1%BA%A7u-d%E1%BB%85-ch%E1%BB%8Bu-61573340536773/"
+                        target="_blank"><strong>fanpage</strong></a> hoặc <a rel="noopener noreferrer"
+                        href="https://zalo.me/0968241808" target="_blank"><strong>Zalo</strong></a> để được hỗ trợ nhé.
                     </p>
                   </div>
                 </div>
@@ -185,7 +218,10 @@
           <!-- Sidebar Summary Area -->
           <aside class="summary-sidebar" id="summary-sidebar">
             <div class="sidebar-inner">
-              <!-- Sidebar Header: Logo (always visible) -->
+              <!-- Mobile Drawer Drag Handle -->
+              <div class="drawer-handle"></div>
+
+              <!-- Sidebar Header: Logo (always visible on desktop, hidden on mobile) -->
               <div class="logo-container">
                 <img src="./images/logo.svg" alt="YOi Logo" class="logo-img"
                   onerror="this.onerror=null; this.src='https://placehold.co/120x50?text=YOi+Spa'">
@@ -201,11 +237,15 @@
                 </div>
               </div>
 
-              <div class="summary-tag">Tóm tắt</div>
+              <!-- Mobile Header Wrapper for Tóm tắt & Guests info -->
+              <div class="mobile-drawer-header-row">
+                <div class="summary-tag" id="summary-tag">Tóm tắt</div>
+                <div class="summary-guests-pill" id="summary-guests-pill">1 Khách</div>
+              </div>
 
               <div class="summary-info" id="summary-info">
                 <!-- Service Info -->
-                <div id="sum-service-section" class="summary-row hidden" style="margin-bottom: 16px;">
+                <div id="sum-service-section" class="summary-row hidden">
                   <div class="summary-content">
                     <div class="summary-title" id="sum-service-name">Ý Dễ Chịu</div>
                     <div class="summary-subtitle" id="sum-service-duration">60p</div>
@@ -214,7 +254,7 @@
                 </div>
 
                 <!-- Timing Info -->
-                <div id="sum-time-section" class="summary-row hidden" style="margin-bottom: 16px;">
+                <div id="sum-time-section" class="summary-row hidden">
                   <div class="summary-content">
                     <div class="summary-title" id="sum-time-range">10:15 - 11:15</div>
                     <div class="summary-subtitle" id="sum-time-date">Thứ 5, 22/4 2026</div>
@@ -240,21 +280,27 @@
                 </div>
               </div>
 
-              <div class="summary-divider"></div>
 
               <div id="skip-btn-container">
                 <button type="button" class="btn-primary" id="btn-skip-service">Bỏ qua bước này</button>
+                <button type="submit" form="booking-form" class="btn-primary" id="btn-drawer-submit"
+                  style="display: none; width: 100%;">Xác Nhận Đặt Lịch</button>
               </div>
 
-              <p style="margin-top: 24px; font-size: 13px; color: var(--color-text); opacity: 0.6;">Thanh toán tại spa
-              </p>
             </div>
+            <p class="sidebar-footer-text">
+              Thanh toán tại spa
+            </p>
           </aside>
+          <!-- Drawer Overlay Backdrop for Mobile -->
+          <div class="drawer-overlay" id="drawer-overlay"></div>
         </div>
       </main>
     </div>
   </div>
 
+  <!-- Swiper JS for mobile calendar strip dragging -->
+  <script src="https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.js"></script>
   <script src="/app.js"></script>
 </body>
 

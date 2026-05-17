@@ -62,6 +62,8 @@ const calState = {
   weekOffset: 0,
 };
 
+let calSwiper = null;
+
 // ---- URL Param Helpers ----
 
 /** Get all current booking params from URL */
@@ -120,6 +122,72 @@ async function init() {
   loadCustomerFromStorage();
   // Full hydration from URL on every load
   await handleRouting();
+
+  // Re-render calendar strip on window resize for responsive layout changes
+  window.addEventListener('resize', () => {
+    const params = getParams();
+    if (params.step === STEPS.TIME) {
+      renderCalendarStrip(params.date);
+    }
+  });
+
+  // ---- JS Prefetch System ----
+  // Prefetch resources when browser is idle for faster subsequent navigations
+  if ('requestIdleCallback' in window) {
+    requestIdleCallback(() => {
+      prefetchResources();
+    }, { timeout: 2000 });
+  } else {
+    setTimeout(prefetchResources, 1500);
+  }
+}
+
+/** Prefetch API data and assets during idle time for faster navigation */
+function prefetchResources() {
+  // Prefetch today's availability if not already loaded
+  const todayISO = formatDateISO(new Date());
+  const params = getParams();
+
+  // Prefetch availability for today
+  if (cache.availabilitySlots.length === 0) {
+    const guests = params.guests || 1;
+    // Use fetch directly to not affect the UI
+    const qs = new URLSearchParams({
+      date: todayISO,
+      num_guests: String(guests),
+      duration_minutes: String(SKIP_DURATION_MINUTES)
+    });
+    fetch(`${API_BASE}/availability/merged?${qs.toString()}`).catch(() => { });
+  }
+
+  // Prefetch tomorrow's availability too
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowISO = formatDateISO(tomorrow);
+  const qsTomorrow = new URLSearchParams({
+    date: tomorrowISO,
+    num_guests: String(params.guests || 1),
+    duration_minutes: String(SKIP_DURATION_MINUTES)
+  });
+  fetch(`${API_BASE}/availability/merged?${qsTomorrow.toString()}`).catch(() => { });
+
+  // Prefetch Google Fonts (if not already loaded via stylesheet)
+  const fontsLink = document.createElement('link');
+  fontsLink.rel = 'prefetch';
+  fontsLink.href = 'https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&family=Lato:wght@300;400;700&display=swap';
+  document.head.appendChild(fontsLink);
+
+  // Prefetch branch images
+  cache.branches.forEach((b, index) => {
+    if (b.image_url) {
+      const img = new Image();
+      img.src = b.image_url;
+    }
+    // Also prefetch placeholder images
+    const placeholder = `./images/placeholder-branch${(index % 2) + 1}.jpg`;
+    const pImg = new Image();
+    pImg.src = placeholder;
+  });
 }
 
 // ---- Routing & Navigation ----
@@ -135,6 +203,13 @@ async function handleRouting() {
     step = STEPS.SERVICES;
   }
 
+  // Auto-select today if on TIME step and no date is set in URL params
+  if (step === STEPS.TIME && !params.date) {
+    const todayISO = formatDateISO(new Date());
+    setParams({ date: todayISO }, true);
+    params.date = todayISO;
+  }
+
   // Hydrate date/time step: if step is TIME and date is set, load availability
   if (step === STEPS.TIME && params.date) {
     await hydrateTimeStep(params);
@@ -143,6 +218,12 @@ async function handleRouting() {
   // Hydrate branch step: render branches with availability from selectedTime
   if (step === STEPS.BRANCH) {
     renderBranches(params);
+  }
+
+  // Hydrate confirmation step
+  if (step === STEPS.CONFIRMATION) {
+    const customerData = getSavedCustomerData();
+    populateConfirmation(params, customerData);
   }
 
   renderUI(step, params);
@@ -173,7 +254,19 @@ window.onpopstate = () => {
 async function loadBranches() {
   try {
     const res = await fetch(`${API_BASE}/branches`);
-    cache.branches = await res.json();
+    const branches = await res.json();
+    cache.branches = branches.map(b => {
+      let mappedName = b.name;
+      if (b.name && (b.name.includes("CN1") || b.name.includes("CN 1"))) {
+        mappedName = "Ý Ơi Spa - CN 1";
+      } else if (b.name && (b.name.includes("CN2") || b.name.includes("CN 2"))) {
+        mappedName = "Ý Ơi Spa - CN 2";
+      }
+      return {
+        ...b,
+        name: mappedName
+      };
+    });
   } catch (err) {
     console.error('Error loading branches:', err);
   }
@@ -198,7 +291,7 @@ async function loadAvailability(date, serviceId, guests) {
     ...(!serviceId ? { duration_minutes: String(durationMinutes) } : {})
   });
 
-  $timeSlotsGrid.innerHTML = '<div style="grid-column: 1/-1; text-align:center; padding: 20px; color: var(--color-text);">Đang tải khung giờ...</div>';
+  $timeSlotsGrid.innerHTML = '<div style="grid-column: 1/-1; text-align:center; padding: 20px; color: var(--_colours---paragraph-dark);">Đang tải khung giờ...</div>';
   $timeSlotsContainer.classList.remove('hidden');
 
   try {
@@ -247,6 +340,12 @@ function renderUI(step, params) {
   document.getElementById('step-header').classList.toggle('hidden', isConfirmation);
   document.getElementById('summary-sidebar').classList.toggle('hidden', isConfirmation);
 
+  const $headerGuests = document.getElementById('header-guests-select');
+  if ($headerGuests) {
+    $headerGuests.classList.toggle('hidden', step !== STEPS.SERVICES);
+    $headerGuests.value = params.guests;
+  }
+
   // Render step-specific content
   if (step === STEPS.SERVICES) {
     renderServices(params);
@@ -258,15 +357,54 @@ function renderUI(step, params) {
 function renderServices(params) {
   $serviceCategories.innerHTML = '';
 
+  // Define the desired category order
+  const CATEGORY_ORDER = ['Gội Đầu', 'Massage', 'Combo', '4 Tay'];
+  const HIDDEN_CATEGORIES = ['Khác'];
+
   const categories = {};
   cache.services.forEach(s => {
     if (s.is_active === false) return;
     const cat = s.category || 'Dịch vụ Spa';
+    if (HIDDEN_CATEGORIES.includes(cat)) return;
     if (!categories[cat]) categories[cat] = [];
     categories[cat].push(s);
   });
 
-  Object.entries(categories).forEach(([name, services]) => {
+  // Sort by defined order, then alphabetically for any uncategorized ones
+  const sortedCategories = Object.keys(categories).sort((a, b) => {
+    const ai = CATEGORY_ORDER.indexOf(a);
+    const bi = CATEGORY_ORDER.indexOf(b);
+    if (ai === -1 && bi === -1) return a.localeCompare(b);
+    if (ai === -1) return 1;
+    if (bi === -1) return -1;
+    return ai - bi;
+  });
+
+  // Render horizontal tabs at the top of the categories container
+  const tabsContainer = document.createElement('div');
+  tabsContainer.className = 'category-tabs';
+  sortedCategories.forEach((name, index) => {
+    const tabBtn = document.createElement('button');
+    tabBtn.type = 'button';
+    tabBtn.className = `tab-btn${index === 0 ? ' active' : ''}`;
+    tabBtn.textContent = name;
+    tabBtn.onclick = () => {
+      tabsContainer.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+      tabBtn.classList.add('active');
+
+      // Scroll to target heading
+      const headers = Array.from($serviceCategories.querySelectorAll('.category-title'));
+      const target = headers.find(h => h.textContent === name);
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    };
+    tabsContainer.appendChild(tabBtn);
+  });
+  $serviceCategories.appendChild(tabsContainer);
+
+  sortedCategories.forEach(name => {
+    const services = categories[name];
     const catHeader = document.createElement('h3');
     catHeader.className = 'category-title';
     catHeader.textContent = name;
@@ -304,6 +442,13 @@ function renderServices(params) {
         navigateTo(STEPS.TIME, { service_id: s.id });
       };
 
+      // JS Prefetch on hover/mouseenter
+      item.onmouseenter = () => {
+        const todayISO = formatDateISO(new Date());
+        const guests = params.guests || 1;
+        loadAvailability(todayISO, s.id, guests);
+      };
+
       const toggleBtn = item.querySelector('.btn-toggle-desc');
       toggleBtn.onclick = (e) => {
         e.stopPropagation();
@@ -333,7 +478,7 @@ function renderBranches(params) {
     item.className = `branch-item ${params.branch_id === b.id ? 'selected' : ''} ${!isAvailable ? 'disabled' : ''}`;
     item.type = 'button';
     item.disabled = !isAvailable;
-    
+
     // Determine image: use b.image_url, or fallback to placeholder-branch1/2 based on index
     const placeholder = `./images/placeholder-branch${(index % 2) + 1}.jpg`;
     const imageUrl = b.image_url || placeholder;
@@ -347,9 +492,9 @@ function renderBranches(params) {
         </div>
       </div>
       <div class="branch-status">
-        ${isAvailable 
-          ? '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>' 
-          : '<span class="branch-tag-full">Hết chỗ</span>'}
+        ${isAvailable
+        ? '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#386665" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>'
+        : '<span class="branch-tag-full">Hết chỗ</span>'}
       </div>
     `;
 
@@ -387,7 +532,7 @@ function renderTimeSlots(params) {
     btn.className = `time-slot${!available ? ' unavailable' : ''}${params.time === slot.start_time ? ' selected' : ''}`;
     btn.disabled = !available;
 
-    const [timePart, period] = formatTimeAmPm(slot.start_time);
+    const [timePart, period] = formatTime24h(slot.start_time);
     btn.innerHTML = `<span class="t-hour">${timePart}</span><span class="t-period">${period}</span>`;
 
     if (available) {
@@ -427,13 +572,43 @@ function bindEvents() {
   };
 
   $calPrev.onclick = () => {
-    calState.weekOffset--;
-    renderCalendarStrip(getParams().date);
+    if (window.innerWidth <= 1024) {
+      const params = getParams();
+      const selectedDateStr = params.date || formatDateISO(new Date());
+      const currentIndex = calState.allDates.findIndex(d => formatDateISO(d) === selectedDateStr);
+      const newIndex = currentIndex - 1;
+      if (newIndex >= 0) {
+        const targetIso = formatDateISO(calState.allDates[newIndex]);
+        setParams({ date: targetIso, time: null, time_end: null, branch_id: null }, true);
+        renderCalendarStrip(targetIso, true);
+        loadAvailability(targetIso, params.service_id, params.guests).then(() => {
+          renderTimeSlots({ ...params, date: targetIso, time: null });
+        });
+      }
+    } else {
+      calState.weekOffset--;
+      renderCalendarStrip(getParams().date, true);
+    }
   };
 
   $calNext.onclick = () => {
-    calState.weekOffset++;
-    renderCalendarStrip(getParams().date);
+    if (window.innerWidth <= 1024) {
+      const params = getParams();
+      const selectedDateStr = params.date || formatDateISO(new Date());
+      const currentIndex = calState.allDates.findIndex(d => formatDateISO(d) === selectedDateStr);
+      const newIndex = currentIndex + 1;
+      if (newIndex < calState.allDates.length) {
+        const targetIso = formatDateISO(calState.allDates[newIndex]);
+        setParams({ date: targetIso, time: null, time_end: null, branch_id: null }, true);
+        renderCalendarStrip(targetIso, true);
+        loadAvailability(targetIso, params.service_id, params.guests).then(() => {
+          renderTimeSlots({ ...params, date: targetIso, time: null });
+        });
+      }
+    } else {
+      calState.weekOffset++;
+      renderCalendarStrip(getParams().date, true);
+    }
   };
 
   $form.onsubmit = handleSubmit;
@@ -441,8 +616,14 @@ function bindEvents() {
   document.getElementById('sum-guests-select').onchange = (e) => {
     const guests = parseInt(e.target.value);
     const params = getParams();
+    // Sync header guest select
+    const $headerGuests = document.getElementById('header-guests-select');
+    if ($headerGuests) $headerGuests.value = guests;
     // Update guests in URL
     setParams({ guests }, true);
+    // Update pill text
+    const guestsPill = document.getElementById('summary-guests-pill');
+    if (guestsPill) guestsPill.textContent = `${guests} Khách`;
     // If on timing step with date, reload availability
     if (params.step === STEPS.TIME && params.date) {
       loadAvailability(params.date, params.service_id, guests).then(() => {
@@ -450,6 +631,21 @@ function bindEvents() {
       });
     }
   };
+
+  // Header guest selector (mobile, services step)
+  const $headerGuests = document.getElementById('header-guests-select');
+  if ($headerGuests) {
+    $headerGuests.onchange = (e) => {
+      const guests = parseInt(e.target.value);
+      // Sync sidebar guest select
+      document.getElementById('sum-guests-select').value = guests;
+      // Update guests in URL
+      setParams({ guests }, true);
+      // Update pill text
+      const guestsPill = document.getElementById('summary-guests-pill');
+      if (guestsPill) guestsPill.textContent = `${guests} Khách`;
+    };
+  }
 
   document.getElementById('btn-edit-time').onclick = () => {
     navigateTo(STEPS.TIME);
@@ -459,6 +655,30 @@ function bindEvents() {
     // Clear all booking params, start fresh
     window.location.href = '/book?step=services';
   };
+
+  // Mobile drawer interaction
+  const $sidebar = document.getElementById('summary-sidebar');
+  const $overlay = document.getElementById('drawer-overlay');
+
+  if ($sidebar && $overlay) {
+    // Click drawer handle, mobile header row, or summary-tag to toggle expand/collapse
+    $sidebar.onclick = (e) => {
+      if (window.innerWidth > 1024) return; // Desktop is normal
+
+      // Ignore interactive clicks on buttons, edit links, guests dropdown
+      if (e.target.closest('button') || e.target.closest('select') || e.target.closest('svg') || e.target.closest('a') || e.target.closest('.btn-edit-summary')) {
+        return;
+      }
+
+      $sidebar.classList.toggle('expanded');
+      $overlay.classList.toggle('active', $sidebar.classList.contains('expanded'));
+    };
+
+    $overlay.onclick = () => {
+      $sidebar.classList.remove('expanded');
+      $overlay.classList.remove('active');
+    };
+  }
 }
 
 // ---- Calendar Strip ----
@@ -466,65 +686,392 @@ function bindEvents() {
 function initCalendarStrip() {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+
+  // Dynamically calculate the end of next month
+  const currentYear = today.getFullYear();
+  const currentMonth = today.getMonth(); // 0-indexed
+  const endOfNextMonth = new Date(currentYear, currentMonth + 2, 0);
+
   calState.allDates = [];
-  for (let i = 0; i <= 30; i++) {
-    const d = new Date(today);
-    d.setDate(today.getDate() + i);
-    calState.allDates.push(d);
+  const currentDate = new Date(today);
+  while (currentDate <= endOfNextMonth) {
+    calState.allDates.push(new Date(currentDate));
+    currentDate.setDate(currentDate.getDate() + 1);
   }
   calState.weekOffset = 0;
-  renderCalendarStrip(null);
+
+  const params = getParams();
+  renderCalendarStrip(params.date);
+
+  // ---- Enhanced Drag-to-scroll with Momentum (Mouse + Touch) ----
+  let isDown = false;
+  let startX;
+  let scrollLeft;
+  let lastX;
+  let lastTime;
+  let velocity = 0;
+  let momentumId = null;
+  let hasDragged = false; // Track if actual drag occurred (vs. click)
+  const DRAG_THRESHOLD = 5; // px threshold to distinguish drag from click
+  let dragStartX;
+
+  function startDrag(pageX) {
+    if (window.innerWidth <= 1024) return;
+    isDown = true;
+    hasDragged = false;
+    dragStartX = pageX;
+    startX = pageX - $calStrip.offsetLeft;
+    scrollLeft = $calStrip.scrollLeft;
+    lastX = pageX;
+    lastTime = Date.now();
+    velocity = 0;
+    if (momentumId) {
+      cancelAnimationFrame(momentumId);
+      momentumId = null;
+    }
+  }
+
+  function moveDrag(pageX) {
+    if (window.innerWidth <= 1024) return;
+    if (!isDown) return;
+
+    // Check if we've exceeded drag threshold
+    if (!hasDragged && Math.abs(pageX - dragStartX) > DRAG_THRESHOLD) {
+      hasDragged = true;
+      $calStrip.classList.add('dragging');
+    }
+
+    if (!hasDragged) return;
+
+    const x = pageX - $calStrip.offsetLeft;
+    const walk = (x - startX) * 1.2;
+    $calStrip.scrollLeft = scrollLeft - walk;
+
+    // Track velocity for momentum
+    const now = Date.now();
+    const dt = now - lastTime;
+    if (dt > 0) {
+      velocity = (lastX - pageX) / dt; // px/ms
+    }
+    lastX = pageX;
+    lastTime = now;
+  }
+
+  function endDrag() {
+    if (!isDown) return;
+    isDown = false;
+    $calStrip.classList.remove('dragging');
+
+    // Apply momentum scrolling if drag occurred
+    if (hasDragged && Math.abs(velocity) > 0.15) {
+      applyMomentum();
+    }
+  }
+
+  function applyMomentum() {
+    const friction = 0.95;
+    const minVelocity = 0.01;
+
+    function step() {
+      velocity *= friction;
+      if (Math.abs(velocity) < minVelocity) {
+        momentumId = null;
+        return;
+      }
+      $calStrip.scrollLeft += velocity * 16; // ~16ms per frame
+      momentumId = requestAnimationFrame(step);
+    }
+    momentumId = requestAnimationFrame(step);
+  }
+
+  // Mouse events
+  $calStrip.addEventListener('mousedown', (e) => {
+    startDrag(e.pageX);
+  });
+
+  $calStrip.addEventListener('mouseleave', () => {
+    if (isDown) endDrag();
+  });
+
+  $calStrip.addEventListener('mouseup', () => {
+    endDrag();
+  });
+
+  $calStrip.addEventListener('mousemove', (e) => {
+    if (!isDown) return;
+    e.preventDefault();
+    moveDrag(e.pageX);
+  });
+
+  // Touch events (for mobile draggable calendar strip)
+  $calStrip.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 1) {
+      startDrag(e.touches[0].pageX);
+    }
+  }, { passive: true });
+
+  $calStrip.addEventListener('touchmove', (e) => {
+    if (e.touches.length === 1) {
+      moveDrag(e.touches[0].pageX);
+      // Prevent vertical scroll while horizontal dragging
+      if (hasDragged) {
+        e.preventDefault();
+      }
+    }
+  }, { passive: false });
+
+  $calStrip.addEventListener('touchend', () => {
+    endDrag();
+  }, { passive: true });
+
+  $calStrip.addEventListener('touchcancel', () => {
+    endDrag();
+  }, { passive: true });
+
+  // Prevent click events from firing after drag
+  $calStrip.addEventListener('click', (e) => {
+    if (hasDragged) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+  }, true);
+
+  // Dynamic month label updating on scroll
+  $calStrip.addEventListener('scroll', () => {
+    if (window.innerWidth <= 1024) return;
+    const children = Array.from($calStrip.children);
+    if (children.length === 0) return;
+
+    const containerLeft = $calStrip.getBoundingClientRect().left;
+    const firstVisible = children.find(child => {
+      const rect = child.getBoundingClientRect();
+      return rect.left >= containerLeft - 10;
+    }) || children[0];
+
+    const iso = firstVisible.dataset.iso;
+    if (iso) {
+      const [y, m, d] = iso.split('-').map(Number);
+      const dateObj = new Date(y, m - 1, d);
+      $calMonthLabel.textContent = `Tháng ${dateObj.getMonth() + 1}, ${dateObj.getFullYear()}`;
+    }
+  });
 }
 
-function renderCalendarStrip(selectedDate) {
-  const totalWeeks = Math.ceil(calState.allDates.length / 7);
-  const maxOffset = totalWeeks - 1;
-
-  calState.weekOffset = Math.max(0, Math.min(calState.weekOffset, maxOffset));
-  $calPrev.disabled = calState.weekOffset === 0;
-  $calNext.disabled = calState.weekOffset >= maxOffset;
-
-  const start = calState.weekOffset * 7;
-  const week = calState.allDates.slice(start, start + 7);
-
-  const firstDay = week[0];
-  $calMonthLabel.textContent = `Tháng ${firstDay.getMonth() + 1}, ${firstDay.getFullYear()}`;
-
+function renderCalendarStrip(selectedDate, keepOffset = false) {
+  const isMobile = window.innerWidth <= 1024;
   $calStrip.innerHTML = '';
   const today = calState.allDates[0];
   const DAY_LABELS = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
 
-  week.forEach(date => {
-    const iso = formatDateISO(date);
-    const isToday = iso === formatDateISO(today);
-    const isSelected = iso === selectedDate;
+  if (isMobile) {
+    // ---- MOBILE: Show all dates scrollable with Swiper ----
+    $calPrev.classList.remove('hidden');
+    $calNext.classList.remove('hidden');
 
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = `cal-day${isSelected ? ' selected' : ''}`;
-    btn.dataset.iso = iso;
+    const currentIndex = calState.allDates.findIndex(d => formatDateISO(d) === selectedDate);
+    const isFirstDate = currentIndex <= 0;
+    const isLastDate = currentIndex === -1 || currentIndex >= calState.allDates.length - 1;
 
-    const label = isToday ? 'Nay' : DAY_LABELS[date.getDay()];
-    btn.innerHTML = `
-      <span class="cal-day-num">${date.getDate()}</span>
-      <span class="cal-day-label">${label}</span>
-    `;
+    $calPrev.disabled = isFirstDate;
+    $calPrev.style.opacity = isFirstDate ? '0.3' : '1';
+    $calPrev.style.pointerEvents = isFirstDate ? 'none' : 'auto';
 
-    btn.onclick = async () => {
-      const currentParams = getParams();
-      // Update date in URL, clear time/branch since they're now stale
-      setParams({ date: iso, time: null, time_end: null, branch_id: null }, true);
-      // Reload availability for new date
-      await loadAvailability(iso, currentParams.service_id, currentParams.guests);
-      renderTimeSlots({ ...currentParams, date: iso, time: null });
-      // Update visual selection
-      document.querySelectorAll('.cal-day').forEach(el => el.classList.remove('selected'));
-      btn.classList.add('selected');
-      $timeSlotsContainer.classList.remove('hidden');
-    };
+    $calNext.disabled = isLastDate;
+    $calNext.style.opacity = isLastDate ? '0.3' : '1';
+    $calNext.style.pointerEvents = isLastDate ? 'none' : 'auto';
 
-    $calStrip.appendChild(btn);
-  });
+    calState.allDates.forEach(date => {
+      const iso = formatDateISO(date);
+      const isToday = iso === formatDateISO(today);
+      const isSelected = iso === selectedDate;
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `cal-day${isSelected ? ' selected' : ''}`;
+      btn.dataset.iso = iso;
+
+      const tomorrow = new Date(today);
+      tomorrow.setDate(today.getDate() + 1);
+      const isTomorrow = iso === formatDateISO(tomorrow);
+
+      const label = isToday ? 'Nay' : (isTomorrow ? 'Mai' : DAY_LABELS[date.getDay()]);
+      btn.innerHTML = `
+        <span class="cal-day-num">${date.getDate()}</span>
+        <span class="cal-day-label">${label}</span>
+      `;
+
+      btn.onclick = async () => {
+        const currentParams = getParams();
+        // Update date in URL, clear time/branch since they're now stale
+        setParams({ date: iso, time: null, time_end: null, branch_id: null }, true);
+        // Reload availability for new date
+        await loadAvailability(iso, currentParams.service_id, currentParams.guests);
+        renderTimeSlots({ ...currentParams, date: iso, time: null });
+        // Update visual selection
+        document.querySelectorAll('.cal-day').forEach(el => el.classList.remove('selected'));
+        btn.classList.add('selected');
+        $timeSlotsContainer.classList.remove('hidden');
+
+        // Update month label based on selected date
+        $calMonthLabel.textContent = `Tháng ${date.getMonth() + 1}, ${date.getFullYear()}`;
+
+        // Center swiper slide on click
+        const selectedIndex = calState.allDates.indexOf(date);
+        if (selectedIndex !== -1 && calSwiper) {
+          calSwiper.slideTo(selectedIndex, 300);
+        }
+      };
+
+      // JS Prefetch on hover/mouseenter (quiet background prefetch)
+      btn.onmouseenter = () => {
+        if (iso === selectedDate) return;
+        const currentParams = getParams();
+        const durationMinutes = currentParams.service_id ? null : SKIP_DURATION_MINUTES;
+        const qs = new URLSearchParams({
+          date: iso,
+          num_guests: String(currentParams.guests || 1),
+          ...(currentParams.service_id ? { service_id: currentParams.service_id } : {}),
+          ...(!currentParams.service_id ? { duration_minutes: String(durationMinutes) } : {})
+        });
+        fetch(`${API_BASE}/availability/merged?${qs.toString()}`).catch(() => { });
+      };
+
+      // Wrap btn in swiper-slide
+      const slide = document.createElement('div');
+      slide.className = 'swiper-slide';
+      slide.style.width = 'auto';
+      slide.appendChild(btn);
+      $calStrip.appendChild(slide);
+    });
+
+    // Set initial month label based on selectedDate or today
+    let selDateObj = today;
+    if (selectedDate) {
+      const [y, m, d] = selectedDate.split('-').map(Number);
+      selDateObj = new Date(y, m - 1, d);
+    }
+    $calMonthLabel.textContent = `Tháng ${selDateObj.getMonth() + 1}, ${selDateObj.getFullYear()}`;
+
+    // Initialize or update Swiper
+    if (calSwiper) {
+      calSwiper.destroy(true, true);
+      calSwiper = null;
+    }
+
+    if (typeof Swiper !== 'undefined') {
+      calSwiper = new Swiper('.cal-swiper', {
+        slidesPerView: 'auto',
+        spaceBetween: 8,
+        freeMode: {
+          enabled: true,
+          sticky: true,
+          momentumRatio: 0.25,
+          momentumVelocityRatio: 0.5,
+        },
+        grabCursor: true,
+      });
+
+      // Update month label when swiper slides
+      calSwiper.on('slideChange', () => {
+        const activeIndex = calSwiper.activeIndex;
+        const activeDate = calState.allDates[activeIndex];
+        if (activeDate) {
+          $calMonthLabel.textContent = `Tháng ${activeDate.getMonth() + 1}, ${activeDate.getFullYear()}`;
+        }
+      });
+
+      // Slide to selected slide instantly
+      const selectedIndex = calState.allDates.findIndex(d => formatDateISO(d) === selectedDate);
+      if (selectedIndex !== -1) {
+        setTimeout(() => {
+          calSwiper.slideTo(selectedIndex, 0);
+        }, 50);
+      }
+    }
+  } else {
+    // Destroy Swiper if moving to desktop
+    if (calSwiper) {
+      calSwiper.destroy(true, true);
+      calSwiper = null;
+    }
+
+    // ---- DESKTOP: 1 week per slide (7 columns), navigation changes page ----
+    $calPrev.classList.remove('hidden');
+    $calNext.classList.remove('hidden');
+
+    $calPrev.style.opacity = '';
+    $calPrev.style.pointerEvents = '';
+    $calNext.style.opacity = '';
+    $calNext.style.pointerEvents = '';
+
+    const totalWeeks = Math.ceil(calState.allDates.length / 7);
+    const maxOffset = totalWeeks - 1;
+
+    // Calculate correct weekOffset if selectedDate is set
+    if (selectedDate && !keepOffset) {
+      const selectedIndex = calState.allDates.findIndex(d => formatDateISO(d) === selectedDate);
+      if (selectedIndex !== -1) {
+        calState.weekOffset = Math.floor(selectedIndex / 7);
+      }
+    }
+
+    calState.weekOffset = Math.max(0, Math.min(calState.weekOffset, maxOffset));
+    $calPrev.disabled = calState.weekOffset === 0;
+    $calNext.disabled = calState.weekOffset >= maxOffset;
+
+    const start = calState.weekOffset * 7;
+    const week = calState.allDates.slice(start, start + 7);
+
+    const firstDay = week[0];
+    $calMonthLabel.textContent = `Tháng ${firstDay.getMonth() + 1}, ${firstDay.getFullYear()}`;
+
+    week.forEach(date => {
+      const iso = formatDateISO(date);
+      const isToday = iso === formatDateISO(today);
+      const isSelected = iso === selectedDate;
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `cal-day${isSelected ? ' selected' : ''}`;
+      btn.dataset.iso = iso;
+
+      const tomorrow = new Date(today);
+      tomorrow.setDate(today.getDate() + 1);
+      const isTomorrow = iso === formatDateISO(tomorrow);
+
+      const label = isToday ? 'Nay' : (isTomorrow ? 'Mai' : DAY_LABELS[date.getDay()]);
+      btn.innerHTML = `
+        <span class="cal-day-num">${date.getDate()}</span>
+        <span class="cal-day-label">${label}</span>
+      `;
+
+      btn.onclick = async () => {
+        const currentParams = getParams();
+        setParams({ date: iso, time: null, time_end: null, branch_id: null }, true);
+        await loadAvailability(iso, currentParams.service_id, currentParams.guests);
+        renderTimeSlots({ ...currentParams, date: iso, time: null });
+        document.querySelectorAll('.cal-day').forEach(el => el.classList.remove('selected'));
+        btn.classList.add('selected');
+        $timeSlotsContainer.classList.remove('hidden');
+      };
+
+      // JS Prefetch on hover/mouseenter (quiet background prefetch)
+      btn.onmouseenter = () => {
+        if (iso === selectedDate) return;
+        const currentParams = getParams();
+        const durationMinutes = currentParams.service_id ? null : SKIP_DURATION_MINUTES;
+        const qs = new URLSearchParams({
+          date: iso,
+          num_guests: String(currentParams.guests || 1),
+          ...(currentParams.service_id ? { service_id: currentParams.service_id } : {}),
+          ...(!currentParams.service_id ? { duration_minutes: String(durationMinutes) } : {})
+        });
+        fetch(`${API_BASE}/availability/merged?${qs.toString()}`).catch(() => { });
+      };
+
+      $calStrip.appendChild(btn);
+    });
+  }
 }
 
 // ---- Summary Sidebar ----
@@ -538,12 +1085,28 @@ function updateSummary(step, params) {
   const sumGuestsSection = document.getElementById('sum-guests-section');
   const branchInfo = document.getElementById('sidebar-branch-info');
   const guestSelect = document.getElementById('sum-guests-select');
+  const sumTag = document.getElementById('summary-tag');
+  const guestsPill = document.getElementById('summary-guests-pill');
+  const $sidebar = document.getElementById('summary-sidebar');
+
+  // Dynamically set the step class on sidebar for responsive CSS styling
+  if ($sidebar) {
+    $sidebar.className = `summary-sidebar step-${step}`;
+    // Always start each step with collapsed drawer on mobile
+    $sidebar.classList.remove('expanded');
+    const $overlay = document.getElementById('drawer-overlay');
+    if ($overlay) $overlay.classList.remove('active');
+  }
 
   // Sync guest count
   if (guestSelect) {
     guestSelect.value = params.guests;
     // Only allow editing guests in initial steps
     guestSelect.disabled = (step === STEPS.BRANCH || step === STEPS.CUSTOMERINFO);
+  }
+
+  if (guestsPill) {
+    guestsPill.textContent = `${params.guests} Khách`;
   }
 
   const showService = step !== STEPS.SERVICES;
@@ -554,6 +1117,15 @@ function updateSummary(step, params) {
   sumTimeSection.classList.toggle('hidden', !showTime);
   branchInfo.classList.toggle('hidden', !showBranch);
   $btnSkipService.classList.toggle('hidden', step !== STEPS.SERVICES);
+
+  const drawerSubmitBtn = document.getElementById('btn-drawer-submit');
+  if (drawerSubmitBtn) {
+    drawerSubmitBtn.style.display = (step === STEPS.CUSTOMERINFO) ? 'block' : 'none';
+  }
+
+  if (sumTag) {
+    sumTag.classList.toggle('hidden', step === STEPS.SERVICES);
+  }
 
   // Service info
   if (showService) {
@@ -572,7 +1144,7 @@ function updateSummary(step, params) {
   if (showBranch) {
     document.getElementById('sum-branch-name').textContent = branch.name;
     document.getElementById('sum-branch-address').textContent = branch.address;
-    
+
     // Update branch image in sidebar
     const branchImg = document.getElementById('sum-branch-img');
     if (branchImg && branch) {
@@ -601,6 +1173,13 @@ function populateConfirmation(params, customerData) {
   document.getElementById('conf-customer-name').textContent = customerData.name;
   document.getElementById('conf-customer-phone').textContent = `${customerData.phone} — ${params.guests} Người`;
 
+  // Populate customer name in footer note (use first name for friendliness)
+  const footerNameEl = document.getElementById('conf-footer-customer-name');
+  if (footerNameEl) {
+    const firstName = customerData.name.split(' ').pop(); // Vietnamese names: last token is given name
+    footerNameEl.textContent = firstName || customerData.name;
+  }
+
   const notesRow = document.getElementById('conf-notes-row');
   if (customerData.notes) {
     notesRow.classList.remove('hidden');
@@ -613,7 +1192,19 @@ function populateConfirmation(params, customerData) {
     document.getElementById('conf-branch-name').textContent = branch.address || branch.name;
     const mapLink = document.querySelector('.conf-direction');
     if (mapLink) {
-      mapLink.href = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(branch.address || branch.name)}`;
+      // Use specific Google Maps links per branch if available, otherwise fall back to search
+      const BRANCH_MAP_LINKS = {
+        // Map branch names to their specific Google Maps URLs from the website
+        'CN 1': 'https://maps.app.goo.gl/CHKBaCVmCtAzKqXu8',
+        'CN 2': 'https://maps.app.goo.gl/GhcwqqUKWatqQB1bA',
+      };
+      // Try to match by branch name
+      const specificLink = Object.entries(BRANCH_MAP_LINKS).find(([key]) =>
+        branch.name && branch.name.includes(key)
+      );
+      mapLink.href = specificLink
+        ? specificLink[1]
+        : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(branch.address || branch.name)}`;
     }
   }
 }
@@ -623,9 +1214,15 @@ function populateConfirmation(params, customerData) {
 async function handleSubmit(e) {
   e.preventDefault();
   const $btn = document.getElementById('btn-submit');
-  if ($btn.disabled) return;
+  const $drawerBtn = document.getElementById('btn-drawer-submit');
+  if ($btn.disabled || $drawerBtn?.disabled) return;
+
   $btn.disabled = true;
   $btn.textContent = 'Đang xử lý...';
+  if ($drawerBtn) {
+    $drawerBtn.disabled = true;
+    $drawerBtn.textContent = 'Đang xử lý...';
+  }
 
   const params = getParams();
   const branch = getSelectedBranch();
@@ -669,6 +1266,10 @@ async function handleSubmit(e) {
   } finally {
     $btn.disabled = false;
     $btn.textContent = 'Đặt Lịch';
+    if ($drawerBtn) {
+      $drawerBtn.disabled = false;
+      $drawerBtn.textContent = 'Xác Nhận Đặt Lịch';
+    }
   }
 }
 
@@ -696,11 +1297,12 @@ function formatDateDisplayFull(date) {
   return `${days[date.getDay()]}, ${date.getDate()} tháng ${months[date.getMonth()]}, ${date.getFullYear()}`;
 }
 
-function formatTimeAmPm(timeStr) {
+function formatTime24h(timeStr) {
   const [h, m] = timeStr.split(':').map(Number);
   const period = h < 12 ? 'AM' : 'PM';
-  const h12 = h % 12 || 12;
-  return [`${h12}:${String(m).padStart(2, '0')}`, period];
+  const hFormatted = String(h).padStart(2, '0');
+  const mFormatted = String(m).padStart(2, '0');
+  return [`${hFormatted}:${mFormatted}`, period];
 }
 
 function timeToMinutesHHMM(timeStr) {
@@ -713,6 +1315,7 @@ function saveCustomerToStorage(customerData) {
     name: customerData.name,
     phone: customerData.phone,
     email: customerData.email || '',
+    notes: customerData.notes || '',
   }));
 }
 
@@ -725,4 +1328,14 @@ function loadCustomerFromStorage() {
     if (data?.phone) document.getElementById('customer-phone').value = data.phone;
     if (data?.email) document.getElementById('customer-email').value = data.email;
   } catch (_) { }
+}
+
+function getSavedCustomerData() {
+  try {
+    const raw = localStorage.getItem(CUSTOMER_STORAGE_KEY);
+    if (!raw) return { name: 'Khách', phone: '', email: '', notes: '' };
+    return JSON.parse(raw);
+  } catch (_) {
+    return { name: 'Khách', phone: '', email: '', notes: '' };
+  }
 }
