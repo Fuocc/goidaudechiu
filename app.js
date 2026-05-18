@@ -43,6 +43,8 @@ const cache = {
   expandedServiceIds: new Set(),
 };
 
+const availabilityCache = new Map();
+
 // ---- DOM References ----
 const $form = document.getElementById('booking-form');
 const $btnBack = document.getElementById('btn-back');
@@ -229,7 +231,7 @@ async function handleRouting() {
 
   // Hydrate date/time step: if step is TIME and date is set, load availability
   if (step === STEPS.TIME && params.date) {
-    await hydrateTimeStep(params);
+    hydrateTimeStep(params);
   }
 
   // Hydrate branch step: render branches with availability from selectedTime
@@ -308,31 +310,40 @@ async function loadAvailability(date, serviceId, guests) {
     ...(!serviceId ? { duration_minutes: String(durationMinutes) } : {})
   });
 
-  $timeSlotsGrid.innerHTML = '<div style="grid-column: 1/-1; text-align:center; padding: 20px; color: var(--_colours---paragraph-dark);">Đang tải khung giờ...</div>';
+  const cacheKey = qs.toString();
+
+  // If in cache, resolve instantly
+  if (availabilityCache.has(cacheKey)) {
+    cache.availabilitySlots = availabilityCache.get(cacheKey);
+    return;
+  }
+
+  // Show Skeleton Loaders while fetching
+  $timeSlotsGrid.innerHTML = Array(8).fill(0).map(() => '<div class="skeleton-slot"></div>').join('');
   $timeSlotsContainer.classList.remove('hidden');
 
   try {
     const res = await fetch(`${API_BASE}/availability/merged?${qs.toString()}`);
     const data = await res.json();
-    cache.availabilitySlots = data.slots || [];
+    const slots = data.slots || [];
+    cache.availabilitySlots = slots;
+    availabilityCache.set(cacheKey, slots);
   } catch (err) {
     console.error('Error loading availability:', err);
     cache.availabilitySlots = [];
-    $timeSlotsGrid.innerHTML = 'Lỗi tải dữ liệu';
+    $timeSlotsGrid.innerHTML = '<div style="grid-column: 1/-1; text-align:center; padding: 20px; color: red;">Lỗi tải khung giờ. Vui lòng thử lại.</div>';
   }
 }
 
 /** Hydrate time step: load availability if needed, then render slots */
 async function hydrateTimeStep(params) {
   const { date, service_id, guests, time } = params;
-  await loadAvailability(date, service_id, guests);
-  renderTimeSlots(params);
-  // Restore calendar selection
+
+  // Restore calendar selection synchronously first to prevent visual lag
   document.querySelectorAll('.cal-day').forEach(el => {
     const iso = el.dataset.iso;
     el.classList.toggle('selected', iso === date);
   });
-  // Scroll calendar to the right week if date is in future
   if (date) {
     const dateObj = new Date(date + 'T00:00:00');
     const today = calState.allDates[0];
@@ -340,6 +351,10 @@ async function hydrateTimeStep(params) {
     calState.weekOffset = Math.floor(diffDays / 7);
     renderCalendarStrip(date);
   }
+
+  // Load availability (shows skeletons if not cached, otherwise resolves instantly)
+  await loadAvailability(date, service_id, guests);
+  renderTimeSlots(params);
 }
 
 // ---- Render Functions ----
@@ -457,13 +472,6 @@ function renderServices(params) {
         if (e.target.closest('.btn-toggle-desc')) return;
         // Navigate to TIME step, setting service_id in URL
         navigateTo(STEPS.TIME, { service_id: s.id });
-      };
-
-      // JS Prefetch on hover/mouseenter
-      item.onmouseenter = () => {
-        const todayISO = formatDateISO(new Date());
-        const guests = params.guests || 1;
-        loadAvailability(todayISO, s.id, guests);
       };
 
       const toggleBtn = item.querySelector('.btn-toggle-desc');
@@ -844,6 +852,7 @@ function bindEvents() {
 
         $sidebar.classList.add('expanded');
         $overlay.classList.add('active');
+        document.body.classList.add('no-scroll');
       } else {
         $sidebar.style.transform = `translateY(${maxTranslateY}px)`;
         $overlay.style.opacity = '0';
@@ -864,6 +873,7 @@ function bindEvents() {
 
         $sidebar.classList.remove('expanded');
         $overlay.classList.remove('active');
+        document.body.classList.remove('no-scroll');
       }
 
       // Clean up inline styles after transition completes
@@ -894,6 +904,94 @@ function bindEvents() {
         }
       };
       $sidebar.addEventListener('transitionend', cleanup);
+    }, { passive: true });
+
+    // Collapse drawer helper
+    function collapseDrawer() {
+      const params = getParams();
+      const totalH = $sidebar.scrollHeight;
+      const peekH = (params.step === STEPS.CUSTOMERINFO) ? 156 : 90;
+      const snapTranslateY = Math.max(0, totalH - peekH);
+
+      $sidebar.style.transition = 'transform 0.4s cubic-bezier(0.16, 1, 0.3, 1)';
+      $overlay.style.transition = 'opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1)';
+      $sidebar.style.transform = `translateY(${snapTranslateY}px)`;
+      $overlay.style.opacity = '0';
+      $overlay.style.pointerEvents = 'none';
+
+      if (params.step === STEPS.CUSTOMERINFO) {
+        const peekBtn = document.getElementById('btn-drawer-submit-peek');
+        const skipContainer = document.getElementById('skip-btn-container');
+        if (peekBtn) {
+          peekBtn.style.transition = 'opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1)';
+          peekBtn.style.opacity = '1';
+        }
+        if (skipContainer) {
+          skipContainer.style.transition = 'opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1)';
+          skipContainer.style.opacity = '0';
+        }
+      }
+
+      // Remove classes immediately for instant layout sync
+      $sidebar.classList.remove('expanded');
+      $overlay.classList.remove('active');
+      document.body.classList.remove('no-scroll');
+
+      const cleanup = (ev) => {
+        if (ev.propertyName === 'transform') {
+          $sidebar.style.transition = '';
+          $sidebar.style.transform = '';
+          $overlay.style.transition = '';
+          $overlay.style.opacity = '';
+          $overlay.style.pointerEvents = '';
+
+          if (params.step === STEPS.CUSTOMERINFO) {
+            const peekBtn = document.getElementById('btn-drawer-submit-peek');
+            const skipContainer = document.getElementById('skip-btn-container');
+            if (peekBtn) {
+              peekBtn.style.transition = '';
+              peekBtn.style.opacity = '';
+              peekBtn.style.pointerEvents = '';
+            }
+            if (skipContainer) {
+              skipContainer.style.transition = '';
+              skipContainer.style.opacity = '';
+              skipContainer.style.pointerEvents = '';
+            }
+          }
+
+          $sidebar.removeEventListener('transitionend', cleanup);
+        }
+      };
+      $sidebar.addEventListener('transitionend', cleanup);
+    }
+
+    // Tap overlay to collapse
+    $overlay.onclick = collapseDrawer;
+
+    // Swipe down overlay to collapse
+    let overlayTouchStartY = 0;
+    let overlayHasDragged = false;
+
+    $overlay.addEventListener('touchstart', (e) => {
+      overlayTouchStartY = e.touches[0].clientY;
+      overlayHasDragged = false;
+    }, { passive: true });
+
+    $overlay.addEventListener('touchmove', (e) => {
+      if (e.touches.length === 1) {
+        const currentY = e.touches[0].clientY;
+        const diffY = currentY - overlayTouchStartY;
+        if (diffY > 30) { // Swiped down more than 30px
+          overlayHasDragged = true;
+        }
+      }
+    }, { passive: true });
+
+    $overlay.addEventListener('touchend', () => {
+      if (overlayHasDragged) {
+        collapseDrawer();
+      }
     }, { passive: true });
   }
 }
@@ -1148,20 +1246,6 @@ function renderCalendarStrip(selectedDate, keepOffset = false) {
         }
       };
 
-      // JS Prefetch on hover/mouseenter (quiet background prefetch)
-      btn.onmouseenter = () => {
-        if (iso === selectedDate) return;
-        const currentParams = getParams();
-        const durationMinutes = currentParams.service_id ? null : SKIP_DURATION_MINUTES;
-        const qs = new URLSearchParams({
-          date: iso,
-          num_guests: String(currentParams.guests || 1),
-          ...(currentParams.service_id ? { service_id: currentParams.service_id } : {}),
-          ...(!currentParams.service_id ? { duration_minutes: String(durationMinutes) } : {})
-        });
-        fetch(`${API_BASE}/availability/merged?${qs.toString()}`).catch(() => { });
-      };
-
       // Wrap btn in swiper-slide
       const slide = document.createElement('div');
       slide.className = 'swiper-slide';
@@ -1290,20 +1374,6 @@ function renderCalendarStrip(selectedDate, keepOffset = false) {
         $timeSlotsContainer.classList.remove('hidden');
       };
 
-      // JS Prefetch on hover/mouseenter (quiet background prefetch)
-      btn.onmouseenter = () => {
-        if (iso === selectedDate) return;
-        const currentParams = getParams();
-        const durationMinutes = currentParams.service_id ? null : SKIP_DURATION_MINUTES;
-        const qs = new URLSearchParams({
-          date: iso,
-          num_guests: String(currentParams.guests || 1),
-          ...(currentParams.service_id ? { service_id: currentParams.service_id } : {}),
-          ...(!currentParams.service_id ? { duration_minutes: String(durationMinutes) } : {})
-        });
-        fetch(`${API_BASE}/availability/merged?${qs.toString()}`).catch(() => { });
-      };
-
       $calStrip.appendChild(btn);
     });
   }
@@ -1338,6 +1408,7 @@ function updateSummary(step, params) {
       $overlay.style.transition = '';
       $overlay.style.pointerEvents = '';
     }
+    document.body.classList.remove('no-scroll');
   }
 
   // Sync guest count

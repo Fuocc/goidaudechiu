@@ -766,6 +766,39 @@ body {
   cursor: not-allowed;
 }
 
+/* Skeleton Loading slots with Shimmer Animation */
+.skeleton-slot {
+  height: 52px;
+  background: #ECE7E0;
+  border-radius: var(--radius-md);
+  position: relative;
+  overflow: hidden;
+}
+
+.skeleton-slot::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg,
+      rgba(255, 255, 255, 0) 0%,
+      rgba(255, 255, 255, 0.25) 50%,
+      rgba(255, 255, 255, 0) 100%);
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(100%);
+  }
+}
+
 /* ---- Branches Page ---- */
 #branch-list {
   display: flex;
@@ -1060,6 +1093,10 @@ body {
 /* ---- Helpers ---- */
 .hidden {
   display: none !important;
+}
+
+.no-scroll {
+  overflow: hidden !important;
 }
 
 .mt-4 {
