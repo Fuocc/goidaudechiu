@@ -54,6 +54,7 @@ const $timeSlotsGrid = document.getElementById('time-slots-grid');
 const $timeSlotsContainer = document.getElementById('time-slots-container');
 const $branchList = document.getElementById('branch-list');
 const $btnSkipService = document.getElementById('btn-skip-service');
+const $btnSkipWrap = document.getElementById('btn-skip-wrap');
 const $calStrip = document.getElementById('cal-strip');
 const $calMonthLabel = document.getElementById('cal-month-label');
 const $calPrev = document.getElementById('cal-prev');
@@ -245,6 +246,17 @@ async function handleRouting() {
     populateConfirmation(params, customerData);
   }
 
+  // Hydrate customerinfo step: handle slot holding and countdown
+  if (step === STEPS.CUSTOMERINFO) {
+    await handleHoldState(params);
+  } else {
+    // If they navigate away from customerinfo to services/timing/branch,
+    // release the hold immediately
+    if (step !== STEPS.CONFIRMATION) {
+      await releaseHoldIfNavigatedAway(step);
+    }
+  }
+
   renderUI(step, params);
 }
 
@@ -319,7 +331,7 @@ async function loadAvailability(date, serviceId, guests) {
   }
 
   // Show Skeleton Loaders while fetching
-  $timeSlotsGrid.innerHTML = Array(8).fill(0).map(() => '<div class="skeleton-slot"></div>').join('');
+  $timeSlotsGrid.innerHTML = Array(15).fill(0).map(() => '<div class="skeleton-slot"></div>').join('');
   $timeSlotsContainer.classList.remove('hidden');
 
   try {
@@ -371,6 +383,11 @@ function renderUI(step, params) {
   const isConfirmation = step === STEPS.CONFIRMATION;
   document.getElementById('step-header').classList.toggle('hidden', isConfirmation);
   document.getElementById('summary-sidebar').classList.toggle('hidden', isConfirmation);
+
+  const bookingWrap = document.querySelector('.booking-wrap');
+  if (bookingWrap) {
+    bookingWrap.className = `booking-wrap step-${step}`;
+  }
 
   const $headerGuests = document.getElementById('header-guests-select');
   if ($headerGuests) {
@@ -557,7 +574,7 @@ function renderTimeSlots(params) {
     btn.className = `time-slot${!available ? ' unavailable' : ''}${params.time === slot.start_time ? ' selected' : ''}`;
     btn.disabled = !available;
 
-    const [timePart, period] = formatTime24h(slot.start_time);
+    const [timePart, period] = formatTime12h(slot.start_time);
     btn.innerHTML = `<span class="t-hour">${timePart}</span><span class="t-period">${period}</span>`;
 
     if (available) {
@@ -1224,26 +1241,28 @@ function renderCalendarStrip(selectedDate, keepOffset = false) {
         btn.style.pointerEvents = 'none';
       }
 
-      btn.onclick = async () => {
+      btn.onclick = () => {
         const currentParams = getParams();
-        // Update date in URL, clear time/branch since they're now stale
-        setParams({ date: iso, time: null, time_end: null, branch_id: null }, true);
-        // Reload availability for new date
-        await loadAvailability(iso, currentParams.service_id, currentParams.guests);
-        renderTimeSlots({ ...currentParams, date: iso, time: null });
-        // Update visual selection
+        // Update visual selection immediately
         document.querySelectorAll('.cal-day').forEach(el => el.classList.remove('selected'));
         btn.classList.add('selected');
         $timeSlotsContainer.classList.remove('hidden');
 
-        // Update month label based on selected date
+        // Update month label based on selected date immediately
         $calMonthLabel.textContent = `Tháng ${date.getMonth() + 1}, ${date.getFullYear()}`;
 
-        // Center swiper slide on click
+        // Center swiper slide immediately
         const selectedIndex = calState.allDates.indexOf(date);
         if (selectedIndex !== -1 && calSwiper) {
           calSwiper.slideTo(selectedIndex, 300);
         }
+
+        // Update date in URL, clear time/branch since they're now stale
+        setParams({ date: iso, time: null, time_end: null, branch_id: null }, true);
+        // Reload availability in background (shimmer placeholders show up immediately)
+        loadAvailability(iso, currentParams.service_id, currentParams.guests).then(() => {
+          renderTimeSlots({ ...currentParams, date: iso, time: null });
+        });
       };
 
       // Wrap btn in swiper-slide
@@ -1364,14 +1383,19 @@ function renderCalendarStrip(selectedDate, keepOffset = false) {
         btn.style.pointerEvents = 'none';
       }
 
-      btn.onclick = async () => {
+      btn.onclick = () => {
         const currentParams = getParams();
-        setParams({ date: iso, time: null, time_end: null, branch_id: null }, true);
-        await loadAvailability(iso, currentParams.service_id, currentParams.guests);
-        renderTimeSlots({ ...currentParams, date: iso, time: null });
+        // Update visual selection immediately
         document.querySelectorAll('.cal-day').forEach(el => el.classList.remove('selected'));
         btn.classList.add('selected');
         $timeSlotsContainer.classList.remove('hidden');
+
+        // Update date in URL, clear time/branch since they're now stale
+        setParams({ date: iso, time: null, time_end: null, branch_id: null }, true);
+        // Reload availability in background (shimmer placeholders show up immediately)
+        loadAvailability(iso, currentParams.service_id, currentParams.guests).then(() => {
+          renderTimeSlots({ ...currentParams, date: iso, time: null });
+        });
       };
 
       $calStrip.appendChild(btn);
@@ -1397,6 +1421,9 @@ function updateSummary(step, params) {
   // Dynamically set the step class on sidebar for responsive CSS styling
   if ($sidebar) {
     $sidebar.className = `summary-sidebar step-${step}`;
+    if (step === STEPS.CONFIRMATION) {
+      $sidebar.classList.add('hidden');
+    }
     // Always start each step with collapsed drawer on mobile
     $sidebar.classList.remove('expanded');
     $sidebar.style.transform = '';
@@ -1429,7 +1456,9 @@ function updateSummary(step, params) {
   sumServiceSection.classList.toggle('hidden', !showService);
   sumTimeSection.classList.toggle('hidden', !showTime);
   branchInfo.classList.toggle('hidden', !showBranch);
-  $btnSkipService.classList.toggle('hidden', step !== STEPS.SERVICES);
+  if ($btnSkipWrap) {
+    $btnSkipWrap.classList.toggle('hidden', step !== STEPS.SERVICES);
+  }
 
   const drawerSubmitBtn = document.getElementById('btn-drawer-submit');
   if (drawerSubmitBtn) {
@@ -1442,14 +1471,27 @@ function updateSummary(step, params) {
 
   // Service info
   if (showService) {
-    document.getElementById('sum-service-name').textContent = service ? service.name : 'Chọn sau ở spa';
-    document.getElementById('sum-service-duration').textContent = service ? `${service.duration_minutes}p` : `${SKIP_DURATION_MINUTES}p`;
-    document.getElementById('sum-service-price').textContent = service ? formatPrice(service.price) : formatPrice(0);
+    const isSkipped = !service;
+    if (isSkipped) {
+      document.getElementById('sum-service-name').textContent = 'Dịch Vụ';
+      document.getElementById('sum-service-duration').textContent = '';
+      document.getElementById('sum-service-price').textContent = 'Chọn sau ở spa';
+      document.getElementById('sum-service-price').style.fontWeight = '400';
+      document.getElementById('sum-service-price').style.color = 'var(--_colours---paragraph-dark)';
+    } else {
+      document.getElementById('sum-service-name').textContent = service.name;
+      document.getElementById('sum-service-duration').textContent = `${service.duration_minutes}p`;
+      document.getElementById('sum-service-price').textContent = formatPrice(service.price);
+      document.getElementById('sum-service-price').style.fontWeight = '';
+      document.getElementById('sum-service-price').style.color = '';
+    }
   }
 
   // Time info
   if (showTime) {
-    document.getElementById('sum-time-range').textContent = `${params.time} - ${params.time_end || ''}`;
+    const start12 = formatTime12hSimple(params.time);
+    const end12 = formatTime12hSimple(params.time_end);
+    document.getElementById('sum-time-range').textContent = `${start12} - ${end12}`;
     document.getElementById('sum-time-date').textContent = formatDateDisplayFull(new Date(params.date + 'T00:00:00'));
   }
 
@@ -1476,7 +1518,9 @@ function populateConfirmation(params, customerData) {
   const branch = getSelectedBranch();
 
   document.getElementById('conf-date-time').textContent = formatDateDisplayFull(new Date(params.date + 'T00:00:00'));
-  document.getElementById('conf-time-range').textContent = `${params.time} — ${params.time_end || ''}`;
+  const start12 = formatTime12hSimple(params.time);
+  const end12 = formatTime12hSimple(params.time_end);
+  document.getElementById('conf-time-range').textContent = `${start12} — ${end12}`;
 
   document.getElementById('conf-service-name').textContent = service?.name || 'Chọn sau ở spa';
   document.getElementById('conf-service-price').textContent = service
@@ -1508,8 +1552,8 @@ function populateConfirmation(params, customerData) {
       // Use specific Google Maps links per branch if available, otherwise fall back to search
       const BRANCH_MAP_LINKS = {
         // Map branch names to their specific Google Maps URLs from the website
-        'CN 1': 'https://maps.app.goo.gl/CHKBaCVmCtAzKqXu8',
-        'CN 2': 'https://maps.app.goo.gl/GhcwqqUKWatqQB1bA',
+        'CN 1': 'https://maps.app.goo.gl/bce3bzSfE4KNGqcp7',
+        'CN 2': 'https://maps.app.goo.gl/m3PdKh93LyTX32XX9',
       };
       // Try to match by branch name
       const specificLink = Object.entries(BRANCH_MAP_LINKS).find(([key]) =>
@@ -1524,18 +1568,24 @@ function populateConfirmation(params, customerData) {
 
 // ---- Submission ----
 
+let isSubmitting = false;
+
 async function handleSubmit(e) {
   e.preventDefault();
-  const $btn = document.getElementById('btn-submit');
-  const $drawerBtn = document.getElementById('btn-drawer-submit');
-  if ($btn.disabled || $drawerBtn?.disabled) return;
+  if (isSubmitting) return;
 
-  $btn.disabled = true;
-  $btn.textContent = 'Đang xử lý...';
-  if ($drawerBtn) {
-    $drawerBtn.disabled = true;
-    $drawerBtn.textContent = 'Đang xử lý...';
-  }
+  const $btn = document.getElementById('btn-submit');
+  const $btnPeek = document.getElementById('btn-drawer-submit-peek');
+  const $btnBottom = document.getElementById('btn-drawer-submit-bottom');
+
+  const buttons = [$btn, $btnPeek, $btnBottom].filter(Boolean);
+
+  isSubmitting = true;
+  buttons.forEach(btn => {
+    btn.disabled = true;
+    btn.dataset.originalText = btn.textContent;
+    btn.textContent = 'Đang xử lý...';
+  });
 
   const params = getParams();
   const branch = getSelectedBranch();
@@ -1557,6 +1607,7 @@ async function handleSubmit(e) {
     booking_date: params.date,
     start_time: params.time,
     notes: customerData.notes,
+    hold_ids: getSavedHoldIds()
   };
 
   try {
@@ -1571,18 +1622,20 @@ async function handleSubmit(e) {
       throw new Error(err.error || 'Booking failed');
     }
 
+    stopCountdown();
+    clearHoldStorage();
+
     saveCustomerToStorage(customerData);
     populateConfirmation(params, customerData);
     navigateTo(STEPS.CONFIRMATION);
   } catch (err) {
     alert('Đặt lịch thất bại: ' + err.message);
   } finally {
-    $btn.disabled = false;
-    $btn.textContent = 'Đặt Lịch';
-    if ($drawerBtn) {
-      $drawerBtn.disabled = false;
-      $drawerBtn.textContent = 'Xác Nhận Đặt Lịch';
-    }
+    isSubmitting = false;
+    buttons.forEach(btn => {
+      btn.disabled = false;
+      btn.textContent = btn.dataset.originalText || (btn.id === 'btn-submit' ? 'Đặt Lịch' : 'Xác Nhận Đặt Lịch');
+    });
   }
 }
 
@@ -1610,12 +1663,25 @@ function formatDateDisplayFull(date) {
   return `${days[date.getDay()]}, ${date.getDate()} tháng ${months[date.getMonth()]}, ${date.getFullYear()}`;
 }
 
-function formatTime24h(timeStr) {
+function formatTime12h(timeStr) {
   const [h, m] = timeStr.split(':').map(Number);
   const period = h < 12 ? 'AM' : 'PM';
-  const hFormatted = String(h).padStart(2, '0');
+  let h12 = h % 12;
+  if (h12 === 0) h12 = 12;
+  const hFormatted = String(h12).padStart(2, '0');
   const mFormatted = String(m).padStart(2, '0');
   return [`${hFormatted}:${mFormatted}`, period];
+}
+
+function formatTime12hSimple(timeStr) {
+  if (!timeStr) return '';
+  const [hStr, mStr] = timeStr.split(':');
+  const h = parseInt(hStr);
+  if (isNaN(h)) return timeStr;
+  const period = h < 12 ? 'AM' : 'PM';
+  let h12 = h % 12;
+  if (h12 === 0) h12 = 12;
+  return `${String(h12).padStart(2, '0')}:${mStr} ${period}`;
 }
 
 function timeToMinutesHHMM(timeStr) {
@@ -1650,5 +1716,282 @@ function getSavedCustomerData() {
     return JSON.parse(raw);
   } catch (_) {
     return { name: 'Khách', phone: '', email: '', notes: '' };
+  }
+}
+
+// =============================================
+// Slot Hold & Countdown Timer System Helpers
+// =============================================
+
+const HOLD_IDS_KEY = 'spa_hold_ids';
+const HOLD_EXPIRES_KEY = 'spa_hold_expires';
+const HOLD_PARAMS_KEY = 'spa_hold_params';
+
+let countdownInterval = null;
+
+function saveHoldToStorage(holdIds, expiresAt, params) {
+  localStorage.setItem(HOLD_IDS_KEY, JSON.stringify(holdIds));
+  localStorage.setItem(HOLD_EXPIRES_KEY, String(expiresAt));
+  localStorage.setItem(HOLD_PARAMS_KEY, JSON.stringify(params));
+}
+
+function getSavedHoldIds() {
+  try {
+    const raw = localStorage.getItem(HOLD_IDS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function getSavedHoldExpires() {
+  const raw = localStorage.getItem(HOLD_EXPIRES_KEY);
+  return raw ? parseInt(raw) : 0;
+}
+
+function getSavedHoldParams() {
+  try {
+    const raw = localStorage.getItem(HOLD_PARAMS_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function clearHoldStorage() {
+  localStorage.removeItem(HOLD_IDS_KEY);
+  localStorage.removeItem(HOLD_EXPIRES_KEY);
+  localStorage.removeItem(HOLD_PARAMS_KEY);
+}
+
+function startCountdown(expiresAt) {
+  if (countdownInterval) {
+    clearInterval(countdownInterval);
+  }
+
+  const $countdown = document.getElementById('booking-countdown');
+  const $countdownMobile = document.getElementById('booking-countdown-mobile');
+  
+  const $timerVal = document.getElementById('countdown-timer-val');
+  const $timerValMobile = document.getElementById('countdown-timer-val-mobile');
+
+  // Show the countdown UI on both containers (CSS media queries will handle visibility)
+  if ($countdown) $countdown.classList.remove('hidden');
+  if ($countdownMobile) $countdownMobile.classList.remove('hidden');
+  document.body.classList.add('has-countdown');
+
+  function updateTimer() {
+    const now = Date.now();
+    const remaining = expiresAt - now;
+
+    if (remaining <= 0) {
+      clearInterval(countdownInterval);
+      if ($timerVal) $timerVal.textContent = '00:00s';
+      if ($timerValMobile) $timerValMobile.textContent = '00:00s';
+      handleHoldExpiration();
+      return;
+    }
+
+    const minutes = Math.floor(remaining / 60000);
+    const seconds = Math.floor((remaining % 60000) / 1000);
+
+    const minutesStr = String(minutes).padStart(2, '0');
+    const secondsStr = String(seconds).padStart(2, '0');
+    const formatted = `${minutesStr}:${secondsStr}s`;
+
+    if ($timerVal) $timerVal.textContent = formatted;
+    if ($timerValMobile) $timerValMobile.textContent = formatted;
+  }
+
+  updateTimer();
+  countdownInterval = setInterval(updateTimer, 1000);
+}
+
+function stopCountdown() {
+  if (countdownInterval) {
+    clearInterval(countdownInterval);
+    countdownInterval = null;
+  }
+  const $countdown = document.getElementById('booking-countdown');
+  const $countdownMobile = document.getElementById('booking-countdown-mobile');
+  
+  if ($countdown) $countdown.classList.add('hidden');
+  if ($countdownMobile) $countdownMobile.classList.add('hidden');
+  
+  document.body.classList.remove('has-countdown');
+}
+
+async function handleHoldExpiration() {
+  stopCountdown();
+
+  const holdIds = getSavedHoldIds();
+  clearHoldStorage();
+
+  if (holdIds && holdIds.length > 0) {
+    try {
+      const qs = new URLSearchParams({ hold_ids: holdIds.join(',') });
+      await fetch(`${API_BASE}/bookings/hold?${qs.toString()}`, {
+        method: 'DELETE'
+      });
+      console.log('Expired hold bookings deleted from DB');
+    } catch (err) {
+      console.error('Error deleting expired holds:', err);
+    }
+  }
+
+  // Show premium toast notification with clickable links
+  const toastMsg = `Ý không tìm được lịch trống cho ngày này rồi. Mình thử chọn ngày khác hoặc liên hệ cho Ý qua <a href="https://m.me/61573340536773?text=Hi,%20%C3%9D%20cho%20m%C3%ACnh%20%C4%91%E1%BA%B7t%20l%E1%BB%8Bch%207h%20t%E1%BB%91i%20nay%20%E1%BB%9F%20CN%201%20ho%E1%BA%B7c%202%20nh%C3%A9." target="_blank" rel="noopener noreferrer">Fanpage</a> hoặc <a href="https://zalo.me/0968241808" target="_blank" rel="noopener noreferrer">Zalo</a> để Ý hỗ trợ mình đặt lịch nghen ^^.`;
+  showToast(toastMsg, 10000);
+
+  clearBookingParams();
+}
+
+function clearBookingParams() {
+  const current = new URLSearchParams(window.location.search);
+  current.delete('book');
+  current.delete('booking');
+  current.delete('date');
+  current.delete('time');
+  current.delete('time_end');
+  current.delete('branch_id');
+
+  // Set the step back to timing to preserve the selected service
+  current.set('step', STEPS.TIME);
+
+  const url = `${window.location.pathname}?${current.toString()}`;
+  window.history.replaceState(null, '', url);
+  handleRouting();
+}
+
+function showToast(message, durationMs = 10000) {
+  let container = document.getElementById('toast-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'toast-container';
+    document.body.appendChild(container);
+  }
+
+  const toast = document.createElement('div');
+  toast.className = 'custom-toast';
+
+  const text = document.createElement('div');
+  text.className = 'toast-message';
+  text.innerHTML = message;
+  toast.appendChild(text);
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'toast-close-btn';
+  closeBtn.innerHTML = '&times;';
+  closeBtn.onclick = () => {
+    toast.classList.add('hide');
+    setTimeout(() => toast.remove(), 400);
+  };
+  toast.appendChild(closeBtn);
+
+  container.appendChild(toast);
+
+  setTimeout(() => {
+    toast.classList.add('hide');
+    setTimeout(() => toast.remove(), 400);
+  }, durationMs);
+}
+
+async function releaseHoldIfNavigatedAway(newStep) {
+  stopCountdown();
+  const holdIds = getSavedHoldIds();
+  if (holdIds && holdIds.length > 0) {
+    clearHoldStorage();
+    try {
+      const qs = new URLSearchParams({ hold_ids: holdIds.join(',') });
+      await fetch(`${API_BASE}/bookings/hold?${qs.toString()}`, {
+        method: 'DELETE'
+      });
+      console.log('Hold bookings released due to navigation to step:', newStep);
+    } catch (err) {
+      console.error('Error releasing hold bookings:', err);
+    }
+  }
+}
+
+async function handleHoldState(params) {
+  const savedHoldIds = getSavedHoldIds();
+  const savedExpires = getSavedHoldExpires();
+  const savedParams = getSavedHoldParams();
+
+  // Check if we have a valid saved hold matching current selections
+  const matches = savedParams &&
+    savedParams.branch_id === params.branch_id &&
+    savedParams.date === params.date &&
+    savedParams.time === params.time &&
+    savedParams.guests === params.guests &&
+    savedParams.service_id === params.service_id;
+
+  const isValid = matches && savedHoldIds.length > 0 && savedExpires > Date.now();
+
+  if (isValid) {
+    console.log('Resuming existing hold countdown...');
+    startCountdown(savedExpires);
+  } else {
+    console.log('Creating a new slot hold...');
+
+    if (savedHoldIds.length > 0) {
+      try {
+        const qs = new URLSearchParams({ hold_ids: savedHoldIds.join(',') });
+        fetch(`${API_BASE}/bookings/hold?${qs.toString()}`, { method: 'DELETE' }).catch(() => { });
+      } catch (_) { }
+    }
+
+    clearHoldStorage();
+
+    const $btnSubmit = document.getElementById('btn-submit');
+    const $btnPeek = document.getElementById('btn-drawer-submit-peek');
+    const $btnBottom = document.getElementById('btn-drawer-submit-bottom');
+
+    const buttons = [$btnSubmit, $btnPeek, $btnBottom].filter(Boolean);
+    buttons.forEach(btn => {
+      btn.disabled = true;
+      btn.dataset.originalText = btn.textContent;
+      btn.textContent = 'Đang giữ chỗ...';
+    });
+
+    try {
+      const holdDuration = 5 * 60 * 1000; // 5 minutes
+      const expiresAt = Date.now() + holdDuration;
+
+      const payload = {
+        branch_id: params.branch_id,
+        service_id: params.service_id || null,
+        num_guests: params.guests,
+        booking_date: params.date,
+        start_time: params.time,
+        hold_duration: holdDuration
+      };
+
+      const res = await fetch(`${API_BASE}/bookings/hold`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Giữ chỗ thất bại');
+      }
+
+      const data = await res.json();
+      const holdIds = data.hold_ids;
+
+      saveHoldToStorage(holdIds, expiresAt, params);
+      startCountdown(expiresAt);
+
+    } catch (err) {
+      alert('Khung giờ này đã bị giữ hoặc hết chỗ. Vui lòng chọn khung giờ khác!');
+      navigateTo(STEPS.TIME);
+    } finally {
+      buttons.forEach(btn => {
+        btn.disabled = false;
+        btn.textContent = btn.dataset.originalText || (btn.id === 'btn-submit' ? 'Đặt Lịch' : 'Xác Nhận Đặt Lịch');
+      });
+    }
   }
 }

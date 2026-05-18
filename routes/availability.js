@@ -6,6 +6,41 @@ const OPEN_HOUR = 10;
 const CLOSE_HOUR = 22;
 const SLOT_STEP_MINUTES = 15;
 
+async function cleanupExpiredHolds() {
+  try {
+    const { data: holds, error } = await supabase
+      .from('bookings')
+      .select('id, internal_note')
+      .eq('status', 'pending')
+      .like('internal_note', '[GIỮ CHỖ TẠM THỜI]%');
+
+    if (!error && holds && holds.length > 0) {
+      const now = Date.now();
+      const expiredIds = [];
+
+      for (const hold of holds) {
+        const match = hold.internal_note.match(/EXPIRES:(\d+)/);
+        if (match) {
+          const expiresAt = parseInt(match[1]);
+          if (now >= expiresAt) {
+            expiredIds.push(hold.id);
+          }
+        } else {
+          // If no EXPIRES tag is present, fallback (clean older records after 5m)
+          expiredIds.push(hold.id);
+        }
+      }
+
+      if (expiredIds.length > 0) {
+        await supabase.from('bookings').delete().in('id', expiredIds);
+        console.log(`🧹 [Availability API] Cleaned up ${expiredIds.length} expired slot holds dynamically`);
+      }
+    }
+  } catch (err) {
+    console.error('Error cleaning up expired holds in availability:', err.message);
+  }
+}
+
 /**
  * GET /api/availability
  * Query params: branch_id, service_id, date (YYYY-MM-DD), num_guests
@@ -14,6 +49,7 @@ const SLOT_STEP_MINUTES = 15;
  */
 router.get('/', async (req, res) => {
   try {
+    await cleanupExpiredHolds();
     const { branch_id, service_id, date, num_guests } = req.query;
 
     if (!branch_id || !service_id || !date) {
@@ -62,6 +98,7 @@ router.get('/', async (req, res) => {
  */
 router.get('/merged', async (req, res) => {
   try {
+    await cleanupExpiredHolds();
     const { date, num_guests, service_id, duration_minutes } = req.query;
 
     if (!date) {

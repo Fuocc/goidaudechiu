@@ -28,6 +28,11 @@
 
 <body>
   <div class="booking-page">
+    <!-- Mobile Countdown Timer (fixed at the top of viewport) -->
+    <div class="booking-countdown-container hidden" id="booking-countdown-mobile">
+      <div class="countdown-badge">Thời gian còn lại</div>
+      <div class="countdown-time" id="countdown-timer-val-mobile">05:00s</div>
+    </div>
     <div class="booking-container">
       <!-- Main Wizard Area -->
       <main class="wizard-main">
@@ -105,22 +110,22 @@
             <div class="form-step" id="step-customerinfo">
               <div>
                 <div class="form-group">
-                  <label class="form-label">Tên anh/chị *</label>
+                  <label class="form-label">Tên anh/chị <span class="form-label-required">*</span></label>
                   <input type="text" id="customer-name" name="customer_name" class="form-control"
                     placeholder="Nhập tên của bạn" required>
                 </div>
                 <div class="form-group">
-                  <label class="form-label">Số điện thoại *</label>
+                  <label class="form-label">Số điện thoại <span class="form-label-required">*</span></label>
                   <input type="tel" id="customer-phone" name="customer_phone" class="form-control"
                     placeholder="090 123 4567" required>
                 </div>
                 <div class="form-group">
-                  <label class="form-label">Email</label>
+                  <label class="form-label">Email (không bắt buộc)</label>
                   <input type="email" id="customer-email" name="customer_email" class="form-control"
                     placeholder="email@example.com">
                 </div>
                 <div class="form-group">
-                  <label class="form-label">Ghi chú</label>
+                  <label class="form-label">Ghi chú (không bắt buộc)</label>
                   <textarea id="notes" name="notes" class="form-control"
                     placeholder="Hãy note cho Ý biết điều gì sẽ mang lại nhiều dễ chịu nhất cho bạn nhé..."></textarea>
                 </div>
@@ -217,6 +222,12 @@
           </form>
           <!-- Sidebar Summary Area -->
           <aside class="summary-sidebar" id="summary-sidebar">
+            <!-- Countdown Timer Card (Desktop: sits above sidebar card, Mobile: fixed at the top of page) -->
+            <div class="booking-countdown-container hidden" id="booking-countdown">
+              <div class="countdown-badge">Thời gian còn lại</div>
+              <div class="countdown-time" id="countdown-timer-val">05:00s</div>
+            </div>
+
             <div class="sidebar-inner">
               <!-- Mobile Drawer Drag Handle -->
               <div class="drawer-handle"></div>
@@ -239,6 +250,8 @@
 
               <!-- Branch Info: Visible only in step-customerinfo -->
               <div id="sidebar-branch-info" class="sidebar-branch-info hidden">
+                <img src="https://placehold.co/100" alt="Branch" class="sidebar-branch-img" id="sum-branch-img"
+                  onerror="this.onerror=null; this.src='https://placehold.co/100?text=Spa'">
                 <div class="sidebar-branch-details">
                   <h4 id="sum-branch-name">Ý Ơi Spa - CN 2</h4>
                   <p id="sum-branch-address">31/26 Hoàng Hoa Thám, P. Tân Bình, TP. HCM</p>
@@ -284,7 +297,9 @@
 
 
               <div id="skip-btn-container">
-                <button type="button" class="btn-primary" id="btn-skip-service">Bỏ qua bước này</button>
+                <div class="btn-skip-wrap" id="btn-skip-wrap">
+                  <button type="button" class="btn-primary" id="btn-skip-service">Bỏ qua bước này</button>
+                </div>
                 <button type="submit" form="booking-form" class="btn-primary" id="btn-drawer-submit-bottom"
                   style="display: none; width: 100%;">Xác Nhận Đặt Lịch</button>
               </div>

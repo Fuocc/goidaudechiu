@@ -178,7 +178,8 @@ router.post('/', async (req, res) => {
     const {
       branch_id, service_id, duration_minutes, num_guests,
       customer_name, customer_phone, customer_email,
-      booking_date, start_time, end_time: clientEndTime, notes
+      booking_date, start_time, end_time: clientEndTime, notes,
+      hold_ids
     } = req.body;
 
     if (!branch_id || !customer_name || !customer_phone || !booking_date || !start_time) {
@@ -187,59 +188,7 @@ router.post('/', async (req, res) => {
 
     const guestCount = parseInt(num_guests) || 1;
 
-    // 1) Resolve service-like data (duration + price)
-    let resolvedService = null;
-    let duration = null;
-    let price = 0;
-    let currentServiceId = service_id;
-
-    // If no service_id provided (Skip step), try to find "Giữ chỗ" service
-    if (!currentServiceId) {
-      const { data: placeholderService } = await supabase
-        .from('services')
-        .select('*')
-        .eq('name', 'Giữ chỗ')
-        .eq('is_active', true)
-        .maybeSingle();
-
-      if (placeholderService) {
-        resolvedService = placeholderService;
-        currentServiceId = placeholderService.id;
-        duration = placeholderService.duration_minutes;
-        price = placeholderService.price || 0;
-      } else {
-        duration = parseInt(duration_minutes) || 60;
-        price = 0;
-      }
-    } else {
-      const { data: service, error: serviceErr } = await supabase
-        .from('services')
-        .select('*')
-        .eq('id', currentServiceId)
-        .single();
-
-      if (serviceErr || !service) {
-        return res.status(404).json({ error: 'Service not found' });
-      }
-
-      resolvedService = service;
-      duration = service.duration_minutes;
-      price = service.price || 0;
-    }
-
-
-    // 2) Calculate end_time (Use client's end_time if provided)
-    const startMinutes = timeToMinutes(start_time);
-    const endMinutes = startMinutes + duration;
-
-    let end_time = clientEndTime;
-    if (!end_time) {
-      const endH = Math.floor(endMinutes / 60);
-      const endM = endMinutes % 60;
-      end_time = `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
-    }
-
-    // 3) Find or create customer
+    // 1) Find or create customer
     let customer;
     if (req.body.customer_id) {
       const { data: cById } = await supabase
@@ -284,6 +233,74 @@ router.post('/', async (req, res) => {
 
       if (custErr) throw custErr;
       customer = newCustomer;
+    }
+
+    // --- If hold_ids are provided, update them instead of creating new bookings ---
+    if (hold_ids && (Array.isArray(hold_ids) || typeof hold_ids === 'string')) {
+      const ids = Array.isArray(hold_ids) ? hold_ids : [hold_ids];
+      const updatedBookings = [];
+
+      for (const id of ids) {
+        // --- Anti-Spam Check: query recent bookings by same phone in last 30 min ---
+        let bookingStatus = 'confirmed';
+        let internalNote = null;
+
+        const isWalkIn = normalize(customer_name).includes('khach la') && /^0+$/.test(customer_phone);
+
+        if (!isWalkIn) {
+          try {
+            const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+            const { data: recentBookings, error: recentErr } = await supabase
+              .from('bookings')
+              .select('id, created_at, customers!inner(phone)')
+              .eq('customers.phone', customer_phone)
+              .gte('created_at', thirtyMinAgo);
+
+            if (!recentErr && recentBookings && recentBookings.length > 0) {
+              bookingStatus = 'pending';
+              internalNote = `⚠️ Khách hàng ${customer_phone} đã có ${recentBookings.length} đơn trong 30 phút qua. Vui lòng xác nhận qua điện thoại.`;
+              console.log(`🔶 Anti-spam triggered for phone ${customer_phone}: ${recentBookings.length} recent booking(s)`);
+            }
+          } catch (spamCheckErr) {
+            console.error('Anti-spam check error:', spamCheckErr.message);
+          }
+        }
+
+        const { data: updated, error: upErr } = await supabase
+          .from('bookings')
+          .update({
+            customer_id: customer.id,
+            status: bookingStatus,
+            notes: notes || null,
+            internal_note: internalNote // clear the SLOT_HOLD note!
+          })
+          .eq('id', id)
+          .select(`
+            *,
+            customers(name, phone, email),
+            services(name, duration_minutes, price),
+            employees(name),
+            beds(name),
+            branches(name)
+          `)
+          .single();
+
+        if (!upErr && updated) {
+          updatedBookings.push(updated);
+        }
+      }
+
+      if (updatedBookings.length > 0) {
+        const result = updatedBookings.length === 1 ? updatedBookings[0] : updatedBookings;
+
+        // Fire webhooks async
+        const webhookEvent = updatedBookings.some(b => b.status === 'pending') ? 'booking.pending' : 'booking.confirmed';
+        fireWebhooks(webhookEvent, updatedBookings).catch(err =>
+          console.error('Webhook fire error:', err.message)
+        );
+
+        return res.status(200).json(result);
+      }
     }
 
     // 4) Load existing bookings in branch/day
@@ -498,6 +515,287 @@ router.post('/', async (req, res) => {
 });
 
 /**
+ * POST /api/bookings/hold
+ * Create a temporary slot hold
+ */
+router.post('/hold', async (req, res) => {
+  try {
+    // Run cleanup first
+    await cleanupExpiredHolds();
+
+    const {
+      branch_id, service_id, num_guests,
+      booking_date, start_time, hold_duration
+    } = req.body;
+
+    if (!branch_id || !booking_date || !start_time) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    const guestCount = parseInt(num_guests) || 1;
+
+    // 1) Resolve service-like data (duration + price)
+    let resolvedService = null;
+    let duration = 60;
+    let price = 0;
+    let currentServiceId = service_id;
+
+    if (currentServiceId) {
+      const { data: service, error: serviceErr } = await supabase
+        .from('services')
+        .select('*')
+        .eq('id', currentServiceId)
+        .single();
+
+      if (!serviceErr && service) {
+        resolvedService = service;
+        duration = service.duration_minutes || 60;
+        price = service.price || 0;
+      }
+    } else {
+      // Try to find "Giữ chỗ" service
+      const { data: placeholderService } = await supabase
+        .from('services')
+        .select('*')
+        .eq('name', 'Giữ chỗ')
+        .eq('is_active', true)
+        .maybeSingle();
+
+      if (placeholderService) {
+        resolvedService = placeholderService;
+        currentServiceId = placeholderService.id;
+        duration = placeholderService.duration_minutes || 60;
+        price = placeholderService.price || 0;
+      }
+    }
+
+    // Calculate end_time
+    const startMinutes = timeToMinutes(start_time);
+    const endMinutes = startMinutes + duration;
+    const endH = Math.floor(endMinutes / 60);
+    const endM = endMinutes % 60;
+    const end_time = `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
+
+    // 2) Find or create placeholder customer
+    let customer;
+    const placeholderPhone = '0000000000';
+    const { data: existingCustomer } = await supabase
+      .from('customers')
+      .select('*')
+      .eq('phone', placeholderPhone)
+      .maybeSingle();
+
+    if (existingCustomer) {
+      customer = existingCustomer;
+    } else {
+      const { data: newCustomer, error: custErr } = await supabase
+        .from('customers')
+        .insert([{ name: 'Giữ Chỗ Tạm Thời', phone: placeholderPhone, email: null }])
+        .select()
+        .single();
+
+      if (custErr) throw custErr;
+      customer = newCustomer;
+    }
+
+    // 3) Load existing bookings in branch/day (including other holds!)
+    const { data: dayBookings, error: dayErr } = await supabase
+      .from('bookings')
+      .select('employee_id, bed_id, start_time, end_time')
+      .eq('branch_id', branch_id)
+      .eq('booking_date', booking_date)
+      .neq('status', 'cancelled');
+
+    if (dayErr) throw dayErr;
+
+    // 4) Load active employees
+    const { data: allEmployees, error: empErr } = await supabase
+      .from('employees')
+      .select('id')
+      .eq('branch_id', branch_id)
+      .eq('is_active', true);
+
+    if (empErr) throw empErr;
+
+    // Apply schedule rules
+    const empIds = allEmployees.map(e => e.id);
+    let schedules = [];
+    if (empIds.length > 0) {
+      const { data: schedData, error: schedErr } = await supabase
+        .from('employee_schedules')
+        .select('employee_id, start_time, end_time, is_day_off')
+        .in('employee_id', empIds)
+        .eq('date', booking_date);
+
+      if (schedErr) throw schedErr;
+      schedules = schedData || [];
+    }
+    const scheduleByEmp = new Map();
+    for (const s of schedules) scheduleByEmp.set(s.employee_id, s);
+
+    const employees = allEmployees.filter(e => {
+      const s = scheduleByEmp.get(e.id);
+      if (!s) return false;
+      if (s.is_day_off) return false;
+      if (!s.start_time || !s.end_time) return false;
+
+      const sStart = timeToMinutes(String(s.start_time).substring(0, 5));
+      const sEnd = timeToMinutes(String(s.end_time).substring(0, 5));
+      return startMinutes >= sStart && endMinutes <= sEnd;
+    });
+
+    if (employees.length < guestCount) {
+      return res.status(409).json({ error: 'Không đủ nhân viên cho khung giờ này.' });
+    }
+
+    // 5) Load active beds
+    const { data: beds, error: bedErr } = await supabase
+      .from('beds')
+      .select('id')
+      .eq('branch_id', branch_id)
+      .eq('is_active', true);
+
+    if (bedErr) throw bedErr;
+
+    // 6) Assign employee & bed
+    const { data: settingsData } = await supabase.from('settings').select('*');
+    const settings = (settingsData || []).reduce((acc, curr) => {
+      acc[curr.key] = curr.value;
+      return acc;
+    }, {});
+
+    const bufferTime = parseInt(settings.buffer_time) || 15;
+    const tourOrder = settings[`tour_order_${branch_id}`] || [];
+
+    const createdHoldIds = [];
+
+    for (let g = 0; g < guestCount; g++) {
+      const busyEmployeeIds = new Set();
+      // Combine dayBookings with already created holds in this loop to prevent double assignment of the same staff/bed
+      const allRelevantBookings = [...dayBookings, ...createdHoldIds.map(id => {
+        // Find the record we just inserted in the array or build a mock booking
+        return {
+          employee_id: employees.find(emp => emp.id === createdHoldIds[g - 1])?.id, // fallback/mock
+          bed_id: beds[0]?.id // mock
+        };
+      })]; // We will search for available staff/beds one by one, keeping track of assigned ones.
+
+      const assignedEmpIds = createdHoldIds.map(h => h.employee_id).filter(Boolean);
+      const assignedBedIds = createdHoldIds.map(h => h.bed_id).filter(Boolean);
+
+      for (const booking of dayBookings) {
+        const bStart = timeToMinutes(booking.start_time);
+        const bEnd = timeToMinutes(booking.end_time) + bufferTime;
+        if (startMinutes < bEnd && bStart < endMinutes) {
+          busyEmployeeIds.add(booking.employee_id);
+        }
+      }
+
+      const availableEmployees = employees.filter(e => !busyEmployeeIds.has(e.id) && !assignedEmpIds.includes(e.id));
+      if (availableEmployees.length === 0) {
+        return res.status(409).json({ error: 'Không có nhân viên trống cho khung giờ này.' });
+      }
+
+      availableEmployees.sort((a, b) => {
+        const idxA = tourOrder.indexOf(a.id);
+        const idxB = tourOrder.indexOf(b.id);
+        if (idxA === -1 && idxB === -1) return 0;
+        if (idxA === -1) return 1;
+        if (idxB === -1) return -1;
+        return idxA - idxB;
+      });
+
+      const assignedEmployee = availableEmployees[0];
+
+      // Beds
+      const busyBedIds = new Set();
+      for (const booking of dayBookings) {
+        const bStart = timeToMinutes(booking.start_time);
+        const bEnd = timeToMinutes(booking.end_time);
+        if (startMinutes < bEnd && bStart < endMinutes) {
+          busyBedIds.add(booking.bed_id);
+        }
+      }
+
+      const availableBeds = beds.filter(b => !busyBedIds.has(b.id) && !assignedBedIds.includes(b.id));
+      if (availableBeds.length === 0) {
+        return res.status(409).json({ error: 'Không còn giường trống cho khung giờ này.' });
+      }
+
+      const bedBookingCount = {};
+      for (const bed of beds) bedBookingCount[bed.id] = 0;
+      for (const booking of dayBookings) {
+        if (bedBookingCount[booking.bed_id] !== undefined) bedBookingCount[booking.bed_id]++;
+      }
+
+      availableBeds.sort((a, b) => (bedBookingCount[a.id] || 0) - (bedBookingCount[b.id] || 0));
+      const assignedBed = availableBeds[0];
+
+      const durationMs = parseInt(hold_duration) || (5 * 60 * 1000);
+      const expiresAt = Date.now() + durationMs;
+
+      const insertPayload = {
+        customer_id: customer.id,
+        service_id: currentServiceId || null,
+        employee_id: assignedEmployee.id,
+        bed_id: assignedBed.id,
+        branch_id,
+        num_guests: guestCount,
+        booking_date,
+        start_time,
+        end_time,
+        status: 'pending',
+        total_price: price,
+        internal_note: `[GIỮ CHỖ TẠM THỜI] Giữ chỗ tạm thời cho khách đang đặt online. Tự động hủy lịch sau 5 phút.`
+      };
+
+      const { data: booking, error: bookErr } = await supabase
+        .from('bookings')
+        .insert([insertPayload])
+        .select()
+        .single();
+
+      if (bookErr) throw bookErr;
+      createdHoldIds.push(booking.id);
+    }
+
+    res.status(201).json({ hold_ids: createdHoldIds });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * DELETE /api/bookings/hold
+ * Cancel/release a hold booking (used when timer expires or user backs out)
+ */
+router.delete('/hold', async (req, res) => {
+  try {
+    const holdIdsRaw = req.query.hold_ids || req.body.hold_ids;
+    if (!holdIdsRaw) {
+      return res.status(400).json({ error: 'Missing hold_ids' });
+    }
+
+    const holdIds = Array.isArray(holdIdsRaw)
+      ? holdIdsRaw
+      : String(holdIdsRaw).split(',').map(id => id.trim());
+
+    const { error } = await supabase
+      .from('bookings')
+      .delete()
+      .in('id', holdIds)
+      .eq('status', 'pending')
+      .like('internal_note', '[GIỮ CHỖ TẠM THỜI]%');
+
+    if (error) throw error;
+
+    res.json({ message: 'Holds cancelled successfully' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * PUT /api/bookings/:id/status
  */
 router.put('/:id/status', async (req, res) => {
@@ -627,5 +925,50 @@ async function fireWebhooks(event, bookings) {
     }
   }
 }
+
+async function cleanupExpiredHolds() {
+  try {
+    const { data: holds, error } = await supabase
+      .from('bookings')
+      .select('id, internal_note')
+      .eq('status', 'pending')
+      .like('internal_note', '[GIỮ CHỖ TẠM THỜI]%');
+
+    if (!error && holds && holds.length > 0) {
+      const now = Date.now();
+      const expiredIds = [];
+
+      for (const hold of holds) {
+        const match = hold.internal_note.match(/EXPIRES:(\d+)/);
+        if (match) {
+          const expiresAt = parseInt(match[1]);
+          if (now >= expiresAt) {
+            expiredIds.push(hold.id);
+          }
+        } else {
+          // Fallback if no EXPIRES tag is present (older records)
+          const matchTime = hold.internal_note.match(/\[SLOT_HOLD\]\s+(\d+)/);
+          if (matchTime) {
+            const createdAt = parseInt(matchTime[1]);
+            if (now - createdAt >= 5 * 60 * 1000) {
+              expiredIds.push(hold.id);
+            }
+          } else {
+            expiredIds.push(hold.id);
+          }
+        }
+      }
+
+      if (expiredIds.length > 0) {
+        await supabase.from('bookings').delete().in('id', expiredIds);
+        console.log(`🧹 Cleaned up ${expiredIds.length} expired slot holds dynamically`);
+      }
+    }
+  } catch (err) {
+    console.error('Error in cleanupExpiredHolds:', err.message);
+  }
+}
+
+
 
 module.exports = router;
