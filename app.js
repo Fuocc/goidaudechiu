@@ -895,65 +895,6 @@ function bindEvents() {
       };
       $sidebar.addEventListener('transitionend', cleanup);
     }, { passive: true });
-
-
-
-    // Overlay tap to close
-    $overlay.onclick = () => {
-      const params = getParams();
-      const totalH = $sidebar.scrollHeight;
-      const peekH = (params.step === STEPS.CUSTOMERINFO) ? 156 : 90;
-      const snapTranslateY = Math.max(0, totalH - peekH);
-
-      $sidebar.style.transition = 'transform 0.4s cubic-bezier(0.16, 1, 0.3, 1)';
-      $overlay.style.transition = 'opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1)';
-      $sidebar.style.transform = `translateY(${snapTranslateY}px)`;
-      $overlay.style.opacity = '0';
-      $overlay.style.pointerEvents = 'none';
-      $overlay.classList.remove('active');
-
-      if (params.step === STEPS.CUSTOMERINFO) {
-        const peekBtn = document.getElementById('btn-drawer-submit-peek');
-        const skipContainer = document.getElementById('skip-btn-container');
-        if (peekBtn) {
-          peekBtn.style.transition = 'opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1)';
-          peekBtn.style.opacity = '1';
-        }
-        if (skipContainer) {
-          skipContainer.style.transition = 'opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1)';
-          skipContainer.style.opacity = '0';
-        }
-      }
-
-      const cleanup = (ev) => {
-        if (ev.propertyName === 'transform') {
-          $sidebar.style.transition = '';
-          $sidebar.style.transform = '';
-          $overlay.style.transition = '';
-          $overlay.style.opacity = '';
-          $overlay.style.pointerEvents = '';
-
-          if (params.step === STEPS.CUSTOMERINFO) {
-            const peekBtn = document.getElementById('btn-drawer-submit-peek');
-            const skipContainer = document.getElementById('skip-btn-container');
-            if (peekBtn) {
-              peekBtn.style.transition = '';
-              peekBtn.style.opacity = '';
-              peekBtn.style.pointerEvents = '';
-            }
-            if (skipContainer) {
-              skipContainer.style.transition = '';
-              skipContainer.style.opacity = '';
-              skipContainer.style.pointerEvents = '';
-            }
-          }
-
-          $sidebar.classList.remove('expanded');
-          $sidebar.removeEventListener('transitionend', cleanup);
-        }
-      };
-      $sidebar.addEventListener('transitionend', cleanup);
-    };
   }
 }
 

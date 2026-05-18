@@ -1510,8 +1510,7 @@ body {
   /* --- Stable visibility transitions for content inside the sheet --- */
   .summary-sidebar .summary-info,
   .summary-sidebar #sidebar-branch-info,
-  .summary-sidebar .sidebar-footer-text,
-  .summary-sidebar #skip-btn-container {
+  .summary-sidebar .sidebar-footer-text {
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
@@ -1591,7 +1590,7 @@ body {
     padding-top: 18px;
     padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)) !important;
     margin: 0 32px;
-    margin-top: 32px;
+    margin-top: 24px;
   }
 
   /* ===== Step-Specific Drawer Overrides ===== */
