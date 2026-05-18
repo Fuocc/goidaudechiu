@@ -484,8 +484,6 @@ body {
   align-items: center;
   gap: 12px;
   text-align: left;
-  padding-bottom: 20px;
-  border-bottom: 1px solid var(--_colours---border);
 }
 
 .sidebar-branch-img {
@@ -524,7 +522,7 @@ body {
 }
 
 .summary-title {
-  font-size: clamp(1rem, 0.97rem + 0.13vw, 1.125rem);
+  font-size: 1.125rem;
   font-weight: 700;
   color: var(--_colours---heading);
 }
@@ -1482,6 +1480,11 @@ body {
   }
 
   /* ---------- Bottom Drawer (Summary Sidebar) ---------- */
+  /* 
+   * Google Maps-style bottom sheet: pure translateY animation.
+   * Elements remain fully layout-stable; we toggle their visibility
+   * and opacity using CSS. This prevents any scrollHeight shifting.
+   */
   .summary-sidebar {
     position: fixed !important;
     bottom: 0 !important;
@@ -1493,12 +1496,10 @@ body {
     z-index: 1000 !important;
     top: auto !important;
     height: auto !important;
-    transform: translateY(calc(100% - 90px)) !important;
-    transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1) !important;
+    transform: translateY(calc(100% - 90px));
+    transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1);
     will-change: transform;
-    -webkit-transform: translateZ(0);
     box-shadow: 0 8px 50px -12px rgba(0, 0, 0, 0.25);
-    overflow: hidden;
     border-radius: 26px 26px 0 0 !important;
   }
 
@@ -1506,10 +1507,25 @@ body {
     transform: translateY(0) !important;
   }
 
-  .summary-sidebar:not(.expanded) .summary-info,
-  .summary-sidebar:not(.expanded) .sidebar-branch-info,
-  .summary-sidebar:not(.expanded) .sidebar-footer-text {
-    display: none !important;
+  /* --- Stable visibility transitions for content inside the sheet --- */
+  .summary-sidebar .summary-info,
+  .summary-sidebar #sidebar-branch-info,
+  .summary-sidebar .sidebar-footer-text,
+  .summary-sidebar #skip-btn-container {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 0.35s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  /* Show content when expanded */
+  .summary-sidebar.expanded .summary-info,
+  .summary-sidebar.expanded #sidebar-branch-info,
+  .summary-sidebar.expanded .sidebar-footer-text,
+  .summary-sidebar.expanded #skip-btn-container {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
   }
 
   /* Drawer Handle */
@@ -1526,15 +1542,13 @@ body {
     background: #AAA;
   }
 
-  /* Sidebar Inner — no extra padding on mobile, parent handles it */
+  /* Sidebar Inner */
   .sidebar-inner {
     max-width: 100%;
     background: transparent;
     padding: 14px 32px !important;
-  }
-
-  .summary-sidebar {
-    border-radius: 26px 26px 0 0 !important;
+    display: flex;
+    flex-direction: column;
   }
 
   /* Hide desktop logo */
@@ -1570,10 +1584,6 @@ body {
     border-radius: 4px;
   }
 
-  .summary-info {
-    margin-top: 8px;
-  }
-
   /* Footer text */
   .sidebar-footer-text {
     text-align: center;
@@ -1589,6 +1599,7 @@ body {
   /* Step 1: Service — Only the skip button, fully visible */
   .summary-sidebar.step-services {
     transform: translateY(0) !important;
+    min-height: 0;
     border-radius: 26px 26px 0 0 !important;
     padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px)) !important;
   }
@@ -1628,23 +1639,49 @@ body {
     box-shadow: 0 2px 8px rgba(230, 160, 42, 0.1);
   }
 
+  /* Step customerinfo — peek shows header + submit button */
   .summary-sidebar.step-customerinfo {
     display: block !important;
-    /* Collapsed height: handle + header row + submit button */
-    transform: translateY(calc(100% - 156px)) !important;
+    transform: translateY(calc(100% - 156px));
   }
 
-  .summary-sidebar.step-customerinfo.expanded {
-    transform: translateY(0) !important;
-  }
-
-  /* Hide drawer submit button by default on mobile */
-  #btn-drawer-submit {
+  /* Hide drawer submit buttons by default on mobile */
+  #btn-drawer-submit-peek,
+  #btn-drawer-submit-bottom {
     display: none !important;
   }
 
-  /* Make sure the submit button inside the drawer is styled perfectly and visible only during customerinfo step */
-  .summary-sidebar.step-customerinfo #btn-drawer-submit {
+  /* Collapsed Peek Submit Button: visible ONLY during customerinfo step when collapsed */
+  .summary-sidebar.step-customerinfo #btn-drawer-submit-peek {
+    display: block !important;
+    width: 100% !important;
+    background: #E6A02A !important;
+    color: #301E0D !important;
+    font-family: var(--font-heading);
+    font-weight: 800;
+    padding: 14px;
+    margin-top: -6px;
+    border-radius: var(--radius-pill);
+    box-shadow: 0 4px 12px rgba(230, 160, 42, 0.15);
+    border: none;
+    cursor: pointer;
+    opacity: 1;
+    visibility: visible;
+    transition: transform 0.2s, box-shadow 0.2s, opacity 0.35s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  /* Hide peek button completely when expanded */
+  .summary-sidebar.step-customerinfo.expanded #btn-drawer-submit-peek {
+    opacity: 0 !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+    height: 0px;
+    padding: 0;
+    margin-top: -12px !important;
+  }
+
+  /* Bottom Submit button visible only during customerinfo step */
+  .summary-sidebar.step-customerinfo #btn-drawer-submit-bottom {
     display: block !important;
     width: 100% !important;
     background: #E6A02A !important;
@@ -1659,9 +1696,9 @@ body {
     transition: transform 0.2s, box-shadow 0.2s;
   }
 
-  #btn-drawer-submit:active {
-    transform: scale(0.97);
-    box-shadow: 0 2px 8px rgba(230, 160, 42, 0.1);
+  /* In step-customerinfo, hide skip button in drawer */
+  .summary-sidebar.step-customerinfo #btn-skip-service {
+    display: none !important;
   }
 
   /* In step-customerinfo, hide skip button in drawer */

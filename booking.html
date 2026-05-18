@@ -227,20 +227,22 @@
                   onerror="this.onerror=null; this.src='https://placehold.co/120x50?text=YOi+Spa'">
               </div>
 
-              <!-- Branch Info: Visible only in step-customerinfo -->
-              <div id="sidebar-branch-info" class="sidebar-branch-info hidden">
-                <img src="https://placehold.co/100" alt="Branch" class="sidebar-branch-img" id="sum-branch-img"
-                  onerror="this.onerror=null; this.src='https://placehold.co/100?text=Spa'">
-                <div class="sidebar-branch-details">
-                  <h4 id="sum-branch-name">Ý Ơi Spa - CN 2</h4>
-                  <p id="sum-branch-address">31/26 Hoàng Hoa Thám, P. Tân Bình, TP. HCM</p>
-                </div>
-              </div>
-
               <!-- Mobile Header Wrapper for Tóm tắt & Guests info -->
               <div class="mobile-drawer-header-row">
                 <div class="summary-tag" id="summary-tag">Tóm tắt</div>
                 <div class="summary-guests-pill" id="summary-guests-pill">1 Khách</div>
+              </div>
+
+              <!-- Collapsed Peek Submit Button: visible ONLY on mobile customerinfo when collapsed -->
+              <button type="submit" form="booking-form" class="btn-primary" id="btn-drawer-submit-peek"
+                style="display: none;">Xác Nhận Đặt Lịch</button>
+
+              <!-- Branch Info: Visible only in step-customerinfo -->
+              <div id="sidebar-branch-info" class="sidebar-branch-info hidden">
+                <div class="sidebar-branch-details">
+                  <h4 id="sum-branch-name">Ý Ơi Spa - CN 2</h4>
+                  <p id="sum-branch-address">31/26 Hoàng Hoa Thám, P. Tân Bình, TP. HCM</p>
+                </div>
               </div>
 
               <div class="summary-info" id="summary-info">
@@ -283,7 +285,7 @@
 
               <div id="skip-btn-container">
                 <button type="button" class="btn-primary" id="btn-skip-service">Bỏ qua bước này</button>
-                <button type="submit" form="booking-form" class="btn-primary" id="btn-drawer-submit"
+                <button type="submit" form="booking-form" class="btn-primary" id="btn-drawer-submit-bottom"
                   style="display: none; width: 100%;">Xác Nhận Đặt Lịch</button>
               </div>
 

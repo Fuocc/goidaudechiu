@@ -15,6 +15,7 @@
 
 const API_BASE = window.location.origin + '/api';
 const DISABLE_AFTER_TIME = '20:15';
+const SPA_CLOSE_HOUR = 22; // 22:00 PM (10:00 PM) closing hour of the spa
 const SKIP_DURATION_MINUTES = 60;
 const CUSTOMER_STORAGE_KEY = 'spa_booking_customer';
 
@@ -203,11 +204,27 @@ async function handleRouting() {
     step = STEPS.SERVICES;
   }
 
-  // Auto-select today if on TIME step and no date is set in URL params
-  if (step === STEPS.TIME && !params.date) {
-    const todayISO = formatDateISO(new Date());
-    setParams({ date: todayISO }, true);
-    params.date = todayISO;
+  // Auto-select today if on TIME step and no date is set in URL params,
+  // or auto-advance to tomorrow if the current time is past the closing hour.
+  if (step === STEPS.TIME) {
+    const now = new Date();
+    const todayISO = formatDateISO(now);
+    const isPastClosing = now.getHours() >= SPA_CLOSE_HOUR;
+
+    if (isPastClosing) {
+      if (!params.date || params.date === todayISO) {
+        const tomorrow = new Date(now);
+        tomorrow.setDate(now.getDate() + 1);
+        const tomorrowISO = formatDateISO(tomorrow);
+        setParams({ date: tomorrowISO }, true);
+        params.date = tomorrowISO;
+      }
+    } else {
+      if (!params.date) {
+        setParams({ date: todayISO }, true);
+        params.date = todayISO;
+      }
+    }
   }
 
   // Hydrate date/time step: if step is TIME and date is set, load availability
@@ -656,27 +673,286 @@ function bindEvents() {
     window.location.href = '/book?step=services';
   };
 
-  // Mobile drawer interaction
+  // Mobile drawer interaction — Google Maps-style pure translateY bottom sheet
   const $sidebar = document.getElementById('summary-sidebar');
   const $overlay = document.getElementById('drawer-overlay');
 
   if ($sidebar && $overlay) {
-    // Click drawer handle, mobile header row, or summary-tag to toggle expand/collapse
-    $sidebar.onclick = (e) => {
-      if (window.innerWidth > 1024) return; // Desktop is normal
+    let touchStartY = 0;
+    let touchStartX = 0;
+    let startTranslateY = 0;
+    let currentTranslateY = 0;
+    let maxTranslateY = 0;
+    let isDragging = false;
+    let startTime = 0;
+    let hasDragged = false;
 
-      // Ignore interactive clicks on buttons, edit links, guests dropdown
-      if (e.target.closest('button') || e.target.closest('select') || e.target.closest('svg') || e.target.closest('a') || e.target.closest('.btn-edit-summary')) {
+    // Calculate how far down we need to push the sheet to show only the peek area
+    function calcMaxTranslate() {
+      // Temporarily show hidden content to measure full expanded height
+      const hiddenEls = $sidebar.querySelectorAll('.summary-info, #sidebar-branch-info, .sidebar-footer-text');
+      const wasHidden = [];
+      hiddenEls.forEach(el => {
+        const cs = getComputedStyle(el);
+        if (cs.display === 'none') {
+          wasHidden.push(el);
+          el.style.display = '';
+          el.style.visibility = 'hidden';
+          el.style.position = 'absolute';
+        }
+      });
+
+      const totalH = $sidebar.scrollHeight;
+
+      // Restore hidden state
+      wasHidden.forEach(el => {
+        el.style.display = '';
+        el.style.visibility = '';
+        el.style.position = '';
+      });
+
+      const params = getParams();
+      const peekH = (params.step === STEPS.CUSTOMERINFO) ? 156 : 90;
+      return Math.max(0, totalH - peekH);
+    }
+
+    function canSwipe() {
+      const params = getParams();
+      return params.step !== STEPS.SERVICES && params.step !== STEPS.CONFIRMATION && window.innerWidth <= 1024;
+    }
+
+    $sidebar.addEventListener('touchstart', (e) => {
+      if (!canSwipe()) return;
+      if (e.target.closest('button, select, svg, a, .btn-edit-summary')) return;
+
+      const touch = e.touches[0];
+      touchStartY = touch.clientY;
+      touchStartX = touch.clientX;
+      startTime = Date.now();
+      hasDragged = false;
+      isDragging = true;
+
+      // Measure starting position based on stable scrollHeight
+      const isExpanded = $sidebar.classList.contains('expanded');
+      maxTranslateY = calcMaxTranslate();
+      startTranslateY = isExpanded ? 0 : maxTranslateY;
+      currentTranslateY = startTranslateY;
+
+      // Position the sheet at the correct starting point
+      $sidebar.style.transition = 'none';
+      $overlay.style.transition = 'none';
+      $sidebar.style.transform = `translateY(${currentTranslateY}px)`;
+    }, { passive: true });
+
+    $sidebar.addEventListener('touchmove', (e) => {
+      if (!isDragging) return;
+
+      const touch = e.touches[0];
+      const diffY = touch.clientY - touchStartY;
+      const diffX = touch.clientX - touchStartX;
+
+      if (!hasDragged && Math.abs(diffY) > 8 && Math.abs(diffY) > Math.abs(diffX)) {
+        hasDragged = true;
+      }
+
+      if (hasDragged) {
+        if (e.cancelable) e.preventDefault();
+
+        let targetY = startTranslateY + diffY;
+
+        // Rubber-band past boundaries
+        if (targetY < 0) {
+          targetY = targetY * 0.25;
+        } else if (targetY > maxTranslateY) {
+          targetY = maxTranslateY + (targetY - maxTranslateY) * 0.25;
+        }
+
+        currentTranslateY = targetY;
+        $sidebar.style.transform = `translateY(${currentTranslateY}px)`;
+
+        // Sync overlay opacity
+        const openPct = Math.max(0, Math.min(1, 1 - currentTranslateY / maxTranslateY));
+        $overlay.style.opacity = openPct;
+        $overlay.style.pointerEvents = openPct > 0.05 ? 'auto' : 'none';
+
+        // Cross-fade the peek and bottom submit buttons
+        const params = getParams();
+        if (params.step === STEPS.CUSTOMERINFO) {
+          const peekBtn = document.getElementById('btn-drawer-submit-peek');
+          const skipContainer = document.getElementById('skip-btn-container');
+          if (peekBtn) {
+            peekBtn.style.opacity = 1 - openPct;
+            peekBtn.style.pointerEvents = openPct > 0.5 ? 'none' : 'auto';
+          }
+          if (skipContainer) {
+            skipContainer.style.opacity = openPct;
+            skipContainer.style.pointerEvents = openPct > 0.5 ? 'auto' : 'none';
+          }
+        }
+      }
+    }, { passive: false });
+
+    $sidebar.addEventListener('touchend', (e) => {
+      if (!isDragging) return;
+      isDragging = false;
+
+      if (!hasDragged) {
+        // No drag: restore to the state before touchstart
+        $sidebar.style.transition = '';
+        $sidebar.style.transform = '';
+        $overlay.style.transition = '';
+        $overlay.style.opacity = '';
+        $overlay.style.pointerEvents = '';
         return;
       }
 
-      $sidebar.classList.toggle('expanded');
-      $overlay.classList.toggle('active', $sidebar.classList.contains('expanded'));
-    };
+      const diffY = e.changedTouches[0].clientY - touchStartY;
+      const elapsed = Date.now() - startTime;
+      const velocity = diffY / elapsed; // px/ms
 
+      // Animate to final position
+      $sidebar.style.transition = 'transform 0.4s cubic-bezier(0.16, 1, 0.3, 1)';
+      $overlay.style.transition = 'opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1)';
+
+      // Flick detection or position-based snap
+      let shouldExpand;
+      if (Math.abs(velocity) > 0.25) {
+        shouldExpand = velocity < 0; // swipe up = expand
+      } else {
+        shouldExpand = currentTranslateY < maxTranslateY * 0.5;
+      }
+
+      const params = getParams();
+
+      if (shouldExpand) {
+        $sidebar.style.transform = 'translateY(0px)';
+        $overlay.style.opacity = '1';
+        $overlay.style.pointerEvents = 'auto';
+
+        if (params.step === STEPS.CUSTOMERINFO) {
+          const peekBtn = document.getElementById('btn-drawer-submit-peek');
+          const skipContainer = document.getElementById('skip-btn-container');
+          if (peekBtn) {
+            peekBtn.style.transition = 'opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1)';
+            peekBtn.style.opacity = '0';
+          }
+          if (skipContainer) {
+            skipContainer.style.transition = 'opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1)';
+            skipContainer.style.opacity = '1';
+          }
+        }
+
+        $sidebar.classList.add('expanded');
+        $overlay.classList.add('active');
+      } else {
+        $sidebar.style.transform = `translateY(${maxTranslateY}px)`;
+        $overlay.style.opacity = '0';
+        $overlay.style.pointerEvents = 'none';
+
+        if (params.step === STEPS.CUSTOMERINFO) {
+          const peekBtn = document.getElementById('btn-drawer-submit-peek');
+          const skipContainer = document.getElementById('skip-btn-container');
+          if (peekBtn) {
+            peekBtn.style.transition = 'opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1)';
+            peekBtn.style.opacity = '1';
+          }
+          if (skipContainer) {
+            skipContainer.style.transition = 'opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1)';
+            skipContainer.style.opacity = '0';
+          }
+        }
+
+        $sidebar.classList.remove('expanded');
+        $overlay.classList.remove('active');
+      }
+
+      // Clean up inline styles after transition completes
+      const cleanup = (ev) => {
+        if (ev.propertyName === 'transform') {
+          $sidebar.style.transition = '';
+          $sidebar.style.transform = '';
+          $overlay.style.transition = '';
+          $overlay.style.opacity = '';
+          $overlay.style.pointerEvents = '';
+
+          if (params.step === STEPS.CUSTOMERINFO) {
+            const peekBtn = document.getElementById('btn-drawer-submit-peek');
+            const skipContainer = document.getElementById('skip-btn-container');
+            if (peekBtn) {
+              peekBtn.style.transition = '';
+              peekBtn.style.opacity = '';
+              peekBtn.style.pointerEvents = '';
+            }
+            if (skipContainer) {
+              skipContainer.style.transition = '';
+              skipContainer.style.opacity = '';
+              skipContainer.style.pointerEvents = '';
+            }
+          }
+
+          $sidebar.removeEventListener('transitionend', cleanup);
+        }
+      };
+      $sidebar.addEventListener('transitionend', cleanup);
+    }, { passive: true });
+
+
+
+    // Overlay tap to close
     $overlay.onclick = () => {
-      $sidebar.classList.remove('expanded');
+      const params = getParams();
+      const totalH = $sidebar.scrollHeight;
+      const peekH = (params.step === STEPS.CUSTOMERINFO) ? 156 : 90;
+      const snapTranslateY = Math.max(0, totalH - peekH);
+
+      $sidebar.style.transition = 'transform 0.4s cubic-bezier(0.16, 1, 0.3, 1)';
+      $overlay.style.transition = 'opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1)';
+      $sidebar.style.transform = `translateY(${snapTranslateY}px)`;
+      $overlay.style.opacity = '0';
+      $overlay.style.pointerEvents = 'none';
       $overlay.classList.remove('active');
+
+      if (params.step === STEPS.CUSTOMERINFO) {
+        const peekBtn = document.getElementById('btn-drawer-submit-peek');
+        const skipContainer = document.getElementById('skip-btn-container');
+        if (peekBtn) {
+          peekBtn.style.transition = 'opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1)';
+          peekBtn.style.opacity = '1';
+        }
+        if (skipContainer) {
+          skipContainer.style.transition = 'opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1)';
+          skipContainer.style.opacity = '0';
+        }
+      }
+
+      const cleanup = (ev) => {
+        if (ev.propertyName === 'transform') {
+          $sidebar.style.transition = '';
+          $sidebar.style.transform = '';
+          $overlay.style.transition = '';
+          $overlay.style.opacity = '';
+          $overlay.style.pointerEvents = '';
+
+          if (params.step === STEPS.CUSTOMERINFO) {
+            const peekBtn = document.getElementById('btn-drawer-submit-peek');
+            const skipContainer = document.getElementById('skip-btn-container');
+            if (peekBtn) {
+              peekBtn.style.transition = '';
+              peekBtn.style.opacity = '';
+              peekBtn.style.pointerEvents = '';
+            }
+            if (skipContainer) {
+              skipContainer.style.transition = '';
+              skipContainer.style.opacity = '';
+              skipContainer.style.pointerEvents = '';
+            }
+          }
+
+          $sidebar.classList.remove('expanded');
+          $sidebar.removeEventListener('transitionend', cleanup);
+        }
+      };
+      $sidebar.addEventListener('transitionend', cleanup);
     };
   }
 }
@@ -900,6 +1176,15 @@ function renderCalendarStrip(selectedDate, keepOffset = false) {
         <span class="cal-day-label">${label}</span>
       `;
 
+      // Disable today's date if past the closing hour
+      const now = new Date();
+      const isPastClosing = now.getHours() >= SPA_CLOSE_HOUR;
+      if (isToday && isPastClosing) {
+        btn.disabled = true;
+        btn.style.opacity = '0.3';
+        btn.style.pointerEvents = 'none';
+      }
+
       btn.onclick = async () => {
         const currentParams = getParams();
         // Update date in URL, clear time/branch since they're now stale
@@ -1045,6 +1330,15 @@ function renderCalendarStrip(selectedDate, keepOffset = false) {
         <span class="cal-day-label">${label}</span>
       `;
 
+      // Disable today's date if past the closing hour
+      const now = new Date();
+      const isPastClosing = now.getHours() >= SPA_CLOSE_HOUR;
+      if (isToday && isPastClosing) {
+        btn.disabled = true;
+        btn.style.opacity = '0.3';
+        btn.style.pointerEvents = 'none';
+      }
+
       btn.onclick = async () => {
         const currentParams = getParams();
         setParams({ date: iso, time: null, time_end: null, branch_id: null }, true);
@@ -1094,8 +1388,15 @@ function updateSummary(step, params) {
     $sidebar.className = `summary-sidebar step-${step}`;
     // Always start each step with collapsed drawer on mobile
     $sidebar.classList.remove('expanded');
+    $sidebar.style.transform = '';
+    $sidebar.style.transition = '';
     const $overlay = document.getElementById('drawer-overlay');
-    if ($overlay) $overlay.classList.remove('active');
+    if ($overlay) {
+      $overlay.classList.remove('active');
+      $overlay.style.opacity = '';
+      $overlay.style.transition = '';
+      $overlay.style.pointerEvents = '';
+    }
   }
 
   // Sync guest count
