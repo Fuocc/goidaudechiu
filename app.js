@@ -43,7 +43,37 @@ const cache = {
   expandedServiceIds: new Set(),
 };
 
-const availabilityCache = new Map();
+// Advanced Client Cache with TTL (Time-To-Live) and max size protection
+const availabilityCache = {
+  store: new Map(),
+  TTL_MS: 3 * 60 * 1000, // 3 minutes cache lifetime (keeps timeslots fresh)
+  
+  get(key) {
+    const item = this.store.get(key);
+    if (!item) return null;
+    if (Date.now() - item.timestamp > this.TTL_MS) {
+      this.store.delete(key);
+      return null;
+    }
+    return item.data;
+  },
+  
+  set(key, data) {
+    // Evict oldest item if cache exceeds 15 entries (LRU style)
+    if (this.store.size >= 15) {
+      const oldestKey = this.store.keys().next().value;
+      this.store.delete(oldestKey);
+    }
+    this.store.set(key, {
+      data,
+      timestamp: Date.now()
+    });
+  },
+  
+  has(key) {
+    return this.get(key) !== null;
+  }
+};
 
 // ---- DOM References ----
 const $form = document.getElementById('booking-form');
@@ -124,6 +154,7 @@ async function init() {
   initCalendarStrip();
   bindEvents();
   loadCustomerFromStorage();
+  checkBookingBlock();
   // Full hydration from URL on every load
   await handleRouting();
 
@@ -208,13 +239,13 @@ async function handleRouting() {
   }
 
   // Auto-select today if on TIME step and no date is set in URL params,
-  // or auto-advance to tomorrow if the current time is past the closing hour.
+  // or auto-advance to tomorrow if the current time is past 8:00 PM (20:00).
   if (step === STEPS.TIME) {
     const now = new Date();
     const todayISO = formatDateISO(now);
-    const isPastClosing = now.getHours() >= SPA_CLOSE_HOUR;
+    const isPastEightPM = now.getHours() >= 20; // past 8:00 PM (20:00)
 
-    if (isPastClosing) {
+    if (isPastEightPM) {
       if (!params.date || params.date === todayISO) {
         const tomorrow = new Date(now);
         tomorrow.setDate(now.getDate() + 1);
@@ -312,7 +343,47 @@ async function loadServices() {
   }
 }
 
-/** Load availability slots for a given date/service, store in cache */
+// Background prefetching for next 2 days to make the experience ultra-premium
+function prefetchNextDays(currentDateStr, serviceId, guests) {
+  const currentDate = new Date(currentDateStr + 'T00:00:00');
+  
+  for (let i = 1; i <= 2; i++) {
+    const nextDateObj = new Date(currentDate);
+    nextDateObj.setDate(currentDate.getDate() + i);
+    
+    // Format date to YYYY-MM-DD
+    const yyyy = nextDateObj.getFullYear();
+    const mm = String(nextDateObj.getMonth() + 1).padStart(2, '0');
+    const dd = String(nextDateObj.getDate()).padStart(2, '0');
+    const nextDateStr = `${yyyy}-${mm}-${dd}`;
+    
+    const durationMinutes = serviceId ? null : SKIP_DURATION_MINUTES;
+    const qs = new URLSearchParams({
+      date: nextDateStr,
+      num_guests: String(guests),
+      ...(serviceId ? { service_id: serviceId } : {}),
+      ...(!serviceId ? { duration_minutes: String(durationMinutes) } : {})
+    });
+    
+    const cacheKey = qs.toString();
+    
+    // Fetch only if it's not already in the cache
+    if (!availabilityCache.has(cacheKey)) {
+      fetch(`${API_BASE}/availability/merged?${qs.toString()}`)
+        .then(res => res.json())
+        .then(data => {
+          const slots = data.slots || [];
+          availabilityCache.set(cacheKey, slots);
+          console.log(`⚡ [Cache Prefetch] Cached next availability for: ${nextDateStr}`);
+        })
+        .catch(err => {
+          console.warn(`[Cache Prefetch] Failed for: ${nextDateStr}`, err);
+        });
+    }
+  }
+}
+
+/** Load availability slots for a given date/service, store in cache and prefetch next days */
 async function loadAvailability(date, serviceId, guests) {
   const durationMinutes = serviceId ? null : SKIP_DURATION_MINUTES;
   const qs = new URLSearchParams({
@@ -324,9 +395,10 @@ async function loadAvailability(date, serviceId, guests) {
 
   const cacheKey = qs.toString();
 
-  // If in cache, resolve instantly
+  // If in cache, resolve instantly and prefetch the next 2 days in the background
   if (availabilityCache.has(cacheKey)) {
     cache.availabilitySlots = availabilityCache.get(cacheKey);
+    prefetchNextDays(date, serviceId, guests);
     return;
   }
 
@@ -340,6 +412,9 @@ async function loadAvailability(date, serviceId, guests) {
     const slots = data.slots || [];
     cache.availabilitySlots = slots;
     availabilityCache.set(cacheKey, slots);
+    
+    // Fetch next 2 days in background to accelerate transitions
+    prefetchNextDays(date, serviceId, guests);
   } catch (err) {
     console.error('Error loading availability:', err);
     cache.availabilitySlots = [];
@@ -401,6 +476,11 @@ function renderUI(step, params) {
   }
 
   updateSummary(step, params);
+
+  // Apply submission block styling if client is rate-limited
+  if (step === STEPS.CUSTOMERINFO) {
+    checkBookingBlock();
+  }
 }
 
 function renderServices(params) {
@@ -555,11 +635,26 @@ function renderTimeSlots(params) {
   const now = new Date();
   const nowMinutes = now.getHours() * 60 + now.getMinutes();
 
+  // Selected date object to check day of week
+  const dateObj = new Date(params.date + 'T00:00:00');
+  const dayOfWeek = dateObj.getDay(); // 0 = Sunday, 6 = Saturday
+  const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
+
   const visibleSlots = cache.availabilitySlots.filter(slot => {
     const slotMinutes = timeToMinutesHHMM(slot.start_time);
     const isPast = todaySelected && slotMinutes < (nowMinutes + 15);
     const isTooLate = slot.start_time >= DISABLE_AFTER_TIME;
-    return !(isPast || isTooLate);
+    if (isPast || isTooLate) return false;
+
+    // Requirement: Hide timeslots from 09:00 to 09:45 inclusive on weekdays (Mon-Fri)
+    // Saturday and Sunday show slots starting from 09:00 normally
+    if (!isWeekend) {
+      if (slot.start_time >= '09:00' && slot.start_time <= '09:45') {
+        return false;
+      }
+    }
+
+    return true;
   });
 
   if (visibleSlots.length === 0) {
@@ -567,13 +662,16 @@ function renderTimeSlots(params) {
     return;
   }
 
-  visibleSlots.forEach(slot => {
+  visibleSlots.forEach((slot, index) => {
     const available = slot.available;
     const isWeekdayEarly = slot.weekday_early === true;
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = `time-slot${!available ? ' unavailable' : ''}${isWeekdayEarly ? ' weekday-early' : ''}${params.time === slot.start_time ? ' selected' : ''}`;
     btn.disabled = !available || isWeekdayEarly;
+
+    // Stagger fade-in animation: cascading delay per time slot item
+    btn.style.animationDelay = `${index * 30}ms`;
 
     if (isWeekdayEarly) {
       btn.style.opacity = '0.3';
@@ -1238,10 +1336,10 @@ function renderCalendarStrip(selectedDate, keepOffset = false) {
         <span class="cal-day-label">${label}</span>
       `;
 
-      // Disable today's date if past the closing hour
+      // Disable today's date if past 8:00 PM (20:00)
       const now = new Date();
-      const isPastClosing = now.getHours() >= SPA_CLOSE_HOUR;
-      if (isToday && isPastClosing) {
+      const isPastEightPM = now.getHours() >= 20;
+      if (isToday && isPastEightPM) {
         btn.disabled = true;
         btn.style.opacity = '0.3';
         btn.style.pointerEvents = 'none';
@@ -1380,10 +1478,10 @@ function renderCalendarStrip(selectedDate, keepOffset = false) {
         <span class="cal-day-label">${label}</span>
       `;
 
-      // Disable today's date if past the closing hour
+      // Disable today's date if past 8:00 PM (20:00)
       const now = new Date();
-      const isPastClosing = now.getHours() >= SPA_CLOSE_HOUR;
-      if (isToday && isPastClosing) {
+      const isPastEightPM = now.getHours() >= 20;
+      if (isToday && isPastEightPM) {
         btn.disabled = true;
         btn.style.opacity = '0.3';
         btn.style.pointerEvents = 'none';
@@ -1424,6 +1522,29 @@ function updateSummary(step, params) {
   const guestsPill = document.getElementById('summary-guests-pill');
   const $sidebar = document.getElementById('summary-sidebar');
 
+  // Dynamically expand bottom drawer on mobile
+  function expandDrawer() {
+    const $sidebar = document.getElementById('summary-sidebar');
+    const $overlay = document.getElementById('drawer-overlay');
+    if (!$sidebar || !$overlay) return;
+    
+    $sidebar.style.transition = 'transform 0.4s cubic-bezier(0.16, 1, 0.3, 1)';
+    $overlay.style.transition = 'opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1)';
+    
+    $sidebar.style.transform = 'translateY(0px)';
+    $overlay.style.opacity = '1';
+    $overlay.style.pointerEvents = 'auto';
+
+    const peekBtn = document.getElementById('btn-drawer-submit-peek');
+    const skipContainer = document.getElementById('skip-btn-container');
+    if (peekBtn) peekBtn.style.opacity = '0';
+    if (skipContainer) skipContainer.style.opacity = '1';
+
+    $sidebar.classList.add('expanded');
+    $overlay.classList.add('active');
+    document.body.classList.add('no-scroll');
+  }
+
   // Dynamically set the step class on sidebar for responsive CSS styling
   if ($sidebar) {
     $sidebar.className = `summary-sidebar step-${step}`;
@@ -1442,6 +1563,23 @@ function updateSummary(step, params) {
       $overlay.style.pointerEvents = '';
     }
     document.body.classList.remove('no-scroll');
+
+    // Auto-scroll up drawer on mobile if user info exists in localStorage and prefilled.
+    if (step === STEPS.CUSTOMERINFO && window.innerWidth <= 1024) {
+      try {
+        const rawCustomer = localStorage.getItem(CUSTOMER_STORAGE_KEY);
+        if (rawCustomer) {
+          const customerObj = JSON.parse(rawCustomer);
+          if (customerObj && customerObj.name && customerObj.phone) {
+            setTimeout(() => {
+              expandDrawer();
+            }, 300);
+          }
+        }
+      } catch (e) {
+        console.warn('Error expanding drawer automatically:', e);
+      }
+    }
   }
 
   // Sync guest count
@@ -1645,6 +1783,13 @@ async function handleSubmit(e) {
 
     if (!res.ok) {
       const err = await res.json();
+      if (res.status === 429) {
+        // Block the user locally for 5 minutes
+        const blockedUntil = Date.now() + 5 * 60 * 1000;
+        localStorage.setItem('spa_booking_blocked_until', String(blockedUntil));
+        checkBookingBlock();
+        throw new Error('RATE_LIMIT_BLOCKED');
+      }
       throw new Error(err.error || 'Booking failed');
     }
 
@@ -1655,11 +1800,18 @@ async function handleSubmit(e) {
     populateConfirmation(params, customerData);
     navigateTo(STEPS.CONFIRMATION);
   } catch (err) {
-    alert('Đặt lịch thất bại: ' + err.message);
+    if (err.message === 'RATE_LIMIT_BLOCKED') {
+      showToast('Bạn đã đặt lịch quá nhiều lần trong khoảng thời gian ngắn. Vui lòng đợi 5 phút để có thể đặt lịch mới hoặc liên hệ <a href="https://zalo.me/0968241808" style="color: inherit; text-decoration:underline; text-underline-offset:3px;" target="_blank" rel="noopener noreferrer">Zalo</a> để được hỗ trợ nhanh nhất.', 12000);
+    } else {
+      showToast(`Đặt lịch thất bại: ${err.message}`, 8000);
+    }
   } finally {
     isSubmitting = false;
+    const isBlocked = checkBookingBlock();
     buttons.forEach(btn => {
-      btn.disabled = false;
+      if (!isBlocked) {
+        btn.disabled = false;
+      }
       btn.textContent = btn.dataset.originalText || (btn.id === 'btn-submit' ? 'Đặt Lịch' : 'Xác Nhận Đặt Lịch');
     });
   }
@@ -1745,6 +1897,58 @@ function getSavedCustomerData() {
   }
 }
 
+let blockCheckInterval = null;
+
+/**
+ * Checks if the user is currently blocked from making bookings.
+ * If blocked, disables and reduces opacity of submit buttons, and starts an interval to restore them when expired.
+ */
+function checkBookingBlock() {
+  const blockedUntilStr = localStorage.getItem('spa_booking_blocked_until');
+  if (!blockedUntilStr) return false;
+
+  const blockedUntil = parseInt(blockedUntilStr, 10);
+  if (isNaN(blockedUntil)) return false;
+
+  const now = Date.now();
+  const buttons = [
+    document.getElementById('btn-submit'),
+    document.getElementById('btn-drawer-submit-peek'),
+    document.getElementById('btn-drawer-submit-bottom')
+  ].filter(Boolean);
+
+  if (now < blockedUntil) {
+    // User is currently blocked
+    buttons.forEach(btn => {
+      btn.disabled = true;
+      btn.style.opacity = '0.3';
+      btn.style.pointerEvents = 'none';
+    });
+
+    // Start interval to automatically unblock when the time has passed
+    if (!blockCheckInterval) {
+      blockCheckInterval = setInterval(() => {
+        const isStillBlocked = checkBookingBlock();
+        if (!isStillBlocked) {
+          clearInterval(blockCheckInterval);
+          blockCheckInterval = null;
+          console.log('🔓 Rate limit block expired. Submit buttons restored.');
+        }
+      }, 3000);
+    }
+    return true;
+  } else {
+    // Block has expired, clean up styles
+    localStorage.removeItem('spa_booking_blocked_until');
+    buttons.forEach(btn => {
+      btn.disabled = false;
+      btn.style.opacity = '';
+      btn.style.pointerEvents = '';
+    });
+    return false;
+  }
+}
+
 // =============================================
 // Slot Hold & Countdown Timer System Helpers
 // =============================================
@@ -1801,9 +2005,13 @@ function startCountdown(expiresAt) {
   const $timerVal = document.getElementById('countdown-timer-val');
   const $timerValMobile = document.getElementById('countdown-timer-val-mobile');
 
-  // Show the countdown UI on both containers (CSS media queries will handle visibility)
-  if ($countdown) $countdown.classList.remove('hidden');
-  if ($countdownMobile) $countdownMobile.classList.remove('hidden');
+  // Show the countdown UI, removing skeleton class to draw actual numbers
+  if ($countdown) {
+    $countdown.classList.remove('hidden', 'timer-skeleton');
+  }
+  if ($countdownMobile) {
+    $countdownMobile.classList.remove('hidden');
+  }
   document.body.classList.add('has-countdown');
 
   function updateTimer() {
@@ -1841,8 +2049,13 @@ function stopCountdown() {
   const $countdown = document.getElementById('booking-countdown');
   const $countdownMobile = document.getElementById('booking-countdown-mobile');
 
-  if ($countdown) $countdown.classList.add('hidden');
-  if ($countdownMobile) $countdownMobile.classList.add('hidden');
+  if ($countdown) {
+    $countdown.classList.add('hidden');
+    $countdown.classList.remove('timer-skeleton');
+  }
+  if ($countdownMobile) {
+    $countdownMobile.classList.add('hidden');
+  }
 
   document.body.classList.remove('has-countdown');
 }
@@ -1958,6 +2171,30 @@ async function handleHoldState(params) {
     console.log('Resuming existing hold countdown...');
     startCountdown(savedExpires);
   } else {
+    // Check if the user is currently rate-limited/blocked
+    const blockedUntilStr = localStorage.getItem('spa_booking_blocked_until');
+    const isBlocked = blockedUntilStr && parseInt(blockedUntilStr, 10) > Date.now();
+
+    if (isBlocked) {
+      console.log('⚡ User is blocked due to rate limiting. Skipping slot hold request.');
+      stopCountdown();
+      
+      const buttons = [
+        document.getElementById('btn-submit'),
+        document.getElementById('btn-drawer-submit-peek'),
+        document.getElementById('btn-drawer-submit-bottom')
+      ].filter(Boolean);
+
+      buttons.forEach(btn => {
+        btn.disabled = true;
+        btn.style.opacity = '0.3';
+        btn.style.pointerEvents = 'none';
+      });
+
+      showToast('Bạn đã đặt lịch quá nhiều lần trong khoảng thời gian ngắn. Vui lòng đợi 5 phút để có thể đặt lịch mới hoặc liên hệ <a href="https://zalo.me/0968241808" style="color: inherit; text-decoration:underline; text-underline-offset:3px;" target="_blank" rel="noopener noreferrer">Zalo</a> để được hỗ trợ nhanh nhất.', 12000);
+      return;
+    }
+
     console.log('Creating a new slot hold...');
 
     if (savedHoldIds.length > 0) {
@@ -1974,11 +2211,19 @@ async function handleHoldState(params) {
     const $btnBottom = document.getElementById('btn-drawer-submit-bottom');
 
     const buttons = [$btnSubmit, $btnPeek, $btnBottom].filter(Boolean);
+    
+    // Toggle skeleton load class on submit buttons during wait API instead of layout shift / text changes
     buttons.forEach(btn => {
       btn.disabled = true;
-      btn.dataset.originalText = btn.textContent;
-      btn.textContent = 'Đang giữ chỗ...';
+      btn.classList.add('button-skeleton');
     });
+
+    // Render skeleton loader for countdown timer on desktop instead of layout shift
+    const $countdown = document.getElementById('booking-countdown');
+    if ($countdown) {
+      $countdown.classList.remove('hidden');
+      $countdown.classList.add('timer-skeleton');
+    }
 
     try {
       const holdDuration = 5 * 60 * 1000; // 5 minutes
@@ -2031,7 +2276,7 @@ async function handleHoldState(params) {
     } finally {
       buttons.forEach(btn => {
         btn.disabled = false;
-        btn.textContent = btn.dataset.originalText || (btn.id === 'btn-submit' ? 'Đặt Lịch' : 'Xác Nhận Đặt Lịch');
+        btn.classList.remove('button-skeleton');
       });
     }
   }
