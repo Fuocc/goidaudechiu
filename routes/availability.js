@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const supabase = require('../supabaseClient');
 
-const OPEN_HOUR = 10;
+const OPEN_HOUR = 9;
 const CLOSE_HOUR = 22;
 const SLOT_STEP_MINUTES = 15;
 
@@ -12,7 +12,7 @@ async function cleanupExpiredHolds() {
       .from('bookings')
       .select('id, internal_note')
       .eq('status', 'pending')
-      .like('internal_note', '[GIỮ CHỖ TẠM THỜI]%');
+      .like('internal_note', '[Khách đang đặt]%');
 
     if (!error && holds && holds.length > 0) {
       const now = Date.now();
@@ -164,7 +164,8 @@ router.get('/merged', async (req, res) => {
             start_time: s.start_time,
             end_time: s.end_time,
             available: false,
-            branches: []
+            branches: [],
+            weekday_early: s.weekday_early || false
           });
         }
 
@@ -206,6 +207,53 @@ router.get('/merged', async (req, res) => {
 async function getAvailabilityForBranch({ branchId, date, guestCount, durationMinutes }) {
   // 1) Service duration
   const duration = durationMinutes;
+
+  // 1.1) Load branch opening hours
+  let openHour = OPEN_HOUR;
+  let closeHour = CLOSE_HOUR;
+  let isClosed = false;
+
+  try {
+    const { data: branch } = await supabase
+      .from('branches')
+      .select('opening_hours')
+      .eq('id', branchId)
+      .single();
+
+    if (branch && branch.opening_hours) {
+      const [year, month, day] = date.split('-').map(Number);
+      const dObj = new Date(year, month - 1, day);
+      const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const dayName = daysOfWeek[dObj.getDay()];
+      const daySchedule = branch.opening_hours[dayName];
+
+      if (daySchedule) {
+        if (daySchedule.isOpen === false || daySchedule.closed === true) {
+          isClosed = true;
+        } else {
+          if (daySchedule.open) {
+            const [h] = daySchedule.open.split(':').map(Number);
+            openHour = h;
+          }
+          if (daySchedule.close) {
+            const [h] = daySchedule.close.split(':').map(Number);
+            closeHour = h;
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Error fetching branch opening hours:', err);
+  }
+
+  if (isClosed) {
+    return {
+      slots: [],
+      total_employees: 0,
+      total_beds: 0,
+      service_duration: duration
+    };
+  }
 
   // 2) Load employees active
   const { data: employees, error: empErr } = await supabase
@@ -276,19 +324,18 @@ async function getAvailabilityForBranch({ branchId, date, guestCount, durationMi
   // 5) Generate slots
   const slots = [];
 
-  // Determine open hour: 9:00 for Sat/Sun (0/6), 10:00 for other days
   // Parse YYYY-MM-DD manually to be completely timezone-independent
   const [year, month, day] = date.split('-').map(Number);
   const d = new Date(year, month - 1, day);
   const dayOfWeek = d.getDay(); // 0 is Sunday, 6 is Saturday
-  const openHour = (dayOfWeek === 0 || dayOfWeek === 6) ? 9 : OPEN_HOUR;
+  const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
 
-  for (let h = openHour; h < CLOSE_HOUR; h++) {
+  for (let h = openHour; h < closeHour; h++) {
     for (let m = 0; m < 60; m += SLOT_STEP_MINUTES) {
       const startMinutes = h * 60 + m;
       const endMinutes = startMinutes + duration;
 
-      if (endMinutes > CLOSE_HOUR * 60) continue;
+      if (endMinutes > closeHour * 60) continue;
 
       const startTime = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
       const endH = Math.floor(endMinutes / 60);
@@ -332,12 +379,16 @@ async function getAvailabilityForBranch({ branchId, date, guestCount, durationMi
       const actualEndM = actualEndTotal % 60;
       const actualEndTime = `${String(actualEndH).padStart(2, '0')}:${String(actualEndM).padStart(2, '0')}`;
 
+      // Flag weekday slots before 10:00 as "weekday_early" (shown but disabled in frontend)
+      const isWeekdayEarly = !isWeekend && h < 10;
+
       slots.push({
         start_time: startTime,
         end_time: actualEndTime,
         available: !disabled,
         available_employees: availableEmployees,
-        available_beds: availableBeds
+        available_beds: availableBeds,
+        weekday_early: isWeekdayEarly
       });
     }
   }

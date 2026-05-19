@@ -36,10 +36,10 @@ router.get('/:id', async (req, res) => {
 // POST create branch
 router.post('/', async (req, res) => {
   try {
-    const { name, address, phone } = req.body;
+    const { name, address, phone, image_url, opening_hours, google_map_url } = req.body;
     const { data, error } = await supabase
       .from('branches')
-      .insert([{ name, address, phone }])
+      .insert([{ name, address, phone, image_url, opening_hours, google_map_url }])
       .select()
       .single();
 
@@ -53,10 +53,10 @@ router.post('/', async (req, res) => {
 // PUT update branch
 router.put('/:id', async (req, res) => {
   try {
-    const { name, address, phone } = req.body;
+    const { name, address, phone, image_url, opening_hours, google_map_url } = req.body;
     const { data, error } = await supabase
       .from('branches')
-      .update({ name, address, phone })
+      .update({ name, address, phone, image_url, opening_hours, google_map_url })
       .eq('id', req.params.id)
       .select()
       .single();

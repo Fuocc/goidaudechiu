@@ -248,12 +248,12 @@ async function handleRouting() {
 
   // Hydrate customerinfo step: handle slot holding and countdown
   if (step === STEPS.CUSTOMERINFO) {
-    await handleHoldState(params);
+    handleHoldState(params);
   } else {
     // If they navigate away from customerinfo to services/timing/branch,
     // release the hold immediately
     if (step !== STEPS.CONFIRMATION) {
-      await releaseHoldIfNavigatedAway(step);
+      releaseHoldIfNavigatedAway(step);
     }
   }
 
@@ -563,21 +563,27 @@ function renderTimeSlots(params) {
   });
 
   if (visibleSlots.length === 0) {
-    $timeSlotsGrid.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:24px; opacity:0.5;">Hiện không có khung giờ nào trống cho ngày này!</div>';
+    $timeSlotsGrid.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:24px; font-family:var(--font-heading);">Ý không tìm được lịch trống cho ngày này rồi. Mình thử chọn ngày khác hoặc liên hệ cho Ý qua <a href="https://m.me/61573340536773?text=Hi,%20%C3%9D%20cho%20m%C3%ACnh%20%C4%91%E1%BA%B7t%20l%E1%BB%8Bch%207h%20t%E1%BB%91i%20nay%20%E1%BB%9F%20CN%201%20ho%E1%BA%B7c%202%20nh%C3%A9." style="color: inherit; text-decoration:underline; text-underline-offset:3px;" target="_blank" rel="noopener noreferrer">Fanpage</a> hoặc <a href="https://zalo.me/0968241808" style="color: inherit; text-decoration:underline; text-underline-offset:3px;" target="_blank" rel="noopener noreferrer">Zalo</a> để Ý hỗ trợ mình đặt lịch nghen ^^.</div>';
     return;
   }
 
   visibleSlots.forEach(slot => {
     const available = slot.available;
+    const isWeekdayEarly = slot.weekday_early === true;
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = `time-slot${!available ? ' unavailable' : ''}${params.time === slot.start_time ? ' selected' : ''}`;
-    btn.disabled = !available;
+    btn.className = `time-slot${!available ? ' unavailable' : ''}${isWeekdayEarly ? ' weekday-early' : ''}${params.time === slot.start_time ? ' selected' : ''}`;
+    btn.disabled = !available || isWeekdayEarly;
+
+    if (isWeekdayEarly) {
+      btn.style.opacity = '0.3';
+      btn.style.pointerEvents = 'none';
+    }
 
     const [timePart, period] = formatTime12h(slot.start_time);
     btn.innerHTML = `<span class="t-hour">${timePart}</span><span class="t-period">${period}</span>`;
 
-    if (available) {
+    if (available && !isWeekdayEarly) {
       btn.onclick = () => {
         const branchIds = slot.branches || [];
         const timeParams = {
@@ -1523,9 +1529,15 @@ function populateConfirmation(params, customerData) {
   document.getElementById('conf-time-range').textContent = `${start12} — ${end12}`;
 
   document.getElementById('conf-service-name').textContent = service?.name || 'Chọn sau ở spa';
-  document.getElementById('conf-service-price').textContent = service
-    ? `${formatPrice(service.price)} — ${service.duration_minutes} phút`
-    : `0đ — ${SKIP_DURATION_MINUTES} phút`;
+  const confServicePriceEl = document.getElementById('conf-service-price');
+  if (service) {
+    confServicePriceEl.textContent = `${formatPrice(service.price)} — ${service.duration_minutes} phút`;
+    confServicePriceEl.classList.remove('hidden');
+  } else {
+    // Hide 0đ and 60min for unselected service
+    confServicePriceEl.textContent = '';
+    confServicePriceEl.classList.add('hidden');
+  }
 
   document.getElementById('conf-customer-name').textContent = customerData.name;
   document.getElementById('conf-customer-phone').textContent = `${customerData.phone} — ${params.guests} Người`;
@@ -1547,21 +1559,35 @@ function populateConfirmation(params, customerData) {
 
   if (branch) {
     document.getElementById('conf-branch-name').textContent = branch.address || branch.name;
+
+    // Set branch image in confirmation screen
+    const confBranchImg = document.getElementById('conf-branch-img');
+    if (confBranchImg) {
+      const index = cache.branches.findIndex(b => b.id === branch.id);
+      const placeholder = `./images/placeholder-branch${(index === -1 ? 0 : index % 2) + 1}.jpg`;
+      confBranchImg.src = branch.image_url || placeholder;
+      confBranchImg.style.display = 'block';
+    }
+
     const mapLink = document.querySelector('.conf-direction');
     if (mapLink) {
-      // Use specific Google Maps links per branch if available, otherwise fall back to search
-      const BRANCH_MAP_LINKS = {
-        // Map branch names to their specific Google Maps URLs from the website
-        'CN 1': 'https://maps.app.goo.gl/bce3bzSfE4KNGqcp7',
-        'CN 2': 'https://maps.app.goo.gl/m3PdKh93LyTX32XX9',
-      };
-      // Try to match by branch name
-      const specificLink = Object.entries(BRANCH_MAP_LINKS).find(([key]) =>
-        branch.name && branch.name.includes(key)
-      );
-      mapLink.href = specificLink
-        ? specificLink[1]
-        : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(branch.address || branch.name)}`;
+      if (branch.google_map_url) {
+        mapLink.href = branch.google_map_url;
+      } else {
+        // Use specific Google Maps links per branch if available, otherwise fall back to search
+        const BRANCH_MAP_LINKS = {
+          // Map branch names to their specific Google Maps URLs from the website
+          'CN 1': 'https://maps.app.goo.gl/bce3bzSfE4KNGqcp7',
+          'CN 2': 'https://maps.app.goo.gl/m3PdKh93LyTX32XX9',
+        };
+        // Try to match by branch name
+        const specificLink = Object.entries(BRANCH_MAP_LINKS).find(([key]) =>
+          branch.name && branch.name.includes(key)
+        );
+        mapLink.href = specificLink
+          ? specificLink[1]
+          : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(branch.address || branch.name)}`;
+      }
     }
   }
 }
@@ -1771,7 +1797,7 @@ function startCountdown(expiresAt) {
 
   const $countdown = document.getElementById('booking-countdown');
   const $countdownMobile = document.getElementById('booking-countdown-mobile');
-  
+
   const $timerVal = document.getElementById('countdown-timer-val');
   const $timerValMobile = document.getElementById('countdown-timer-val-mobile');
 
@@ -1814,10 +1840,10 @@ function stopCountdown() {
   }
   const $countdown = document.getElementById('booking-countdown');
   const $countdownMobile = document.getElementById('booking-countdown-mobile');
-  
+
   if ($countdown) $countdown.classList.add('hidden');
   if ($countdownMobile) $countdownMobile.classList.add('hidden');
-  
+
   document.body.classList.remove('has-countdown');
 }
 
@@ -1840,7 +1866,7 @@ async function handleHoldExpiration() {
   }
 
   // Show premium toast notification with clickable links
-  const toastMsg = `Ý không tìm được lịch trống cho ngày này rồi. Mình thử chọn ngày khác hoặc liên hệ cho Ý qua <a href="https://m.me/61573340536773?text=Hi,%20%C3%9D%20cho%20m%C3%ACnh%20%C4%91%E1%BA%B7t%20l%E1%BB%8Bch%207h%20t%E1%BB%91i%20nay%20%E1%BB%9F%20CN%201%20ho%E1%BA%B7c%202%20nh%C3%A9." target="_blank" rel="noopener noreferrer">Fanpage</a> hoặc <a href="https://zalo.me/0968241808" target="_blank" rel="noopener noreferrer">Zalo</a> để Ý hỗ trợ mình đặt lịch nghen ^^.`;
+  const toastMsg = `Ý rất tiếc, đã hết thời gian giữ chỗ rồi. Bạn hãy đặt lại lịch khác nhé. Nếu cần gì hỗ trợ, bạn hãy liên hệ qua <a href="https://m.me/61573340536773?text=Hi,%20%C3%9D%20cho%20m%C3%ACnh%20%C4%91%E1%BA%B7t%20l%E1%BB%8Bch%207h%20t%E1%BB%91i%20nay%20%E1%BB%9F%20CN%201%20ho%E1%BA%B7c%202%20nh%C3%A9." target="_blank" rel="noopener noreferrer">Fanpage</a> hoặc <a href="https://zalo.me/0968241808" target="_blank" rel="noopener noreferrer">Zalo</a> để Ý hỗ trợ mình đặt lịch nghen ^^.`;
   showToast(toastMsg, 10000);
 
   clearBookingParams();
@@ -1981,12 +2007,27 @@ async function handleHoldState(params) {
       const data = await res.json();
       const holdIds = data.hold_ids;
 
+      // Check if user navigated away while the request was in flight
+      const currentParams = getParams();
+      if (currentParams.step !== STEPS.CUSTOMERINFO) {
+        console.log('User navigated away while hold was being created. Releasing hold immediately.');
+        if (holdIds && holdIds.length > 0) {
+          const qs = new URLSearchParams({ hold_ids: holdIds.join(',') });
+          fetch(`${API_BASE}/bookings/hold?${qs.toString()}`, { method: 'DELETE' }).catch(() => { });
+        }
+        return;
+      }
+
       saveHoldToStorage(holdIds, expiresAt, params);
       startCountdown(expiresAt);
 
     } catch (err) {
-      alert('Khung giờ này đã bị giữ hoặc hết chỗ. Vui lòng chọn khung giờ khác!');
-      navigateTo(STEPS.TIME);
+      // Only alert and redirect if the user is still on the customerinfo step
+      const currentParams = getParams();
+      if (currentParams.step === STEPS.CUSTOMERINFO) {
+        alert('Khung giờ này đã bị giữ hoặc hết chỗ. Vui lòng chọn khung giờ khác!');
+        navigateTo(STEPS.TIME);
+      }
     } finally {
       buttons.forEach(btn => {
         btn.disabled = false;

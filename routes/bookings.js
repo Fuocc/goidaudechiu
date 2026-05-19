@@ -2,6 +2,22 @@ const express = require('express');
 const router = express.Router();
 const supabase = require('../supabaseClient');
 
+// Helper to notify the dashboard backend about mutations in real-time
+async function triggerDashboardSSE(event, data) {
+  try {
+    const dashboardBase = process.env.DASHBOARD_API_URL || 'http://localhost:3001/api';
+    const triggerUrl = dashboardBase.replace(/\/$/, '') + '/events/trigger';
+
+    await fetch(triggerUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event, data })
+    });
+  } catch (err) {
+    // Ignore error if dashboard is offline or unreachable
+  }
+}
+
 // Normalize Vietnamese diacritics for Latin search
 const normalize = (str) => (str || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
@@ -299,6 +315,11 @@ router.post('/', async (req, res) => {
           console.error('Webhook fire error:', err.message)
         );
 
+        // Notify dashboard backend
+        updatedBookings.forEach(b => {
+          triggerDashboardSSE('booking.created', b);
+        });
+
         return res.status(200).json(result);
       }
     }
@@ -508,6 +529,11 @@ router.post('/', async (req, res) => {
       console.error('Webhook fire error:', err.message)
     );
 
+    // Notify dashboard backend
+    createdBookings.forEach(b => {
+      triggerDashboardSSE('booking.created', b);
+    });
+
     res.status(201).json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -590,7 +616,7 @@ router.post('/hold', async (req, res) => {
     } else {
       const { data: newCustomer, error: custErr } = await supabase
         .from('customers')
-        .insert([{ name: 'Giữ Chỗ Tạm Thời', phone: placeholderPhone, email: null }])
+        .insert([{ name: 'Khách đang đặt', phone: placeholderPhone, email: null }])
         .select()
         .single();
 
@@ -667,21 +693,12 @@ router.post('/hold', async (req, res) => {
     const bufferTime = parseInt(settings.buffer_time) || 15;
     const tourOrder = settings[`tour_order_${branch_id}`] || [];
 
-    const createdHoldIds = [];
+    const createdHolds = []; // Track { id, employee_id, bed_id } for each created hold
 
     for (let g = 0; g < guestCount; g++) {
       const busyEmployeeIds = new Set();
-      // Combine dayBookings with already created holds in this loop to prevent double assignment of the same staff/bed
-      const allRelevantBookings = [...dayBookings, ...createdHoldIds.map(id => {
-        // Find the record we just inserted in the array or build a mock booking
-        return {
-          employee_id: employees.find(emp => emp.id === createdHoldIds[g - 1])?.id, // fallback/mock
-          bed_id: beds[0]?.id // mock
-        };
-      })]; // We will search for available staff/beds one by one, keeping track of assigned ones.
-
-      const assignedEmpIds = createdHoldIds.map(h => h.employee_id).filter(Boolean);
-      const assignedBedIds = createdHoldIds.map(h => h.bed_id).filter(Boolean);
+      const assignedEmpIds = createdHolds.map(h => h.employee_id);
+      const assignedBedIds = createdHolds.map(h => h.bed_id);
 
       for (const booking of dayBookings) {
         const bStart = timeToMinutes(booking.start_time);
@@ -746,7 +763,7 @@ router.post('/hold', async (req, res) => {
         end_time,
         status: 'pending',
         total_price: price,
-        internal_note: `[GIỮ CHỖ TẠM THỜI] Giữ chỗ tạm thời cho khách đang đặt online. Tự động hủy lịch sau 5 phút.`
+        internal_note: `[Khách đang đặt] Khách đang đặt cho khách đang đặt online. Tự động hủy lịch sau 5 phút.`
       };
 
       const { data: booking, error: bookErr } = await supabase
@@ -756,10 +773,26 @@ router.post('/hold', async (req, res) => {
         .single();
 
       if (bookErr) throw bookErr;
-      createdHoldIds.push(booking.id);
+      createdHolds.push({ id: booking.id, employee_id: assignedEmployee.id, bed_id: assignedBed.id });
     }
 
-    res.status(201).json({ hold_ids: createdHoldIds });
+    // Notify dashboard backend of new holds (ghost appointments)
+    createdHolds.forEach(h => {
+      triggerDashboardSSE('booking.hold', {
+        id: h.id,
+        employee_id: h.employee_id,
+        bed_id: h.bed_id,
+        branch_id,
+        booking_date,
+        start_time,
+        end_time,
+        num_guests: guestCount,
+        status: 'pending',
+        is_hold: true
+      });
+    });
+
+    res.status(201).json({ hold_ids: createdHolds.map(h => h.id) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -785,9 +818,14 @@ router.delete('/hold', async (req, res) => {
       .delete()
       .in('id', holdIds)
       .eq('status', 'pending')
-      .like('internal_note', '[GIỮ CHỖ TẠM THỜI]%');
+      .like('internal_note', '[Khách đang đặt]%');
 
     if (error) throw error;
+
+    // Notify dashboard backend of hold release
+    holdIds.forEach(id => {
+      triggerDashboardSSE('booking.hold_released', { id });
+    });
 
     res.json({ message: 'Holds cancelled successfully' });
   } catch (err) {
@@ -932,7 +970,7 @@ async function cleanupExpiredHolds() {
       .from('bookings')
       .select('id, internal_note')
       .eq('status', 'pending')
-      .like('internal_note', '[GIỮ CHỖ TẠM THỜI]%');
+      .like('internal_note', '[Khách đang đặt]%');
 
     if (!error && holds && holds.length > 0) {
       const now = Date.now();
