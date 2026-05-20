@@ -1,0 +1,173 @@
+/* ---- Login Page ---- */
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--black);
+}
+
+.login-card {
+  background: var(--white);
+  border-radius: var(--radius-md);
+  padding: 48px 40px;
+  width: 100%;
+  max-width: 420px;
+  box-shadow: var(--shadow-lg);
+}
+
+.login-logo {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+.login-logo h1 {
+  font-size: 32px;
+  font-weight: 700;
+}
+
+.login-logo h1 span {
+  color: var(--muted-gray);
+  font-weight: 400;
+  font-size: 18px;
+}
+
+.login-logo p {
+  color: var(--body-gray);
+  font-size: 14px;
+  margin-top: 8px;
+}
+
+.login-error {
+  background: var(--error-bg);
+  color: var(--error);
+  padding: 10px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  margin-bottom: 20px;
+}
+
+.login-form .btn-primary {
+  width: 100%;
+  padding: 14px;
+  font-size: 16px;
+  margin-top: 8px;
+}
+
+@media (max-width: 768px) {
+  .login-card {
+    padding: 32px 24px;
+    margin: 0 16px;
+  }
+
+  .login-logo h1 {
+    font-size: 28px;
+  }
+}
+
+/* Google Login Button Styles */
+.btn-google {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px;
+  background-color: var(--white);
+  border: 1px solid #e2e8f0;
+  color: #1e293b;
+  border-radius: var(--radius-sm);
+  font-weight: 500;
+  font-size: 15px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.btn-google:hover:not(:disabled) {
+  background-color: #f8fafc;
+  border-color: #cbd5e1;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.btn-google:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.google-icon {
+  flex-shrink: 0;
+}
+
+/* Divider Styles */
+.login-divider {
+  display: flex;
+  align-items: center;
+  text-align: center;
+  margin: 24px 0;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.login-divider::before,
+.login-divider::after {
+  content: '';
+  flex: 1;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.login-divider:not(:empty)::before {
+  margin-right: .75em;
+}
+
+.login-divider:not(:empty)::after {
+  margin-left: .75em;
+}
+
+/* ---- Clerk Premium Wrapper Styles ---- */
+.login-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+  width: 100%;
+  max-width: 440px;
+  margin: 0 20px;
+  animation: fadeIn 0.6s ease-out;
+}
+
+.login-brand {
+  text-align: center;
+}
+
+.login-brand h1 {
+  font-size: 38px;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: -0.5px;
+  margin: 0;
+}
+
+.login-brand h1 span {
+  color: #94a3b8; /* Modern Light Slate/Gray */
+  font-weight: 300;
+}
+
+.login-brand p {
+  color: #94a3b8;
+  font-size: 14px;
+  margin-top: 8px;
+  font-weight: 400;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+

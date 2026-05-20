@@ -1,17 +1,18 @@
 {
-  "name": "yoi-spa-lp-backend",
+  "name": "yoi-booking-backend",
   "version": "1.0.0",
-  "description": "YOi Spa Landing Page with Booking Backend",
+  "description": "YOi Spa Booking System Backend",
   "main": "server.js",
   "scripts": {
     "dev": "node server.js",
     "start": "node server.js"
   },
   "dependencies": {
+    "@clerk/express": "^2.1.19",
     "@supabase/supabase-js": "^2.49.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.0",
-    "serverless-http": "^3.2.0"
+    "web-push": "^3.6.7"
   }
 }

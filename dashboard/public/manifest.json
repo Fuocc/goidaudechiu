@@ -1,0 +1,22 @@
+{
+  "name": "Ý Ơi Dashboard",
+  "short_name": "Ý Ơi",
+  "description": "Bảng điều khiển quản lý spa Ý Ơi",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f7f7",
+  "theme_color": "#333333",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/favicon-256x256.png",
+      "sizes": "256x256",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": [
+    "business",
+    "productivity"
+  ]
+}

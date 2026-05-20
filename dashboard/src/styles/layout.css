@@ -1,0 +1,77 @@
+/* ---- Layout ---- */
+.app-layout {
+  display: flex;
+  min-height: 100vh;
+}
+
+.main-content {
+  flex: 1;
+  margin-left: var(--sidebar-width);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.page-content>div:not(.full-view) {
+  padding: 32px;
+  flex: 1;
+}
+
+/* ---- Header ---- */
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 32px;
+}
+
+.page-title {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+}
+
+.page-subtitle {
+  font-size: 14px;
+  color: var(--body-gray);
+  margin-top: 4px;
+}
+
+/* ============================================
+   Responsive Layout — Tablet (≤1024px)
+   ============================================ */
+@media (max-width: 1024px) {
+  .main-content {
+    margin-left: 72px;
+  }
+
+  .page-content>div:not(.full-view) {
+    padding: 56px 24px 0px;
+  }
+
+  .page-title {
+    font-size: 24px;
+  }
+}
+
+/* ============================================
+   Responsive Layout — Mobile (≤768px)
+   ============================================ */
+@media (max-width: 768px) {
+  .main-content {
+    margin-left: 0;
+    padding-bottom: calc(var(--mobile-bottom-nav-height, 64px) + env(safe-area-inset-bottom, 0px));
+  }
+
+  .page-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .page-title {
+    font-size: 22px;
+  }
+}

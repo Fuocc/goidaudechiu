@@ -1,0 +1,1459 @@
+/* ---- Booking Row UI (Uber Inspired) ---- */
+.booking-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  border-radius: 12px;
+  transition: all 0.2s ease;
+}
+
+.booking-row:hover:not(.no-hover) {
+  background: var(--hover-light);
+}
+
+.booking-row-icon {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted-gray);
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.booking-row-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.booking-row-title {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--black);
+  padding: 16px;
+  border-radius: var(--radius-md);
+  transition: all 0.25s ease-out;
+}
+
+.booking-row-title:hover {
+  background-color: #F5F5F4;
+}
+
+.customer-display {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.customer-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #f3e5ab;
+  color: #8b4513;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.customer-avatar-lg {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: #f3e5ab;
+  color: #8b4513;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 24px;
+}
+
+.customer-info {
+  flex: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 0px;
+}
+
+.customer-phone {
+  color: var(--muted-gray);
+  font-size: 14px;
+}
+
+.customer-view {
+  display: flex;
+  flex-flow: column;
+  gap: 8px;
+}
+
+.customer-id {
+  font-size: 14px;
+  padding: 6px 18px;
+  background-color: #efefef;
+  width: max-content;
+  margin: 0 auto 16px;
+  border-radius: var(--radius-pill);
+}
+
+/* ---- Time Picker Input (Manual) ---- */
+.time-picker-input-group {
+  display: flex;
+  align-items: center;
+  height: 48px;
+  background-color: white;
+  border-radius: 15px;
+  padding: 16px;
+  transition: all 0.25s ease-out;
+}
+
+.time-picker-input-group:hover {
+  background-color: #F5F5F4;
+}
+
+.time-part-input {
+  width: 20px;
+  border: none;
+  background: transparent;
+  text-align: center;
+  font-size: 16px;
+  font-weight: 500;
+  color: #111;
+  padding: 2px 0;
+  outline: none;
+}
+
+.time-part-input:focus {
+  color: var(--primary);
+}
+
+.time-separator {
+  margin: -2px 3px 0;
+  font-weight: 600;
+}
+
+/* ============================================
+   Calendar View (Google Calendar-style)
+   ============================================ */
+.cal-toolbar {
+  display: flex;
+  flex-flow: column;
+  position: sticky;
+  top: 0;
+  left: 0;
+  z-index: 30;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.cal-toolbar-wrap {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 24px;
+  background-color: var(--white);
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.cal-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cal-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.cal-week-label {
+  color: var(--black);
+  font-weight: 500;
+  font-size: 16px;
+  margin-right: 16px;
+}
+
+.cal-view-toggle {
+  display: flex;
+  border: 1px solid var(--border-gray);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+
+.cal-view-btn {
+  padding: 6px 14px;
+  border: none;
+  background: var(--white);
+  color: var(--body-gray);
+  cursor: pointer;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.cal-view-btn:first-child {
+  border-right: 1px solid var(--border-gray);
+}
+
+.cal-view-btn.active {
+  background: var(--black);
+  color: var(--white);
+}
+
+.cal-view-btn:hover:not(.active) {
+  background: var(--chip-gray);
+}
+
+/* Calendar Container */
+.cal-container {
+  background: var(--white);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.cal-header {
+  display: grid;
+  grid-template-columns: 64px repeat(7, 1fr);
+  border-bottom: 1px solid var(--chip-gray);
+  background: var(--white);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.cal-time-gutter-header {
+  border-right: 1px solid var(--chip-gray);
+}
+
+.cal-day-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 12px 0;
+  border-right: 1px solid var(--chip-gray);
+  gap: 4px;
+}
+
+.cal-day-header:last-child {
+  border-right: none;
+}
+
+.cal-day-name {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--body-gray);
+  letter-spacing: 0.5px;
+}
+
+.cal-day-num {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--black);
+}
+
+.cal-day-num.today {
+  background: var(--black);
+  color: var(--white);
+}
+
+.cal-day-header.today {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+/* Calendar Body */
+.cal-body {
+  max-height: calc(100vh - 280px);
+  overflow-y: auto;
+}
+
+.cal-scroll {
+  position: relative;
+}
+
+.cal-row {
+  display: grid;
+  grid-template-columns: 64px repeat(7, 1fr);
+  min-height: 64px;
+}
+
+.cal-time-gutter {
+  border-right: 1px solid var(--chip-gray);
+  border-bottom: 1px solid var(--chip-gray);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 0;
+  position: relative;
+}
+
+.cal-time-gutter span {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted-gray);
+  position: absolute;
+  top: -8px;
+  background: var(--white);
+  padding: 0 4px;
+}
+
+.cal-row:first-child .cal-time-gutter span {
+  top: 0;
+}
+
+.cal-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-right: 1px solid var(--chip-gray);
+  border-bottom: 1px solid var(--chip-gray);
+  position: relative;
+  cursor: pointer;
+  transition: background 0.15s;
+  min-height: 64px;
+}
+
+.cal-cell:last-child {
+  border-right: none;
+}
+
+.cal-cell:hover {
+  background: rgba(0, 0, 0, 0.015);
+}
+
+.cal-cell.today {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.cal-cell.today:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+/* Calendar Events */
+.cal-event {
+  border-radius: 4px;
+  padding: 10px;
+  overflow: hidden;
+  cursor: pointer;
+  z-index: 2;
+  transition: opacity 0.15s, transform 0.15s;
+  min-height: 22px;
+  font-size: 11px;
+  line-height: 1.3;
+  box-sizing: border-box;
+}
+
+.cal-event:hover {
+  opacity: 0.9;
+  transform: scale(1.01);
+  z-index: 3;
+  box-shadow: var(--shadow-sm);
+}
+
+.cal-event-time {
+  font-weight: 700;
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cal-event-title {
+  font-weight: 600;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cal-event-service {
+  font-size: 10px;
+  opacity: 0.8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* --- New Calendar Styles (Premium Overhaul) --- */
+.cal-staff-grid {
+  display: grid;
+  grid-template-columns: 80px repeat(var(--staff-count, 1), 1fr);
+  background: white;
+  position: relative;
+  overflow-x: auto;
+}
+
+.cal-staff-header-wrap {
+  display: grid;
+  grid-template-columns: 80px repeat(var(--staff-count, 1), 1fr);
+  width: 100%;
+}
+
+.cal-staff-header {
+  height: 50px;
+  border-right: 1px solid #e5e7eb;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 16px;
+  color: #1f2937;
+  background: #fff;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: 80px repeat(var(--staff-count, 3), 1fr);
+  grid-template-rows: repeat(56, 25px);
+  position: relative;
+  overflow-y: hidden;
+  flex-grow: 1;
+  background-size: calc((100% - 80px) / var(--staff-count, 3)) 100%;
+  background-position: 80px 0;
+}
+
+.cal-time-slot {
+  height: 100px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 8px;
+  font-size: 13px;
+  color: #9ca3af;
+  border-bottom: none;
+  border-right: 1px solid var(--chip-gray);
+  border-top: 1px solid var(--chip-gray);
+}
+
+.cal-staff-column {
+  position: relative;
+  border-right: 1px solid #e5e7eb;
+  min-height: 1400px;
+  background-color: #eeeeee;
+  /* Grey for off-time */
+  background-image:
+    linear-gradient(#e5e7eb 1px, transparent 1px),
+    linear-gradient(to bottom,
+      #eeeeee var(--shift-start, 0px),
+      #ffffff var(--shift-start, 0px),
+      #ffffff var(--shift-end, 0px),
+      #eeeeee var(--shift-end, 0px));
+  background-size: 100% 100px, 100% 100%;
+  background-repeat: repeat, no-repeat;
+}
+
+/* The Now Indicator (Black & Minimalist) */
+.cal-now-line {
+  position: absolute;
+  left: 0;
+  right: -1px;
+  height: 2px;
+  background-color: #000;
+  z-index: 10;
+  pointer-events: none;
+  box-shadow: 0 0 2px rgba(255, 255, 255, 0.8);
+  z-index: 11;
+}
+
+.calendar-grid .cal-staff-column:nth-child(2) .cal-now-line::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: -4px;
+  width: 6px;
+  height: 10px;
+  background-color: #000;
+  clip-path: polygon(0% 0%, 0% 100%, 100% 50%);
+  z-index: 999;
+}
+
+.cal-now-badge {
+  position: absolute;
+  left: -65px;
+  top: -10px;
+  background-color: #000;
+  color: #fff;
+  font-size: 11px;
+  font-weight: bold;
+  padding: 3px 6px;
+  border-radius: 4px;
+  min-width: 40px;
+  text-align: center;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Appointment Styling (Premium) */
+.cal-booking-card-wrapper {
+  transition: transform 0.1s, box-shadow 0.2s;
+  cursor: pointer;
+}
+
+.cal-booking-card-wrapper:hover {
+  transform: scale(1.02);
+  z-index: 20;
+}
+
+.cal-booking-card-wrapper:hover .cal-booking-card {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.cal-booking-card {
+  padding: 10px 12px;
+  background-color: #eff6ff;
+  border-radius: 2px;
+  display: flex;
+  flex-flow: column;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  overflow: hidden;
+  min-height: max-content;
+  position: relative;
+  margin: 2px;
+}
+
+.cal-booking-time {
+  font-size: 12px;
+  color: #555555;
+  position: absolute;
+  bottom: 10px;
+  right: 12px;
+}
+
+.cal-booking-icon {
+  width: 20px;
+  height: 20px;
+  position: absolute;
+  top: 10px;
+  right: 12px;
+}
+
+.cal-booking-name {
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #555555;
+}
+
+.cal-booking-service {
+  font-size: 12px;
+  color: #555555;
+}
+
+
+/* ---- Time Slots (Dashboard Booking Modal) ---- */
+.time-slots-grid-modal {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.time-slot-modal {
+  padding: 8px 4px;
+  border-radius: 6px;
+  border: 1px solid var(--border-gray);
+  background: var(--white);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.time-slot-modal:hover:not(.disabled):not(.selected) {
+  background: var(--chip-gray);
+}
+
+.time-slot-modal.selected {
+  background: var(--black);
+  color: var(--white);
+  border-color: var(--black);
+}
+
+.time-slot-modal.disabled {
+  background: var(--chip-gray);
+  color: var(--muted-gray);
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* Service Color Dots */
+.service-icon-dot {
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+.service-icon-dot.sm {
+  width: 14px;
+  height: 14px;
+}
+
+/* Cleanup Classes */
+.full-view-bookings {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.cal-staff-header.unavailable {
+  background-color: #FAFAFA !important;
+}
+
+.cal-staff-column.unavailable {
+  /* Handled by linear-gradient and background-color */
+}
+
+.cal-staff-header.available {
+  background-color: #FFFFFF;
+}
+
+.cal-staff-column.available {
+  cursor: pointer;
+}
+
+.btn-save-detail:not(:disabled) {
+  background: #000;
+}
+
+
+.btn-save-detail {
+  border-radius: 40px;
+  padding: 12px 32px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-save-detail:disabled {
+  background: #dcdcdc !important;
+  cursor: not-allowed;
+}
+
+.btn-save-detail:not(:disabled) {
+  background: #000;
+}
+
+.modal-max-480 {
+  max-width: 480px !important;
+}
+
+.form-input-service {
+  font-size: 16px;
+  font-weight: 500;
+  box-shadow: none !important;
+  border: none;
+}
+
+.form-input-service.error {
+  border: 1px solid var(--error) !important;
+}
+
+.autocomplete-header {
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #888;
+  background: #f9f9f9;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid #eee;
+}
+
+.booking-date-container {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+}
+
+.form-input-readonly {
+  border: none !important;
+  width: 100%;
+  box-shadow: none !important;
+  cursor: pointer;
+}
+
+.calendar-popover {
+  position: absolute;
+  top: 105%;
+  left: 0;
+  z-index: 100;
+  background: white;
+  border: 1px solid #efefef;
+  borderRadius: 12px;
+  padding: 8px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+}
+
+.time-separator-text {
+  font-size: 16px;
+  color: #afafaf;
+  margin: 0 4px;
+}
+
+.customer-avatar-selected {
+  transform: scale(1.15);
+}
+
+.placeholder-text-dim {
+  color: #888888;
+}
+
+.form-input-search {
+  border: 1px solid #333 !important;
+  font-size: 16px;
+  font-weight: 500;
+  border-radius: 12px !important;
+}
+
+.new-customer-fields {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.form-input-clean {
+  border: none !important;
+  box-shadow: none !important;
+  font-size: 16px;
+  font-weight: 500;
+  background: none !important;
+}
+
+.form-select-clean {
+  border: none !important;
+  background: none !important;
+  font-size: 16px;
+  font-weight: 500;
+  box-shadow: none !important;
+}
+
+.employee-avatar-placeholder {
+  transform: scale(1.2);
+  background: #eee !important;
+  color: #999 !important;
+}
+
+.btn-submit-booking {
+  padding: 12px 32px;
+  border-radius: 24px;
+  background: #111 !important;
+  color: white;
+  border: none;
+  font-weight: 600;
+}
+
+.phone-input-sm {
+  border: 1px solid #e0e0e0 !important;
+  padding: 6px 12px !important;
+  border-radius: 10px !important;
+  width: 140px !important;
+}
+
+.pos-relative {
+  position: relative !important;
+}
+
+.spinner-icon-right {
+  position: absolute !important;
+  right: 12px !important;
+  top: 50% !important;
+  margin-top: -9px !important;
+}
+
+/* More Menu */
+.more-menu {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 10px 10px -5px rgba(0, 0, 0, 0.04), 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  padding: 6px;
+  min-width: 140px;
+  z-index: 100;
+  margin-bottom: 8px;
+}
+
+.more-menu-item {
+  display: block;
+  width: 100%;
+  padding: 10px 16px;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.25s ease-out;
+  color: #333;
+}
+
+.more-menu-item:hover {
+  background: #f5f5f5;
+}
+
+.more-menu-item.text-danger {
+  color: #ff4d4f;
+}
+
+.more-menu-item.text-danger:hover {
+  background: #fff1f0;
+}
+
+/* ---- Drag-to-Create: Hover Ghost ---- */
+.cal-hover-ghost {
+  position: absolute;
+  border: 1.5px solid #1a1a1a;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.92);
+  display: flex;
+  align-items: center;
+  padding-left: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #1a1a1a;
+  pointer-events: none;
+  z-index: 10;
+  backdrop-filter: blur(2px);
+  transition: top 0.05s ease-out;
+}
+
+/* ---- Drag-to-Create: Selection Overlay ---- */
+.cal-drag-selection {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  background: #1a1a1a;
+  border-radius: 6px;
+  z-index: 20;
+  pointer-events: none;
+  display: flex;
+  align-items: flex-start;
+  padding: 8px 10px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  user-select: none;
+  transition: height 0.05s ease-out;
+}
+
+.cal-drag-time {
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+}
+
+/* Prevent text selection during drag */
+.calendar-grid {
+  user-select: none;
+}
+
+.cal-staff-column {
+  cursor: crosshair;
+}
+
+/* ---- Card Drag & Drop Reorder ---- */
+.is-original-placeholder {
+  opacity: 0.25;
+  pointer-events: none;
+}
+
+.is-moving-active {
+  z-index: 9999;
+  cursor: grabbing;
+  opacity: 1;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.1);
+  pointer-events: none;
+}
+
+/* ---- Drag Confirmation Popup ---- */
+.drag-confirm-overlay {
+  z-index: 10000;
+}
+
+.drag-confirm-popup {
+  background: white;
+  padding: 28px;
+  border-radius: 16px;
+  width: 420px;
+  max-width: 90vw;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+}
+
+.drag-confirm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+
+.drag-confirm-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: #111;
+  margin: 0;
+}
+
+.drag-confirm-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.drag-confirm-label {
+  font-size: 13px;
+  color: #777;
+  font-weight: 500;
+  margin-bottom: 2px;
+}
+
+.drag-confirm-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.drag-confirm-time-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.drag-confirm-time {
+  font-size: 15px;
+  font-weight: 500;
+  color: #111;
+  white-space: nowrap;
+}
+
+.drag-confirm-staff-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.drag-confirm-staff-initial {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #f3e5ab;
+  color: #8b4513;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.drag-confirm-staff-name {
+  font-size: 15px;
+  font-weight: 500;
+  color: #111;
+}
+
+.drag-confirm-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+  margin-top: 28px;
+}
+
+.drag-confirm-cancel {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #666;
+  font-size: 15px;
+  font-weight: 500;
+  padding: 12px 28px;
+  border-radius: 24px;
+  transition: background 0.2s;
+}
+
+.drag-confirm-cancel:hover {
+  background: #f5f5f5;
+}
+
+.drag-confirm-submit {
+  background: #111;
+  color: #fff;
+  border: none;
+  padding: 12px 28px;
+  border-radius: 24px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 15px;
+  transition: background 0.2s;
+}
+
+.drag-confirm-submit:hover {
+  background: #333;
+}
+
+/* Disabled submit button style */
+.btn-submit-booking:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ---- Anti-Spam Warning Styles ---- */
+.cal-booking-card-wrapper.is-spam-warning .cal-booking-card {
+  border: 1px solid #f59e0b;
+  animation: cal-card-warning-glow 2s ease-in-out infinite;
+}
+
+@keyframes cal-card-warning-glow {
+
+  0%,
+  100% {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    border-color: #f59e0b;
+  }
+
+  50% {
+    box-shadow: 0 0 8px rgba(245, 158, 11, 0.45);
+    border-color: #d97706;
+  }
+}
+
+.cal-booking-warning-close-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgba(245, 158, 11, 0.15);
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #92400e;
+  cursor: pointer;
+  z-index: 25;
+  transition: all 0.2s ease;
+  padding: 0;
+}
+
+.cal-booking-warning-close-btn:hover {
+  background: #d97706;
+  color: white;
+  transform: scale(1.15);
+}
+
+.anti-spam-dismiss-btn:hover {
+  background: #92400e !important;
+  color: white !important;
+  transform: rotate(90deg);
+}
+
+.anti-spam-alert {
+  background: linear-gradient(135deg, #fff7ed, #fef3c7);
+  border: 1px solid #f59e0b;
+  border-radius: 10px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  animation: anti-spam-pulse 2s ease-in-out infinite;
+}
+
+@keyframes anti-spam-pulse {
+
+  0%,
+  100% {
+    border-color: #f59e0b;
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0);
+  }
+
+  50% {
+    border-color: #d97706;
+    box-shadow: 0 0 8px 0 rgba(245, 158, 11, 0.15);
+  }
+}
+
+.anti-spam-alert-text {
+  font-size: 14px;
+  font-weight: 500;
+  color: #92400e;
+  line-height: 1.6;
+}
+
+/* List view: spam warning row highlight */
+.row-spam-warning {
+  background-color: #fffbeb !important;
+  border-left: 3px solid #f59e0b;
+}
+
+.row-spam-warning:hover {
+  background-color: #fef3c7 !important;
+}
+
+.text-warning-orange {
+  color: #d97706;
+  font-weight: 500;
+}
+
+/* Tour Settings */
+.tour-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.tour-item {
+  display: flex;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid #f0f0f0;
+  background: white;
+  cursor: grab;
+  transition: all 0.2s;
+}
+
+.tour-item:hover {
+  background: #f9fafb;
+}
+
+.tour-item.dragging {
+  opacity: 0.5;
+  background: #eff6ff;
+  border-left: 4px solid #2563eb;
+}
+
+.tour-item-order {
+  width: 32px;
+  font-weight: 700;
+  color: var(--black);
+  font-size: 14px;
+}
+
+.tour-item-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: #f1f5f9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  color: #475569;
+  margin-right: 16px;
+}
+
+.tour-item-info {
+  flex: 1;
+}
+
+.tour-item-handle {
+  color: #cbd5e1;
+  cursor: grab;
+}
+
+.tour-item:last-child {
+  border-bottom: none;
+}
+
+/* Badge pending styling enhancement */
+.badge-pending {
+  background: #fef3c7;
+  color: #d97706;
+  border: 1px solid #f59e0b;
+}
+
+/* ============================================
+   Responsive Bookings — Tablet (≤1024px)
+   ============================================ */
+@media (max-width: 1024px) {
+  .cal-toolbar-wrap {
+    padding: 16px;
+    gap: 8px;
+  }
+
+  .cal-week-label {
+    font-size: 14px;
+    margin-right: 8px;
+  }
+
+  .cal-staff-header {
+    font-size: 13px;
+    height: 44px;
+  }
+}
+
+/* ============================================
+   Responsive Bookings — Mobile (≤768px)
+   ============================================ */
+@media (max-width: 768px) {
+  .full-view-bookings {
+    min-height: calc(100vh - var(--mobile-header-height, 56px) - var(--mobile-bottom-nav-height, 64px));
+  }
+
+  .cal-toolbar {
+    position: sticky;
+  }
+
+  .cal-toolbar-wrap {
+    flex-direction: column;
+    padding: 56px 16px 12px;
+    gap: 12px;
+    align-items: stretch;
+  }
+
+  .cal-toolbar-left {
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .cal-toolbar-right {
+    gap: 8px;
+    width: 100%;
+  }
+
+  .cal-toolbar-right .form-select {
+    flex: 1;
+    max-width: none;
+  }
+
+  .cal-week-label {
+    font-size: 14px;
+    margin-right: 4px;
+    flex: 1;
+  }
+
+  /* Mobile list view: card-based instead of table */
+  .booking-list-mobile {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+  }
+
+  .booking-card-mobile {
+    background: var(--white);
+    border-radius: var(--radius-md);
+    padding: 14px 16px;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .booking-card-mobile:active {
+    transform: scale(0.98);
+    border-color: var(--chip-gray);
+  }
+
+  .booking-card-mobile-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .booking-card-mobile-customer {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--black);
+  }
+
+  .booking-card-mobile-time {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--body-gray);
+  }
+
+  .booking-card-mobile-body {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .booking-card-mobile-service {
+    font-size: 13px;
+    color: var(--body-gray);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .booking-card-mobile-staff {
+    font-size: 13px;
+    color: var(--muted-gray);
+  }
+
+  .booking-card-mobile-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 6px;
+    border-top: 1px solid var(--chip-gray);
+  }
+
+  .booking-card-mobile-price {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--black);
+  }
+
+  /* Hide table on mobile, show mobile cards */
+  .data-table.hide-on-mobile {
+    display: none !important;
+  }
+
+  /* Pagination responsive */
+  .pagination-container {
+    flex-direction: column;
+    gap: 12px;
+    padding: 12px 16px;
+  }
+
+  .items-per-page {
+    font-size: 12px;
+  }
+
+  /* Drag confirm responsive */
+  .drag-confirm-popup {
+    width: 100%;
+    max-width: 100%;
+    border-radius: 16px 16px 0 0;
+    padding: 20px;
+  }
+
+  .drag-confirm-actions {
+    flex-direction: column-reverse;
+    gap: 8px;
+  }
+
+  .drag-confirm-cancel,
+  .drag-confirm-submit {
+    width: 100%;
+    text-align: center;
+  }
+}
+
+/* ============================================
+   Responsive Bookings — Small mobile (≤400px)
+   ============================================ */
+@media (max-width: 400px) {
+  .cal-toolbar-left {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .cal-week-label {
+    font-size: 13px;
+    width: 100%;
+  }
+}
+
+/* ============================================
+   Shimmering Skeleton Loader Animations
+   ============================================ */
+
+.skeleton-shimmer {
+  background: linear-gradient(90deg,
+      rgba(255, 255, 255, 0.03) 25%,
+      rgba(255, 255, 255, 0.08) 37%,
+      rgba(255, 255, 255, 0.03) 63%);
+  background-size: 400% 100%;
+  animation: skeleton-loading-keyframes 1.4s ease infinite;
+}
+
+.skeleton-shimmer-light {
+  background: linear-gradient(90deg,
+      rgba(0, 0, 0, 0.04) 25%,
+      rgba(0, 0, 0, 0.08) 37%,
+      rgba(0, 0, 0, 0.04) 63%);
+  background-size: 400% 100%;
+  animation: skeleton-loading-keyframes 1.4s ease infinite;
+}
+
+@keyframes skeleton-loading-keyframes {
+  0% {
+    background-position: 100% 50%;
+  }
+
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+/* ============================================
+   Disabled Slot Hold Bookings (Khách Đang Đặt)
+   ============================================ */
+
+.cal-booking-card-wrapper.is-hold-disabled {
+  cursor: not-allowed !important;
+}
+
+.cal-booking-card-wrapper.is-hold-disabled .cal-booking-card {
+  cursor: not-allowed !important;
+  box-shadow: none !important;
+  border: 1px dashed rgba(0, 0, 0, 0.15) !important;
+  filter: grayscale(15%);
+}
+
+.booking-card-mobile.is-hold-disabled {
+  cursor: not-allowed !important;
+  opacity: 0.8;
+  border-left: 4px dashed #ccc !important;
+}
+
+/* ============================================
+   Premium Highlight Animation for Notifications
+   ============================================ */
+
+@keyframes highlight-glow {
+  0% {
+    outline: 4px solid rgba(237, 211, 169, 0.8);
+  }
+
+  50% {
+    outline: 4px solid rgba(237, 211, 169, 1);
+  }
+
+  100% {
+    outline: 4px solid rgba(237, 211, 169, 0);
+  }
+}
+
+.highlight-appointment {
+  animation: highlight-glow 1.5s ease-in-out 3 !important;
+  z-index: 1000 !important;
+  position: relative !important;
+  border-radius: 2px;
+}

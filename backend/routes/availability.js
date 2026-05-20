@@ -6,41 +6,6 @@ const OPEN_HOUR = 9;
 const CLOSE_HOUR = 22;
 const SLOT_STEP_MINUTES = 15;
 
-async function cleanupExpiredHolds() {
-  try {
-    const { data: holds, error } = await supabase
-      .from('bookings')
-      .select('id, internal_note')
-      .eq('status', 'pending')
-      .like('internal_note', '[Khách đang đặt]%');
-
-    if (!error && holds && holds.length > 0) {
-      const now = Date.now();
-      const expiredIds = [];
-
-      for (const hold of holds) {
-        const match = hold.internal_note.match(/EXPIRES:(\d+)/);
-        if (match) {
-          const expiresAt = parseInt(match[1]);
-          if (now >= expiresAt) {
-            expiredIds.push(hold.id);
-          }
-        } else {
-          // If no EXPIRES tag is present, fallback (clean older records after 5m)
-          expiredIds.push(hold.id);
-        }
-      }
-
-      if (expiredIds.length > 0) {
-        await supabase.from('bookings').delete().in('id', expiredIds);
-        console.log(`🧹 [Availability API] Cleaned up ${expiredIds.length} expired slot holds dynamically`);
-      }
-    }
-  } catch (err) {
-    console.error('Error cleaning up expired holds in availability:', err.message);
-  }
-}
-
 /**
  * GET /api/availability
  * Query params: branch_id, service_id, date (YYYY-MM-DD), num_guests
@@ -49,7 +14,6 @@ async function cleanupExpiredHolds() {
  */
 router.get('/', async (req, res) => {
   try {
-    await cleanupExpiredHolds();
     const { branch_id, service_id, date, num_guests } = req.query;
 
     if (!branch_id || !service_id || !date) {
@@ -98,7 +62,6 @@ router.get('/', async (req, res) => {
  */
 router.get('/merged', async (req, res) => {
   try {
-    await cleanupExpiredHolds();
     const { date, num_guests, service_id, duration_minutes } = req.query;
 
     if (!date) {
@@ -164,8 +127,7 @@ router.get('/merged', async (req, res) => {
             start_time: s.start_time,
             end_time: s.end_time,
             available: false,
-            branches: [],
-            weekday_early: s.weekday_early || false
+            branches: []
           });
         }
 
@@ -203,6 +165,8 @@ router.get('/merged', async (req, res) => {
  * IMPORTANT: Because you said "click xóa = xóa record schedule" and you want that employee becomes unavailable,
  * we interpret: schedule record exists => working; missing record => NOT working.
  * That matches: default "you must create schedule for everyone first".
+ *
+ * If you want "missing record = default working", tell me and I'll flip this logic.
  */
 async function getAvailabilityForBranch({ branchId, date, guestCount, durationMinutes }) {
   // 1) Service duration
@@ -324,12 +288,6 @@ async function getAvailabilityForBranch({ branchId, date, guestCount, durationMi
   // 5) Generate slots
   const slots = [];
 
-  // Parse YYYY-MM-DD manually to be completely timezone-independent
-  const [year, month, day] = date.split('-').map(Number);
-  const d = new Date(year, month - 1, day);
-  const dayOfWeek = d.getDay(); // 0 is Sunday, 6 is Saturday
-  const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
-
   for (let h = openHour; h < closeHour; h++) {
     for (let m = 0; m < 60; m += SLOT_STEP_MINUTES) {
       const startMinutes = h * 60 + m;
@@ -379,16 +337,12 @@ async function getAvailabilityForBranch({ branchId, date, guestCount, durationMi
       const actualEndM = actualEndTotal % 60;
       const actualEndTime = `${String(actualEndH).padStart(2, '0')}:${String(actualEndM).padStart(2, '0')}`;
 
-      // Flag weekday slots before 10:00 as "weekday_early" (shown but disabled in frontend)
-      const isWeekdayEarly = !isWeekend && h < 10;
-
       slots.push({
         start_time: startTime,
         end_time: actualEndTime,
         available: !disabled,
         available_employees: availableEmployees,
-        available_beds: availableBeds,
-        weekday_early: isWeekdayEarly
+        available_beds: availableBeds
       });
     }
   }

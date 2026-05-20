@@ -1,0 +1,336 @@
+/* ============================================
+   Mobile Card Layout — Shared across all list pages
+   ============================================ */
+
+/* Generic mobile list container */
+.mobile-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+
+/* Generic mobile card */
+.mobile-card {
+  background: var(--white);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-card:active {
+  transform: scale(0.98);
+  background: var(--hover-light);
+}
+
+.mobile-card-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mobile-card-primary {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--black);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mobile-card-secondary {
+  font-size: 13px;
+  color: var(--body-gray);
+}
+
+.mobile-card-muted {
+  font-size: 12px;
+  color: var(--muted-gray);
+}
+
+.mobile-card-actions {
+  display: none;
+  /* Hide buttons on mobile cards as per user request */
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* ============================================
+   Responsive — Customers Mobile Cards
+   ============================================ */
+@media (max-width: 768px) {
+
+  .customer-card-name {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--black);
+  }
+
+  .customer-card-phone {
+    font-size: 14px;
+    color: var(--body-gray);
+    font-weight: 500;
+  }
+
+  .customer-card-meta {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .customer-card-id {
+    font-size: 12px;
+    color: var(--muted-gray);
+    background: var(--chip-gray);
+    padding: 2px 8px;
+    border-radius: var(--radius-pill);
+  }
+
+  .customer-card-note {
+    width: 20px;
+    height: 20px;
+  }
+}
+
+/* ============================================
+   Responsive — Services Mobile Cards
+   ============================================ */
+@media (max-width: 768px) {
+  .service-card {
+    padding-left: 14px;
+  }
+
+  .service-card-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .service-card-color {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .service-card-name {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--black);
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .service-card-details {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding-left: 22px;
+  }
+
+  .service-card-detail-item {
+    font-size: 13px;
+    color: var(--body-gray);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .service-card-detail-item svg {
+    color: var(--muted-gray);
+  }
+}
+
+/* ============================================
+   Responsive — Employees Mobile Cards
+   ============================================ */
+@media (max-width: 768px) {
+  .employee-card {
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .employee-card-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .employee-card-name {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--black);
+  }
+
+  .employee-card-branch {
+    font-size: 12px;
+    color: var(--muted-gray);
+  }
+}
+
+/* ============================================
+   Responsive — Employee Schedules Mobile
+   ============================================ */
+@media (max-width: 768px) {
+  .schedule-mobile-list {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .schedule-mobile-emp {
+    background: var(--white);
+    border-radius: var(--radius-md);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+  }
+
+  .schedule-mobile-emp-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background: var(--bg-gray);
+    border-bottom: 1px solid var(--chip-gray);
+  }
+
+  .schedule-mobile-emp-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--black);
+  }
+
+  .schedule-mobile-emp-branch {
+    font-size: 11px;
+    color: var(--muted-gray);
+  }
+
+  .schedule-mobile-days {
+    display: flex;
+    overflow-x: auto;
+    gap: 8px;
+    padding: 12px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    /* Hide scrollbar for cleaner look */
+  }
+
+  .schedule-mobile-days::-webkit-scrollbar {
+    display: none;
+  }
+
+  .schedule-mobile-day {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 10px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border-radius: var(--radius-md);
+    background: var(--bg-gray);
+    min-width: 65px;
+    flex-shrink: 0;
+    border: 1px solid transparent;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .schedule-mobile-day:last-child {
+    margin-right: 4px;
+  }
+
+  .schedule-mobile-day:active {
+    background: var(--hover-light);
+  }
+
+  .schedule-mobile-day.today {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: var(--black);
+  }
+
+  .schedule-mobile-day-label {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--muted-gray);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .schedule-mobile-day-num {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--black);
+  }
+
+  .schedule-mobile-day-num.today {
+    background: var(--black);
+    color: var(--white);
+  }
+
+  .schedule-mobile-day-status {
+    font-size: 9px;
+    font-weight: 600;
+    padding: 2px 4px;
+    border-radius: 4px;
+    text-align: center;
+    line-height: 1.2;
+    min-height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .schedule-mobile-day-status.working {
+    background: var(--success-bg);
+    color: var(--success);
+  }
+
+  .schedule-mobile-day-status.day-off {
+    background: var(--error-bg);
+    color: var(--error);
+  }
+
+  .schedule-mobile-day-status.empty {
+    color: var(--border-gray);
+    font-size: 14px;
+  }
+
+  /* Schedule toolbar responsive */
+  .schedules-page .cal-toolbar {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .schedules-page .cal-toolbar-left {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .schedules-page .cal-toolbar-right {
+    width: 100%;
+  }
+
+  .schedules-page .cal-toolbar-right .form-select {
+    max-width: 100%;
+    width: 100%;
+  }
+}

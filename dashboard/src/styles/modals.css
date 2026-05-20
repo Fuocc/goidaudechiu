@@ -1,0 +1,189 @@
+/* ---- Modal ---- */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+.modal {
+  background: var(--white);
+  border-radius: var(--radius-md);
+  width: 100%;
+  padding: 32px;
+  display: flex;
+  flex-flow: column;
+  gap: 24px;
+  max-width: 560px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: var(--shadow-lg);
+  animation: slideUp 0.3s ease;
+}
+
+@media (max-width: 768px) {
+  .modal {
+    padding: 24px 20px;
+    gap: 16px;
+    max-width: 100%;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.modal-header h3 {
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.modal-close {
+  width: 36px;
+  height: 36px;
+  padding: 9px;
+  border-radius: 50%;
+  border: none;
+  background: var(--chip-gray);
+  color: var(--black);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.25s ease-out;
+}
+
+.modal-close:hover {
+  background: var(--hover-gray);
+}
+
+.modal-body {
+  display: flex;
+  flex-flow: column;
+  gap: 10px;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.modal-viewing {
+  justify-content: space-between !important;
+  gap: 0 !important;
+}
+
+.detail-tabs {
+  margin: 10px 0 24px;
+  display: flex;
+  gap: 16px;
+}
+
+.detail-tabs .tab-btn {
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.detail-view {
+  display: flex;
+  flex-flow: column;
+  gap: 10px;
+}
+
+/* .detail-view>.booking-row:nth-child(3)>.booking-row-content {
+  padding-left: 16px;
+} */
+
+.modal-viewing .btn-trash {
+  color: rgb(255, 77, 79);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 12px 16px;
+  border-radius: var(--radius-pill);
+}
+
+.modal-viewing .btn-trash:hover {
+  background-color: rgba(255, 77, 79, 0.2);
+}
+
+/* ============================================
+   Booking Detail Modal Grid
+   ============================================ */
+
+.detail-grid {
+  display: flex;
+  flex-direction: column;
+}
+
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--chip-gray);
+}
+
+.detail-row:last-child {
+  border-bottom: none;
+}
+
+.detail-label {
+  font-size: 13px;
+  color: var(--body-gray);
+  font-weight: 500;
+}
+
+.detail-value,
+.detail-select {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--black);
+  background-color: white;
+  text-align: right;
+}
+
+.detail-select {
+  border: none;
+  cursor: pointer;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+}

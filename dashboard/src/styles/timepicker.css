@@ -1,0 +1,93 @@
+/* ============================================
+   Custom Time Picker
+   ============================================ */
+.custom-time-picker-container {
+  position: relative;
+  display: inline-block;
+}
+
+.custom-time-picker-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 48px;
+  padding: 0 16px;
+  background: white;
+  border-radius: 24px;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.custom-time-picker-trigger:focus {
+  outline: none;
+  background-color: #f8f9fa;
+  box-shadow: 0 0 0 2px rgba(0,0,0,0.05);
+}
+
+.custom-time-picker-trigger:hover {
+  background-color: #f8f9fa;
+}
+
+.custom-time-picker-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0%;
+  width: max-content;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.12);
+  z-index: 1000;
+  padding: 8px;
+  max-height: 350px;
+  overflow-y: auto;
+  border: 1px solid #f0f0f0;
+}
+
+/* Hide scrollbar but keep functionality */
+.custom-time-picker-dropdown::-webkit-scrollbar {
+  width: 4px;
+}
+
+.custom-time-picker-dropdown::-webkit-scrollbar-thumb {
+  background: #eee;
+  border-radius: 10px;
+}
+
+.time-option-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.time-option-item:hover {
+  background: #f5f5f5;
+}
+
+.time-option-item.selected {
+  background: #f5f5f5;
+}
+
+.time-option-item.disabled {
+  opacity: 0.3;
+  pointer-events: none;
+  filter: grayscale(1);
+}
+
+.time-option-val {
+  font-size: 16px;
+  font-weight: 500;
+  color: #1a1a1a;
+}
+
+.time-option-suffix {
+  font-size: 14px;
+  font-weight: 400;
+  color: #999;
+}
