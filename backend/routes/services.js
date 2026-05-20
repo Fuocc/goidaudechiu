@@ -73,7 +73,6 @@ router.post('/', async (req, res) => {
     if (result.error) throw result.error;
     res.status(201).json(result.data);
   } catch (err) {
-    console.error('Create service error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -104,7 +103,6 @@ router.put('/:id', async (req, res) => {
     if (result.error) throw result.error;
     res.json(result.data);
   } catch (err) {
-    console.error('Update service error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

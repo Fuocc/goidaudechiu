@@ -12,7 +12,7 @@ router.get('/', async (req, res) => {
     if (error) {
       // If table doesn't exist, we might get an error. 
       // In that case, return empty object or default
-      console.error('Error fetching settings:', error);
+
       return res.json({});
     }
     

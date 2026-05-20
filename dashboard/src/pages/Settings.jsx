@@ -58,7 +58,7 @@ function Settings() {
         }));
       }
     } catch (err) {
-      console.error('Error loading settings:', err);
+
     } finally {
       setLoading(false);
     }
@@ -84,7 +84,7 @@ function Settings() {
       const data = await getWebhooks();
       setWebhooks(data);
     } catch (err) {
-      console.error(err);
+
     } finally {
       setWebhooksLoading(false);
     }
@@ -161,7 +161,7 @@ function Settings() {
         setSelectedBranch(bData[0].id);
       }
     } catch (err) {
-      console.error(err);
+
     } finally {
       setTourLoading(false);
     }
@@ -200,7 +200,7 @@ function Settings() {
         setInitialTourOrder(activeStaff.map(s => s.id));
       }
     } catch (err) {
-      console.error(err);
+
     } finally {
       setTourLoading(false);
     }

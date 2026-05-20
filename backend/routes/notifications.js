@@ -39,11 +39,8 @@ router.post('/subscribe', async (req, res) => {
             .select();
 
         if (error) throw error;
-
-        console.log('🔔 [Web Push] Đăng ký thành công endpoint:', endpoint.slice(-30));
         res.status(201).json({ message: 'Đăng ký nhận thông báo đẩy thành công!' });
     } catch (err) {
-        console.error('❌ Lỗi khi lưu Push Subscription:', err);
         res.status(500).json({ error: 'Không thể đăng ký nhận tin trên máy chủ' });
     }
 });
@@ -63,11 +60,8 @@ router.post('/unsubscribe', async (req, res) => {
             .eq('endpoint', endpoint);
 
         if (error) throw error;
-
-        console.log('🔕 [Web Push] Hủy đăng ký endpoint:', endpoint.slice(-30));
         res.json({ message: 'Đã hủy đăng ký nhận thông báo!' });
     } catch (err) {
-        console.error('❌ Lỗi khi huỷ đăng ký:', err);
         res.status(500).json({ error: 'Lỗi máy chủ khi hủy đăng ký nhận tin' });
     }
 });
@@ -100,7 +94,6 @@ router.post('/send-test', async (req, res) => {
             const duplicateIds = subscriptions
                 .filter(sub => !keepIds.has(sub.id))
                 .map(sub => sub.id);
-            console.log(`🧹 Cleaning ${duplicateIds.length} duplicate push subscriptions`);
             if (duplicateIds.length > 0) {
                 supabase.from('push_subscriptions').delete().in('id', duplicateIds)
                     .then(() => console.log('✅ Duplicate subscriptions cleaned up'))
@@ -111,7 +104,7 @@ router.post('/send-test', async (req, res) => {
         const payload = JSON.stringify({
             title: title || 'Ý Ơi ơi! Có tin nhắn test nè 🌸',
             body: body || 'Ủa chứ chưa có ai đặt lịch hết trơn á, đây chỉ là tin nhắn gửi thử để cục dàng thấy là hệ thống Web Push đang hoạt động dễ chịu vô cùng đó nghen! ✨',
-            url: '/bookings'
+            url: '/'
         });
 
         const sendPromises = uniqueSubs.map(sub => {
@@ -128,10 +121,8 @@ router.post('/send-test', async (req, res) => {
                     // Nếu nhận mã lỗi 410 (Gone) hoặc 404, nghĩa là endpoint đó đã hết hạn / người dùng đã block nhận tin.
                     // Cần xóa endpoint này khỏi DB để tối ưu hóa hiệu năng
                     if (err.statusCode === 410 || err.statusCode === 404) {
-                        console.log('🔕 Dọn dẹp subscription hết hạn/không hợp lệ:', sub.endpoint.slice(-30));
                         await supabase.from('push_subscriptions').delete().eq('id', sub.id);
                     } else {
-                        console.error('❌ Lỗi gửi tin đến endpoint:', err);
                     }
                 });
         });
@@ -139,7 +130,6 @@ router.post('/send-test', async (req, res) => {
         await Promise.all(sendPromises);
         res.json({ message: `Đã gửi thông báo đến ${uniqueSubs.length} thiết bị nhận.` });
     } catch (err) {
-        console.error('❌ Lỗi gửi thông báo test:', err);
         res.status(500).json({ error: 'Thất bại khi gửi thông báo test' });
     }
 });

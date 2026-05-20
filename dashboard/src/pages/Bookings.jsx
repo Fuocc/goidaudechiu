@@ -116,6 +116,14 @@ const normalizeName = (name) => {
     .join(' ');
 };
 
+const getLogicalDate = () => {
+  const d = new Date();
+  if (d.getHours() > 22 || (d.getHours() === 22 && d.getMinutes() >= 15)) {
+    d.setDate(d.getDate() + 1);
+  }
+  return d;
+};
+
 function Bookings({ data }) {
   // Responsive: detect mobile for PWA
   const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 768);
@@ -130,7 +138,7 @@ function Bookings({ data }) {
   // On mobile, always force list view
   const effectiveViewMode = isMobile ? 'list' : viewMode;
 
-  const [currentDate, setCurrentDate] = useState(new Date());
+  const [currentDate, setCurrentDate] = useState(getLogicalDate());
 
   const [bookings, setBookings] = useState([]);
   const [branches, setBranches] = useState([]);
@@ -240,7 +248,7 @@ function Bookings({ data }) {
       const bookingsData = await getBookingsRange(dateStr, dateStr, branchId);
       setBookings(bookingsData.filter(b => b.status !== 'cancelled'));
     } catch (err) {
-      console.error("📡 Error refreshing bookings in real-time:", err);
+
     }
   };
 
@@ -265,8 +273,8 @@ function Bookings({ data }) {
           schema: 'public',
           table: 'bookings'
         },
-        (payload) => {
-          console.log('📡 Supabase Realtime: Booking change detected!', payload);
+        () => {
+
           refreshBookingsOnly();
         }
       )
@@ -282,28 +290,28 @@ function Bookings({ data }) {
     const connect = () => {
       eventSource = new EventSource(sseUrl);
 
-      eventSource.addEventListener('booking.created', (e) => {
-        console.log('📡 SSE: New booking created', JSON.parse(e.data));
+      eventSource.addEventListener('booking.created', () => {
+
         refreshBookingsOnly();
       });
 
-      eventSource.addEventListener('booking.updated', (e) => {
-        console.log('📡 SSE: Booking updated', JSON.parse(e.data));
+      eventSource.addEventListener('booking.updated', () => {
+
         refreshBookingsOnly();
       });
 
-      eventSource.addEventListener('booking.deleted', (e) => {
-        console.log('📡 SSE: Booking deleted', JSON.parse(e.data));
+      eventSource.addEventListener('booking.deleted', () => {
+
         refreshBookingsOnly();
       });
 
-      eventSource.addEventListener('booking.hold', (e) => {
-        console.log('📡 SSE: Slot hold created', JSON.parse(e.data));
+      eventSource.addEventListener('booking.hold', () => {
+
         refreshBookingsOnly();
       });
 
-      eventSource.addEventListener('booking.hold_released', (e) => {
-        console.log('📡 SSE: Slot hold released', JSON.parse(e.data));
+      eventSource.addEventListener('booking.hold_released', () => {
+
         refreshBookingsOnly();
       });
 
@@ -365,7 +373,7 @@ function Bookings({ data }) {
           sessionStorage.removeItem('goto_booking'); // Clear so we don't trigger again on subsequent renders
           handleGotoBooking(detail);
         } catch (e) {
-          console.error("Error parsing goto_booking", e);
+
         }
       }
     };
@@ -525,7 +533,7 @@ function Bookings({ data }) {
         setFilterBranch(b[0].id);
       }
     } catch (err) {
-      console.error(err);
+
     }
   };
 
@@ -563,14 +571,14 @@ function Bookings({ data }) {
       setEmployees(sortedEmployees);
       setEmployeeSchedules(schedulesData);
     } catch (err) {
-      console.error(err);
+
     } finally {
       setLoading(false);
     }
   };
 
   // Navigation
-  const goToday = () => setCurrentDate(new Date());
+  const goToday = () => setCurrentDate(getLogicalDate());
   const goPrev = () => {
     const d = new Date(currentDate);
     d.setDate(d.getDate() - 1);
@@ -646,7 +654,7 @@ function Bookings({ data }) {
     e.preventDefault();
 
     // Disable drag/click for guest slot holds
-    const isHold = booking.status === 'pending' && booking.internal_note && booking.internal_note.includes('Khách đang đặt');
+    const isHold = booking.status === 'pending' && booking.internal_note && booking.internal_note.includes('GIỮ CHỖ TẠM THỜI');
     if (isHold) return;
 
     const card = e.currentTarget;
@@ -873,7 +881,7 @@ function Bookings({ data }) {
         }
         setSearchSuggestions({ type, data: results, loading: false });
       } catch (err) {
-        console.error('Search error:', err);
+
         setSearchSuggestions(prev => ({ ...prev, loading: false }));
       }
     }, 300);
@@ -1103,7 +1111,7 @@ function Bookings({ data }) {
 
       setEmployeesByBranch((emps || []).filter(e => e.is_active && availableIds.includes(e.id)));
     } catch (e) {
-      console.error(e);
+
       setEmployeesByBranch([]);
     }
   };
@@ -1126,7 +1134,7 @@ function Bookings({ data }) {
 
       return startMin >= sStart && endMin <= sEnd;
     } catch (err) {
-      console.error('Availability check failed:', err);
+
       return true;
     }
   };
@@ -1220,7 +1228,7 @@ function Bookings({ data }) {
       notify('Đã tắt cảnh báo và khôi phục màu dịch vụ!');
       loadBookings();
     } catch (err) {
-      console.error(err);
+
       alert('Không thể tắt cảnh báo: ' + err.message);
     }
   };
@@ -1559,7 +1567,7 @@ function Bookings({ data }) {
                         const cardBg = getBookingColor(b);
                         const textColor = '#555555';
 
-                        const isHold = b.status === 'pending' && b.internal_note && b.internal_note.includes('Khách đang đặt');
+                        const isHold = b.status === 'pending' && b.internal_note && b.internal_note.includes('GIỮ CHỖ TẠM THỜI');
                         const isSpamWarning = b.status === 'pending' && b.internal_note && !isHold;
 
                         return (
@@ -1762,7 +1770,7 @@ function Bookings({ data }) {
                         key={b.id}
                         id={`booking-card-${b.id}`}
                         className={`booking-card-mobile${b.status === 'pending' && b.internal_note ? ' row-spam-warning' : ''}${isHold ? ' is-hold-disabled' : ''}`}
-                        onClick={() => handleOpenDetail(b)}
+                        onClick={() => { if (!isHold) handleOpenDetail(b); }}
                       >
                         <div className="booking-card-mobile-header">
                           <span className="booking-card-mobile-customer">{b.customers?.name || '-'}</span>

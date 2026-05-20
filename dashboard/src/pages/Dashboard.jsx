@@ -27,7 +27,6 @@ function Dashboard() {
       setRevenueData(chartData);
       setTopServices(servicesData.slice(0, 5));
     } catch (err) {
-      console.error('Dashboard load error:', err);
     } finally {
       setLoading(false);
     }

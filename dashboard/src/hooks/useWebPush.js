@@ -45,10 +45,10 @@ export function useWebPush() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ subscription })
-        }).catch(err => console.warn('Đồng bộ tự động Web Push thất bại:', err));
+        }).catch(() => {});
       }
     } catch (err) {
-      console.error('Lỗi khi kiểm tra Push Subscription:', err);
+
     } finally {
       setLoading(false);
     }
@@ -99,7 +99,7 @@ export function useWebPush() {
       setIsSubscribed(true);
       return true;
     } catch (err) {
-      console.error('❌ Đăng ký Web Push thất bại:', err);
+
       alert('Đăng ký nhận thông báo lỗi: ' + err.message);
       return false;
     } finally {
@@ -131,7 +131,7 @@ export function useWebPush() {
       setIsSubscribed(false);
       return true;
     } catch (err) {
-      console.error('❌ Hủy đăng ký Web Push thất bại:', err);
+
       return false;
     } finally {
       setLoading(false);

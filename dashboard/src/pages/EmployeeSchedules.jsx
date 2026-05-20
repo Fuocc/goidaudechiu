@@ -81,7 +81,7 @@ function EmployeeSchedules() {
       const data = await getBranches();
       setBranches(data);
     } catch (err) {
-      console.error(err);
+
     }
   };
 
@@ -96,7 +96,6 @@ function EmployeeSchedules() {
       setEmployees(empData.filter(e => e.is_active));
       setSchedules(schedData);
     } catch (err) {
-      console.error(err);
     }
   };
 

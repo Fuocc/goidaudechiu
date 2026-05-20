@@ -4,6 +4,13 @@ const supabase = require('../supabaseClient');
 const webpush = require('web-push');
 const bookingRateLimiter = require('../middleware/rateLimiter');
 
+// Cấu hình thông số VAPID tiêu chuẩn cho web-push
+webpush.setVapidDetails(
+  process.env.VAPID_SUBJECT,
+  process.env.VAPID_PUBLIC_KEY,
+  process.env.VAPID_PRIVATE_KEY
+);
+
 function getRelativeDateLabel(dateStr) {
   if (!dateStr) return '';
   const bookingDate = new Date(dateStr + 'T00:00:00');
@@ -13,18 +20,24 @@ function getRelativeDateLabel(dateStr) {
   const tomorrow = new Date(today);
   tomorrow.setDate(today.getDate() + 1);
 
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+
   const bookingTime = bookingDate.getTime();
   const todayTime = today.getTime();
   const tomorrowTime = tomorrow.getTime();
+  const yesterdayTime = yesterday.getTime();
 
   if (bookingTime === todayTime) {
     return 'hôm nay';
   } else if (bookingTime === tomorrowTime) {
     return 'ngày mai';
+  } else if (bookingTime === yesterdayTime) {
+    return 'hôm qua';
   } else {
     const day = String(bookingDate.getDate()).padStart(2, '0');
     const month = String(bookingDate.getMonth() + 1).padStart(2, '0');
-    return `${day}/${month}`;
+    return `ngày ${day}/${month}`;
   }
 }
 
@@ -59,7 +72,6 @@ async function notifyNewBooking(bookingData) {
       const lastSent = recentPushCache.get(cacheKey);
 
       if (lastSent && (now - lastSent < 15000)) {
-        console.log(`✨ Duplicate booking.created event ignored for Web Push (Phone: ${phone}, Time: ${time})`);
         return;
       }
       recentPushCache.set(cacheKey, now);
@@ -70,12 +82,10 @@ async function notifyNewBooking(bookingData) {
       .select('*');
 
     if (fetchErr) {
-      console.error('❌ Error fetching push subscriptions:', fetchErr);
       return;
     }
 
     if (!subscriptions || subscriptions.length === 0) {
-      console.log('⚠️ No push subscriptions found — skipping VAPID push');
       return;
     }
 
@@ -92,16 +102,12 @@ async function notifyNewBooking(bookingData) {
       const duplicateIds = subscriptions
         .filter(sub => !keepIds.has(sub.id))
         .map(sub => sub.id);
-      console.log(`🧹 Cleaning ${duplicateIds.length} duplicate push subscriptions`);
       if (duplicateIds.length > 0) {
         supabase.from('push_subscriptions').delete().in('id', duplicateIds)
           .then(() => console.log('✅ Duplicate subscriptions cleaned up'))
           .catch(err => console.error('❌ Failed to clean duplicates:', err));
       }
     }
-
-    console.log(`📨 Sending VAPID push to ${uniqueSubs.length} device(s)`);
-
     // Phân tích dữ liệu khách hàng, dịch vụ và chi nhánh đồng bộ với Dashboard
     let customerName = bookingData.customers?.name || bookingData.customer_name || '';
     let serviceName = bookingData.services?.name || bookingData.service_name || '';
@@ -126,13 +132,56 @@ async function notifyNewBooking(bookingData) {
     branchName = branchName || 'Chi nhánh';
     const startTime = bookingData.start_time || '';
 
+    // 2.5) --- Save to database public.dashboard_notifications ---
+    try {
+      if (bookingData.id) {
+        const { data: existingNotif } = await supabase
+          .from('dashboard_notifications')
+          .select('id')
+          .eq('booking_id', bookingData.id)
+          .limit(1);
+
+        if (!existingNotif || existingNotif.length === 0) {
+          const { error: dbErr } = await supabase
+            .from('dashboard_notifications')
+            .insert({
+              booking_id: bookingData.id,
+              title: 'Lịch hẹn mới! 🎉',
+              customer_name: customerName,
+              service_name: serviceName,
+              branch_name: branchName,
+              start_time: startTime,
+              booking_date: bookingData.booking_date,
+              read: false
+            });
+
+          if (dbErr) {
+          } else {
+          }
+        } else {
+        }
+      }
+
+      // Tự động dọn dẹp các thông báo cũ hơn 30 ngày để tối ưu dung lượng DB
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      supabase
+        .from('dashboard_notifications')
+        .delete()
+        .lt('created_at', thirtyDaysAgo.toISOString())
+        .then(({ error: pruneErr }) => {
+          if (pruneErr) console.error('❌ Error pruning old notifications:', pruneErr);
+        });
+    } catch (dbEx) {
+    }
+
     const relativeDate = getRelativeDateLabel(bookingData.booking_date);
     const datePhrase = relativeDate ? ` vào ${relativeDate}` : '';
 
     const payload = JSON.stringify({
       title: 'Ý Ơi! Có lịch mới nè 🌸',
-      body: `Cục dàng ${customerName} vừa đặt hẹn "${serviceName}" lúc ${startTime.substring(0, 5)}${datePhrase} tại ${branchName} đó nghen!`,
-      url: '/bookings'
+      body: `${customerName} vừa đặt lịch ${serviceName} tại ${branchName} lúc ${startTime.substring(0, 5)}${datePhrase}`,
+      url: '/'
     });
 
     uniqueSubs.forEach(sub => {
@@ -147,15 +196,12 @@ async function notifyNewBooking(bookingData) {
       webpush.sendNotification(pushConfig, payload)
         .then(() => console.log('✅ Push sent to endpoint:', sub.endpoint.slice(-30)))
         .catch(async (err) => {
-          console.error('❌ Push failed for endpoint:', sub.endpoint.slice(-30), 'Status:', err.statusCode);
           if (err.statusCode === 410 || err.statusCode === 404) {
             await supabase.from('push_subscriptions').delete().eq('id', sub.id);
-            console.log('🗑️ Removed expired subscription:', sub.endpoint.slice(-30));
           }
         });
     });
   } catch (err) {
-    console.error('Lỗi khi gửi thông báo đặt lịch mới:', err);
   }
 }
 
@@ -196,6 +242,300 @@ router.get('/', async (req, res) => {
     const { data, error } = await query;
     if (error) throw error;
     res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/bookings/hold
+ * Create a temporary slot hold
+ */
+router.post('/hold', async (req, res) => {
+  try {
+    // Run cleanup first
+    const broadcast = getBroadcast(req);
+    await cleanupExpiredHolds(broadcast);
+
+    const {
+      branch_id, service_id, num_guests,
+      booking_date, start_time, hold_duration
+    } = req.body;
+
+    if (!branch_id || !booking_date || !start_time) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    const guestCount = parseInt(num_guests) || 1;
+
+    // 1) Resolve service-like data (duration + price)
+    let resolvedService = null;
+    let duration = 60;
+    let price = 0;
+    let currentServiceId = service_id;
+
+    if (currentServiceId) {
+      const { data: service, error: serviceErr } = await supabase
+        .from('services')
+        .select('*')
+        .eq('id', currentServiceId)
+        .single();
+
+      if (!serviceErr && service) {
+        resolvedService = service;
+        duration = service.duration_minutes || 60;
+        price = service.price || 0;
+      }
+    } else {
+      // Try to find "Giữ chỗ" service
+      const { data: placeholderService } = await supabase
+        .from('services')
+        .select('*')
+        .eq('name', 'Giữ chỗ')
+        .eq('is_active', true)
+        .maybeSingle();
+
+      if (placeholderService) {
+        resolvedService = placeholderService;
+        currentServiceId = placeholderService.id;
+        duration = placeholderService.duration_minutes || 60;
+        price = placeholderService.price || 0;
+      }
+    }
+
+    // Calculate end_time
+    const startMinutes = timeToMinutes(start_time);
+    const endMinutes = startMinutes + duration;
+    const endH = Math.floor(endMinutes / 60);
+    const endM = endMinutes % 60;
+    const end_time = `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
+
+    // 2) Find or create placeholder customer
+    let customer;
+    const placeholderPhone = '0000000000';
+    const { data: existingCustomer } = await supabase
+      .from('customers')
+      .select('*')
+      .eq('phone', placeholderPhone)
+      .maybeSingle();
+
+    if (existingCustomer) {
+      customer = existingCustomer;
+    } else {
+      const { data: newCustomer, error: custErr } = await supabase
+        .from('customers')
+        .insert([{ name: 'Giữ Chỗ Tạm Thời', phone: placeholderPhone, email: null }])
+        .select()
+        .single();
+
+      if (custErr) throw custErr;
+      customer = newCustomer;
+    }
+
+    // 3) Load existing bookings in branch/day (including other holds!)
+    const { data: dayBookings, error: dayErr } = await supabase
+      .from('bookings')
+      .select('employee_id, bed_id, start_time, end_time')
+      .eq('branch_id', branch_id)
+      .eq('booking_date', booking_date)
+      .neq('status', 'cancelled');
+
+    if (dayErr) throw dayErr;
+
+    // 4) Load active employees
+    const { data: allEmployees, error: empErr } = await supabase
+      .from('employees')
+      .select('id')
+      .eq('branch_id', branch_id)
+      .eq('is_active', true);
+
+    if (empErr) throw empErr;
+
+    // Apply schedule rules
+    const empIds = allEmployees.map(e => e.id);
+    let schedules = [];
+    if (empIds.length > 0) {
+      const { data: schedData, error: schedErr } = await supabase
+        .from('employee_schedules')
+        .select('employee_id, start_time, end_time, is_day_off')
+        .in('employee_id', empIds)
+        .eq('date', booking_date);
+
+      if (schedErr) throw schedErr;
+      schedules = schedData || [];
+    }
+    const scheduleByEmp = new Map();
+    for (const s of schedules) scheduleByEmp.set(s.employee_id, s);
+
+    const employees = allEmployees.filter(e => {
+      const s = scheduleByEmp.get(e.id);
+      if (!s) return false;
+      if (s.is_day_off) return false;
+      if (!s.start_time || !s.end_time) return false;
+
+      const sStart = timeToMinutes(String(s.start_time).substring(0, 5));
+      const sEnd = timeToMinutes(String(s.end_time).substring(0, 5));
+      return startMinutes >= sStart && endMinutes <= sEnd;
+    });
+
+    if (employees.length < guestCount) {
+      return res.status(409).json({ error: 'Không đủ nhân viên cho khung giờ này.' });
+    }
+
+    // 5) Load active beds
+    const { data: beds, error: bedErr } = await supabase
+      .from('beds')
+      .select('id')
+      .eq('branch_id', branch_id)
+      .eq('is_active', true);
+
+    if (bedErr) throw bedErr;
+
+    // 6) Assign employee & bed
+    const { data: settingsData } = await supabase.from('settings').select('*');
+    const settings = (settingsData || []).reduce((acc, curr) => {
+      acc[curr.key] = curr.value;
+      return acc;
+    }, {});
+
+    const bufferTime = parseInt(settings.buffer_time) || 15;
+    const tourOrder = settings[`tour_order_${branch_id}`] || [];
+
+    const createdHoldIds = [];
+    const assignedEmpIds = [];
+    const assignedBedIds = [];
+
+    for (let g = 0; g < guestCount; g++) {
+      const busyEmployeeIds = new Set();
+      // Combine dayBookings with already created holds in this loop to prevent double assignment of the same staff/bed
+      const allRelevantBookings = [...dayBookings, ...createdHoldIds.map(id => {
+        return {
+          employee_id: employees.find(emp => emp.id === createdHoldIds[g - 1])?.id, // fallback/mock
+          bed_id: beds[0]?.id // mock
+        };
+      })];
+
+      for (const booking of dayBookings) {
+        const bStart = timeToMinutes(booking.start_time);
+        const bEnd = timeToMinutes(booking.end_time) + bufferTime;
+        if (startMinutes < bEnd && bStart < endMinutes) {
+          busyEmployeeIds.add(booking.employee_id);
+        }
+      }
+
+      const availableEmployees = employees.filter(e => !busyEmployeeIds.has(e.id) && !assignedEmpIds.includes(e.id));
+      if (availableEmployees.length === 0) {
+        return res.status(409).json({ error: 'Không có nhân viên trống cho khung giờ này.' });
+      }
+
+      availableEmployees.sort((a, b) => {
+        const idxA = tourOrder.indexOf(a.id);
+        const idxB = tourOrder.indexOf(b.id);
+        if (idxA === -1 && idxB === -1) return 0;
+        if (idxA === -1) return 1;
+        if (idxB === -1) return -1;
+        return idxA - idxB;
+      });
+
+      const assignedEmployee = availableEmployees[0];
+      assignedEmpIds.push(assignedEmployee.id);
+
+      // Beds
+      const busyBedIds = new Set();
+      for (const booking of dayBookings) {
+        const bStart = timeToMinutes(booking.start_time);
+        const bEnd = timeToMinutes(booking.end_time);
+        if (startMinutes < bEnd && bStart < endMinutes) {
+          busyBedIds.add(booking.bed_id);
+        }
+      }
+
+      const availableBeds = beds.filter(b => !busyBedIds.has(b.id) && !assignedBedIds.includes(b.id));
+      if (availableBeds.length === 0) {
+        return res.status(409).json({ error: 'Không còn giường trống cho khung giờ này.' });
+      }
+
+      const bedBookingCount = {};
+      for (const bed of beds) bedBookingCount[bed.id] = 0;
+      for (const booking of dayBookings) {
+        if (bedBookingCount[booking.bed_id] !== undefined) bedBookingCount[booking.bed_id]++;
+      }
+
+      availableBeds.sort((a, b) => (bedBookingCount[a.id] || 0) - (bedBookingCount[b.id] || 0));
+      const assignedBed = availableBeds[0];
+      assignedBedIds.push(assignedBed.id);
+
+      const durationMs = parseInt(hold_duration) || (5 * 60 * 1000);
+      const expiresAt = Date.now() + durationMs;
+
+      const insertPayload = {
+        customer_id: customer.id,
+        service_id: currentServiceId || null,
+        employee_id: assignedEmployee.id,
+        bed_id: assignedBed.id,
+        branch_id,
+        num_guests: guestCount,
+        booking_date,
+        start_time,
+        end_time,
+        status: 'pending',
+        total_price: price,
+        internal_note: `[GIỮ CHỖ TẠM THỜI] Giữ chỗ tạm thời cho khách đang đặt online. Tự động hủy lịch sau 5 phút. EXPIRES:${expiresAt}`
+      };
+
+      const { data: booking, error: bookErr } = await supabase
+        .from('bookings')
+        .insert([insertPayload])
+        .select()
+        .single();
+
+      if (bookErr) throw bookErr;
+      createdHoldIds.push(booking.id);
+    }
+
+    // Broadcast SSE for live dashboard updates
+    createdHoldIds.forEach(id => {
+      broadcast('booking.hold', { id });
+    });
+
+    res.status(201).json({ hold_ids: createdHoldIds });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * DELETE /api/bookings/hold
+ * Cancel/release a hold booking (used when timer expires or user backs out)
+ */
+router.delete('/hold', async (req, res) => {
+  try {
+    const holdIdsRaw = req.query.hold_ids || req.body.hold_ids;
+    if (!holdIdsRaw) {
+      return res.status(400).json({ error: 'Missing hold_ids' });
+    }
+
+    const holdIds = Array.isArray(holdIdsRaw)
+      ? holdIdsRaw
+      : String(holdIdsRaw).split(',').map(id => id.trim());
+
+    const { error } = await supabase
+      .from('bookings')
+      .delete()
+      .in('id', holdIds)
+      .eq('status', 'pending')
+      .like('internal_note', '[GIỮ CHỖ TẠM THỜI]%');
+
+    if (error) throw error;
+
+    const broadcast = getBroadcast(req);
+    if (typeof broadcast === 'function') {
+      holdIds.forEach(id => {
+        broadcast('booking.hold_released', { id });
+      });
+    }
+
+    res.json({ message: 'Holds cancelled successfully' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -437,6 +777,78 @@ router.post('/', bookingRateLimiter, async (req, res) => {
       customer = newCustomer;
     }
 
+    // --- If hold_ids are provided, update them instead of creating new bookings ---
+    if (req.body.hold_ids && (Array.isArray(req.body.hold_ids) || typeof req.body.hold_ids === 'string')) {
+      const ids = Array.isArray(req.body.hold_ids) ? req.body.hold_ids : [req.body.hold_ids];
+      const updatedBookings = [];
+
+      for (const id of ids) {
+        // --- Anti-Spam Check ---
+        let bookingStatus = 'confirmed';
+        let internalNote = null;
+
+        const isWalkIn = normalize(customer_name).includes('khach la') && /^0+$/.test(customer_phone);
+
+        if (!isWalkIn) {
+          try {
+            const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+            const { data: recentBookings, error: recentErr } = await supabase
+              .from('bookings')
+              .select('id, created_at, customers!inner(phone)')
+              .eq('customers.phone', customer_phone)
+              .gte('created_at', thirtyMinAgo);
+
+            if (!recentErr && recentBookings && recentBookings.length > 0) {
+              bookingStatus = 'pending';
+              internalNote = `⚠️ Khách hàng ${customer_phone} đã có ${recentBookings.length} đơn trong 30 phút qua. Vui lòng xác nhận qua điện thoại.`;
+            }
+          } catch (spamCheckErr) {
+          }
+        }
+
+        const { data: updated, error: upErr } = await supabase
+          .from('bookings')
+          .update({
+            customer_id: customer.id,
+            status: bookingStatus,
+            notes: notes || null,
+            internal_note: internalNote // clear the GIỮ CHỖ TẠM THỜI note!
+          })
+          .eq('id', id)
+          .select(`
+            *,
+            customers(name, phone, email),
+            services(name, duration_minutes, price),
+            employees(name),
+            beds(name),
+            branches(name)
+          `)
+          .single();
+
+        if (!upErr && updated) {
+          updatedBookings.push(updated);
+        }
+      }
+
+      if (updatedBookings.length > 0) {
+        const result = updatedBookings.length === 1 ? updatedBookings[0] : updatedBookings;
+
+        // Fire webhooks async
+        const webhookEvent = updatedBookings.some(b => b.status === 'pending') ? 'booking.pending' : 'booking.confirmed';
+        fireWebhooks(webhookEvent, updatedBookings).catch(err =>
+          console.error('Webhook fire error:', err.message)
+        );
+
+        // Broadcast SSE for live dashboard updates
+        const broadcast = getBroadcast(req);
+        updatedBookings.forEach(b => {
+          broadcast('booking.created', b);
+        });
+
+        return res.status(200).json(result);
+      }
+    }
+
     // 4) Load existing bookings in branch/day
     const { data: dayBookings, error: dayErr } = await supabase
       .from('bookings')
@@ -605,12 +1017,10 @@ router.post('/', bookingRateLimiter, async (req, res) => {
             if (!recentErr && recentBookings && recentBookings.length > 0) {
               bookingStatus = 'pending';
               internalNote = `⚠️ Khách hàng ${customer_phone} đã có ${recentBookings.length} đơn trong 30 phút qua. Vui lòng xác nhận qua điện thoại.`;
-              console.log(`🔶 Anti-spam triggered for phone ${customer_phone}: ${recentBookings.length} recent booking(s)`);
             }
           }
         } catch (spamCheckErr) {
           // Don't block booking if spam check fails, just log
-          console.error('Anti-spam check error:', spamCheckErr.message);
         }
       }
 
@@ -800,11 +1210,59 @@ async function fireWebhooks(event, bookings) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
-        console.log(`✅ Webhook fired: ${webhook.name} → ${event}`);
       } catch (err) {
-        console.error(`❌ Webhook failed: ${webhook.name} → ${err.message}`);
       }
     }
+  }
+}
+
+async function cleanupExpiredHolds(broadcast) {
+  try {
+    const { data: holds, error } = await supabase
+      .from('bookings')
+      .select('id, internal_note')
+      .eq('status', 'pending')
+      .like('internal_note', '[GIỮ CHỖ TẠM THỜI]%');
+
+    if (!error && holds && holds.length > 0) {
+      const now = Date.now();
+      const expiredIds = [];
+
+      for (const hold of holds) {
+        if (!hold.internal_note) {
+          expiredIds.push(hold.id);
+          continue;
+        }
+        const match = hold.internal_note.match(/EXPIRES:(\d+)/);
+        if (match) {
+          const expiresAt = parseInt(match[1]);
+          if (now >= expiresAt) {
+            expiredIds.push(hold.id);
+          }
+        } else {
+          // Fallback if no EXPIRES tag is present (older records)
+          const matchTime = hold.internal_note.match(/\[SLOT_HOLD\]\s+(\d+)/);
+          if (matchTime) {
+            const createdAt = parseInt(matchTime[1]);
+            if (now - createdAt >= 5 * 60 * 1000) {
+              expiredIds.push(hold.id);
+            }
+          } else {
+            expiredIds.push(hold.id);
+          }
+        }
+      }
+
+      if (expiredIds.length > 0) {
+        await supabase.from('bookings').delete().in('id', expiredIds);
+        if (typeof broadcast === 'function') {
+          expiredIds.forEach(id => {
+            broadcast('booking.hold_released', { id });
+          });
+        }
+      }
+    }
+  } catch (err) {
   }
 }
 

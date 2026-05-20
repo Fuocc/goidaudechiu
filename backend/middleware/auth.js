@@ -14,7 +14,6 @@ async function requireAdmin(req, res, next) {
 
   // Bypass authentication check during initial setup if Clerk secret is missing
   if (!process.env.CLERK_SECRET_KEY) {
-    console.warn('⚠️ [Clerk Auth] CLERK_SECRET_KEY is not defined in backend/.env!');
     return res.status(401).json({ error: 'System configuration error: CLERK_SECRET_KEY missing' });
   }
 
@@ -41,7 +40,6 @@ async function requireAdmin(req, res, next) {
     req.user = user;
     next();
   } catch (err) {
-    console.error('❌ [Clerk Auth Error]:', err.message || err);
     return res.status(401).json({ error: 'Unauthorized: Token validation failed' });
   }
 }

@@ -40,7 +40,7 @@ function Employees() {
       const data = await getBranches();
       setBranches(data);
     } catch (err) {
-      console.error(err);
+
     }
   };
 
@@ -50,7 +50,6 @@ function Employees() {
       const data = await getEmployees(filterBranch || undefined);
       setEmployees(data);
     } catch (err) {
-      console.error(err);
     } finally {
       setLoading(false);
     }

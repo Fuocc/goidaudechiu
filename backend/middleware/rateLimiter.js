@@ -19,22 +19,22 @@ async function bookingRateLimiter(req, res, next) {
   // 0) --- Bypasses for Development & Testing ---
 
   // A. Environment Variable / Dev Mode Bypass
-  if (process.env.DISABLE_RATE_LIMITER === 'true' || process.env.NODE_ENV === 'development') {
-    console.log('⚡ Rate limiter bypassed: Development mode or DISABLE_RATE_LIMITER=true');
-    return next();
-  }
+  // if (process.env.DISABLE_RATE_LIMITER === 'true' || process.env.NODE_ENV === 'development') {
+  //   console.log('⚡ Rate limiter bypassed: Development mode or DISABLE_RATE_LIMITER=true');
+  //   return next();
+  // }
 
   // B. Localhost Loopback Bypass (127.0.0.1, ::1)
-  const isLocalIp = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
-  if (isLocalIp) {
-    console.log(`⚡ Rate limiter bypassed: Localhost developer IP (${ip})`);
-    return next();
-  }
+  // const isLocalIp = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+  // if (isLocalIp) {
+  //   console.log(`⚡ Rate limiter bypassed: Localhost developer IP (${ip})`);
+  //   return next();
+  // }
 
   // C. Tester Phone Numbers Bypass
   // Any phone number starting with '0999' is designated for testing and won't be rate-limited
   if (customer_phone && customer_phone.trim().startsWith('0999')) {
-    console.log(`⚡ Rate limiter bypassed: Tester phone number detected (${customer_phone})`);
+
     return next();
   }
 
@@ -48,7 +48,7 @@ async function bookingRateLimiter(req, res, next) {
   const recentIpAttempts = ipTimestamps.filter(t => now - t < WINDOW_MS);
 
   if (recentIpAttempts.length >= MAX_LIMIT) {
-    console.warn(`🛑 Rate limit triggered: IP ${ip} has made ${recentIpAttempts.length} attempts in the last 5 minutes.`);
+
     return res.status(429).json({
       error: 'Bạn đã đặt lịch quá 3 lần trong vòng 5 phút từ thiết bị này. Vui lòng đợi 5 phút hoặc liên hệ hotline/Zalo để được hỗ trợ nhanh nhất.'
     });
@@ -72,16 +72,16 @@ async function bookingRateLimiter(req, res, next) {
           .gte('created_at', fiveMinAgo);
 
         if (error) {
-          console.error('❌ Error querying bookings for phone rate limit:', error);
+
           // Do not block the booking if database error occurs during check
         } else if (recentBookings && recentBookings.length >= MAX_LIMIT) {
-          console.warn(`🛑 Rate limit triggered: Phone ${cleanPhone} has ${recentBookings.length} bookings in the last 5 minutes.`);
+
           return res.status(429).json({
             error: 'Số điện thoại này đã đặt 3 lịch hẹn trong 5 phút qua. Vui lòng đợi 5 phút hoặc liên hệ hotline/Zalo để được hỗ trợ nhanh nhất.'
           });
         }
       } catch (err) {
-        console.error('❌ Exception in phone rate limiter:', err);
+
       }
     }
   }

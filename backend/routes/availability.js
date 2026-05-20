@@ -207,7 +207,6 @@ async function getAvailabilityForBranch({ branchId, date, guestCount, durationMi
       }
     }
   } catch (err) {
-    console.error('Error fetching branch opening hours:', err);
   }
 
   if (isClosed) {

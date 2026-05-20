@@ -22,8 +22,8 @@ self.addEventListener('push', function (event) {
 
   const options = {
     body: data.body,
-    icon: data.icon || '/public/favicon-256x256.png', // Sử dụng favicon logo thực tế của spa
-    badge: data.badge || '/public/favicon-256x256.png', // Badge hiển thị nhỏ trên thiết bị di động
+    icon: data.icon || '/favicon-256x256.png', // Sử dụng favicon logo thực tế của spa
+    badge: data.badge || '/favicon-256x256.png', // Badge hiển thị nhỏ trên thiết bị di động
     vibrate: [100, 50, 100], // Kiểu rung trên điện thoại Android
     tag: 'yoi-new-booking', // Gom nhóm thông báo lịch đặt mới, tránh spam tràn lan màn hình
     renotify: true, // Kích hoạt phát chuông và rung lại khi có thông báo mới cùng tag xếp chồng

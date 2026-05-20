@@ -330,7 +330,7 @@ async function loadBranches() {
       };
     });
   } catch (err) {
-    console.error('Error loading branches:', err);
+
   }
 }
 
@@ -339,7 +339,7 @@ async function loadServices() {
     const res = await fetch(`${API_BASE}/services`);
     cache.services = await res.json();
   } catch (err) {
-    console.error('Error loading services:', err);
+
   }
 }
 
@@ -374,10 +374,10 @@ function prefetchNextDays(currentDateStr, serviceId, guests) {
         .then(data => {
           const slots = data.slots || [];
           availabilityCache.set(cacheKey, slots);
-          console.log(`⚡ [Cache Prefetch] Cached next availability for: ${nextDateStr}`);
+
         })
         .catch(err => {
-          console.warn(`[Cache Prefetch] Failed for: ${nextDateStr}`, err);
+
         });
     }
   }
@@ -416,7 +416,7 @@ async function loadAvailability(date, serviceId, guests) {
     // Fetch next 2 days in background to accelerate transitions
     prefetchNextDays(date, serviceId, guests);
   } catch (err) {
-    console.error('Error loading availability:', err);
+
     cache.availabilitySlots = [];
     $timeSlotsGrid.innerHTML = '<div style="grid-column: 1/-1; text-align:center; padding: 20px; color: red;">Lỗi tải khung giờ. Vui lòng thử lại.</div>';
   }
@@ -1577,7 +1577,7 @@ function updateSummary(step, params) {
           }
         }
       } catch (e) {
-        console.warn('Error expanding drawer automatically:', e);
+
       }
     }
   }
@@ -1788,6 +1788,24 @@ async function handleSubmit(e) {
         const blockedUntil = Date.now() + 5 * 60 * 1000;
         localStorage.setItem('spa_booking_blocked_until', String(blockedUntil));
         checkBookingBlock();
+
+        // Stop the hold countdown timer
+        stopCountdown();
+
+        // Release the temporary slot hold on the server
+        const rateLimitHoldIds = getSavedHoldIds();
+        if (rateLimitHoldIds && rateLimitHoldIds.length > 0) {
+          try {
+            const qs = new URLSearchParams({ hold_ids: rateLimitHoldIds.join(',') });
+            fetch(`${API_BASE}/bookings/hold?${qs.toString()}`, { method: 'DELETE' });
+          } catch (releaseErr) {
+
+          }
+        }
+
+        // Clear hold storage
+        clearHoldStorage();
+
         throw new Error('RATE_LIMIT_BLOCKED');
       }
       throw new Error(err.error || 'Booking failed');
@@ -1932,7 +1950,7 @@ function checkBookingBlock() {
         if (!isStillBlocked) {
           clearInterval(blockCheckInterval);
           blockCheckInterval = null;
-          console.log('🔓 Rate limit block expired. Submit buttons restored.');
+
         }
       }, 3000);
     }
@@ -2072,9 +2090,9 @@ async function handleHoldExpiration() {
       await fetch(`${API_BASE}/bookings/hold?${qs.toString()}`, {
         method: 'DELETE'
       });
-      console.log('Expired hold bookings deleted from DB');
+
     } catch (err) {
-      console.error('Error deleting expired holds:', err);
+
     }
   }
 
@@ -2145,9 +2163,9 @@ async function releaseHoldIfNavigatedAway(newStep) {
       await fetch(`${API_BASE}/bookings/hold?${qs.toString()}`, {
         method: 'DELETE'
       });
-      console.log('Hold bookings released due to navigation to step:', newStep);
+
     } catch (err) {
-      console.error('Error releasing hold bookings:', err);
+
     }
   }
 }
@@ -2168,7 +2186,7 @@ async function handleHoldState(params) {
   const isValid = matches && savedHoldIds.length > 0 && savedExpires > Date.now();
 
   if (isValid) {
-    console.log('Resuming existing hold countdown...');
+
     startCountdown(savedExpires);
   } else {
     // Check if the user is currently rate-limited/blocked
@@ -2176,7 +2194,7 @@ async function handleHoldState(params) {
     const isBlocked = blockedUntilStr && parseInt(blockedUntilStr, 10) > Date.now();
 
     if (isBlocked) {
-      console.log('⚡ User is blocked due to rate limiting. Skipping slot hold request.');
+
       stopCountdown();
       
       const buttons = [
@@ -2195,7 +2213,7 @@ async function handleHoldState(params) {
       return;
     }
 
-    console.log('Creating a new slot hold...');
+
 
     if (savedHoldIds.length > 0) {
       try {
@@ -2255,7 +2273,7 @@ async function handleHoldState(params) {
       // Check if user navigated away while the request was in flight
       const currentParams = getParams();
       if (currentParams.step !== STEPS.CUSTOMERINFO) {
-        console.log('User navigated away while hold was being created. Releasing hold immediately.');
+
         if (holdIds && holdIds.length > 0) {
           const qs = new URLSearchParams({ hold_ids: holdIds.join(',') });
           fetch(`${API_BASE}/bookings/hold?${qs.toString()}`, { method: 'DELETE' }).catch(() => { });

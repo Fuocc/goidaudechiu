@@ -52,7 +52,6 @@ function Branches() {
       const data = await getBranches();
       setBranches(data);
     } catch (err) {
-      console.error(err);
     } finally {
       setLoading(false);
     }

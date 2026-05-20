@@ -1420,6 +1420,10 @@
   cursor: not-allowed !important;
 }
 
+.cal-booking-card-wrapper.is-hold-disabled {
+  cursor: not-allowed !important;
+}
+
 .cal-booking-card-wrapper.is-hold-disabled .cal-booking-card {
   cursor: not-allowed !important;
   box-shadow: none !important;

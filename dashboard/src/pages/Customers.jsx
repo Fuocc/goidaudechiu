@@ -56,7 +56,6 @@ function Customers() {
       const data = await getCustomers(searchTerm);
       setCustomers(data);
     } catch (err) {
-      console.error(err);
     } finally {
       setLoading(false);
     }

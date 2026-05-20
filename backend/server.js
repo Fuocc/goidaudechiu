@@ -18,6 +18,17 @@ function broadcastSSE(event, data) {
       sseClients.splice(index, 1);
     }
   });
+
+  // Tự động gửi Web Push thông báo khi có sự kiện đặt lịch mới thành công (booking.created)
+  if (event === 'booking.created') {
+    try {
+      const bookingsRouter = require('./routes/bookings');
+      if (bookingsRouter && typeof bookingsRouter.notifyNewBooking === 'function') {
+        bookingsRouter.notifyNewBooking(data).catch(err => console.error('❌ Web Push notify error:', err));
+      }
+    } catch (err) {
+    }
+  }
 }
 
 // Make broadcastSSE available globally for route modules
@@ -48,7 +59,6 @@ const corsOptions = {
     if (isAllowed || origin.endsWith('.netlify.app')) {
       callback(null, true);
     } else {
-      console.log('CORS Blocked Origin:', origin);
       callback(new Error('Not allowed by CORS'));
     }
   },
@@ -83,11 +93,8 @@ app.post('/api/events/trigger', (req, res) => {
   const { event, data } = req.body;
   if (event) {
     broadcastSSE(event, data);
-    console.log(`📡 SSE Triggered externally: event=${event}`);
-    
     // Nếu là sự kiện tạo đặt lịch mới từ Landing Page, tự động kích hoạt Web Push
     if (event === 'booking.created' && typeof bookingsRouter.notifyNewBooking === 'function') {
-      console.log('🌸 Triggering Web Push for external guest booking...');
       bookingsRouter.notifyNewBooking(data).catch(err => console.error('Web Push notify error:', err));
     }
     
@@ -109,8 +116,6 @@ app.get('/api/events', (req, res) => {
   res.write('event: connected\ndata: {"status":"connected"}\n\n');
 
   sseClients.push(res);
-  console.log(`📡 SSE client connected. Total: ${sseClients.length}`);
-
   // Heartbeat every 30s to keep connection alive
   const heartbeat = setInterval(() => {
     try {
@@ -124,7 +129,6 @@ app.get('/api/events', (req, res) => {
     clearInterval(heartbeat);
     const idx = sseClients.indexOf(res);
     if (idx !== -1) sseClients.splice(idx, 1);
-    console.log(`📡 SSE client disconnected. Total: ${sseClients.length}`);
   });
 });
 
@@ -182,21 +186,9 @@ function getLocalIps() {
 const localIps = getLocalIps();
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n======================================================`);
-  console.log(`✅ YOi Booking API running on port ${PORT}`);
-  console.log(`🏠 Host Machine: http://localhost:${PORT}`);
-  console.log(`📋 Frontend: http://localhost:${PORT}`);
-  console.log(`------------------------------------------------------`);
-  console.log(`📱 Access from Mobile/Tablet on the SAME Wi-Fi network:`);
-
   if (localIps.length === 0) {
-    console.log(`   (Không tìm thấy mạng WiFi, hãy kiểm tra kết nối)`);
   } else {
     localIps.forEach(ip => {
-      console.log(`   👉 Mạng [${ip.name}]:`);
-      console.log(`      🏠 API Base: http://${ip.address}:${PORT}`);
-      console.log(`      📋 Frontend: http://${ip.address}:${PORT}`);
     });
   }
-  console.log(`======================================================\n`);
 });

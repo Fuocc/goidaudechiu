@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { FiUsers, FiUserCheck, FiScissors, FiCalendar, FiMapPin, FiLogOut, FiClock, FiSettings, FiMenu, FiX, FiBell } from 'react-icons/fi';
+import { FiUsers, FiUserCheck, FiScissors, FiCalendar, FiMapPin, FiLogOut, FiClock, FiSettings, FiMenu, FiX, FiBell, FiChevronDown, FiChevronRight } from 'react-icons/fi';
 import { Avatar, Circle, Float } from "@chakra-ui/react"
 import { supabase } from '../supabaseClient';
 import { useWebPush } from '../hooks/useWebPush';
@@ -21,7 +21,7 @@ function Sidebar({ user, onLogout }) {
   useEffect(() => {
     if (isSupported && !isSubscribed && !loading) {
       if (Notification.permission !== 'denied') {
-        subscribe().catch(err => console.warn("Tự động đăng ký Web Push thất bại:", err));
+        subscribe().catch(() => {});
       }
     }
   }, [isSupported, isSubscribed, loading, subscribe]);
@@ -38,18 +38,155 @@ function Sidebar({ user, onLogout }) {
 
   const [panelOpen, setPanelOpen] = useState(false);
 
+  // Sync to localStorage as offline/instant-load cache
   useEffect(() => {
     localStorage.setItem('yoi_notifications', JSON.stringify(notifications));
   }, [notifications]);
 
+  const fetchNotifications = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('dashboard_notifications')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(50);
+      
+      if (!error && data) {
+        const mapped = data.map(n => ({
+          id: n.id,
+          bookingId: n.booking_id,
+          bookingDate: n.booking_date,
+          title: n.title,
+          customerName: n.customer_name,
+          serviceName: n.service_name,
+          branchName: n.branch_name,
+          startTime: n.start_time,
+          time: new Date(n.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+          createdAt: n.created_at,
+          read: n.read
+        }));
+        setNotifications(mapped);
+      }
+    } catch (err) {
+
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchNotifications();
+  }, [fetchNotifications]);
+
   const unreadCount = notifications.filter(n => !n.read).length;
 
-  const markAsRead = (id) => {
-    setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+  const [collapsedGroups, setCollapsedGroups] = useState({});
+
+  const isGroupExpanded = (groupKey, currentCollapsed = collapsedGroups) => {
+    if (currentCollapsed[groupKey] !== undefined) {
+      return currentCollapsed[groupKey];
+    }
+    return groupKey === 'Hôm nay';
   };
 
-  const markAllAsRead = () => {
+  const toggleGroup = (groupKey) => {
+    setCollapsedGroups(prev => ({
+      ...prev,
+      [groupKey]: !isGroupExpanded(groupKey, prev)
+    }));
+  };
+
+  const getRelativeDateLabel = (dateStr) => {
+    if (!dateStr) return '';
+    const bookingDate = new Date(dateStr + 'T00:00:00');
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const tomorrow = new Date(today);
+    tomorrow.setDate(today.getDate() + 1);
+
+    const yesterday = new Date(today);
+    yesterday.setDate(today.getDate() - 1);
+
+    const bookingTime = bookingDate.getTime();
+    const todayTime = today.getTime();
+    const tomorrowTime = tomorrow.getTime();
+    const yesterdayTime = yesterday.getTime();
+
+    if (bookingTime === todayTime) {
+      return 'hôm nay';
+    } else if (bookingTime === tomorrowTime) {
+      return 'ngày mai';
+    } else if (bookingTime === yesterdayTime) {
+      return 'hôm qua';
+    } else {
+      const day = String(bookingDate.getDate()).padStart(2, '0');
+      const month = String(bookingDate.getMonth() + 1).padStart(2, '0');
+      return `ngày ${day}/${month}`;
+    }
+  };
+
+  const getNotifMessage = (n) => {
+    if (n.customerName) {
+      const dateLabel = getRelativeDateLabel(n.bookingDate);
+      const datePhrase = dateLabel ? ` vào ${dateLabel}` : '';
+      return `${n.customerName} vừa đặt lịch ${n.serviceName} tại ${n.branchName} lúc ${n.startTime?.substring(0, 5)}${datePhrase}`;
+    }
+    return n.message; // fallback for older notifications
+  };
+
+  const getGroupedNotifications = () => {
+    const groups = {};
+    
+    notifications.forEach(n => {
+      let dateKey = 'Lịch sử';
+      if (n.createdAt) {
+        const d = new Date(n.createdAt);
+        const today = new Date();
+        const yesterday = new Date();
+        yesterday.setDate(today.getDate() - 1);
+        
+        if (d.toDateString() === today.toDateString()) {
+          dateKey = 'Hôm nay';
+        } else if (d.toDateString() === yesterday.toDateString()) {
+          dateKey = 'Hôm qua';
+        } else {
+          const day = String(d.getDate()).padStart(2, '0');
+          const month = String(d.getMonth() + 1).padStart(2, '0');
+          const year = d.getFullYear();
+          dateKey = `Ngày ${day}/${month}/${year}`;
+        }
+      }
+      
+      if (!groups[dateKey]) {
+        groups[dateKey] = [];
+      }
+      groups[dateKey].push(n);
+    });
+    
+    return groups;
+  };
+
+  const markAsRead = async (id) => {
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+    try {
+      await supabase
+        .from('dashboard_notifications')
+        .update({ read: true })
+        .eq('id', id);
+    } catch (err) {
+
+    }
+  };
+
+  const markAllAsRead = async () => {
     setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+    try {
+      await supabase
+        .from('dashboard_notifications')
+        .update({ read: true })
+        .eq('read', false);
+    } catch (err) {
+
+    }
   };
 
   // Dedup set: prevent same booking from being processed by both Supabase Realtime & SSE
@@ -57,13 +194,13 @@ function Sidebar({ user, onLogout }) {
 
   const handleNewBooking = useCallback((booking) => {
     // 1) Filter out temporary holds ("Khách đang đặt")
-    const isHold = booking.status === 'pending' && booking.internal_note?.includes('[Khách đang đặt]');
+    const isHold = booking.status === 'pending' && booking.internal_note?.includes('GIỮ CHỖ TẠM THỜI');
     if (isHold) return;
 
     // Dedup: skip if this booking was already processed recently
     const bookingId = booking.id;
     if (bookingId && processedBookingsRef.current.has(bookingId)) {
-      console.log('🔕 Skipping duplicate notification for booking:', bookingId);
+
       return;
     }
     if (bookingId) {
@@ -93,36 +230,8 @@ function Sidebar({ user, onLogout }) {
       osc.start();
       osc.stop(context.currentTime + 0.35);
     } catch (e) {
-      console.warn("Sound blocked by browser user gesture policies", e);
+
     }
-
-    // Helper to format booking date relatively
-    const getRelativeDateLabel = (dateStr) => {
-      if (!dateStr) return '';
-      const bookingDate = new Date(dateStr + 'T00:00:00');
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-
-      const tomorrow = new Date(today);
-      tomorrow.setDate(today.getDate() + 1);
-
-      const bookingTime = bookingDate.getTime();
-      const todayTime = today.getTime();
-      const tomorrowTime = tomorrow.getTime();
-
-      if (bookingTime === todayTime) {
-        return 'hôm nay';
-      } else if (bookingTime === tomorrowTime) {
-        return 'ngày mai';
-      } else {
-        const day = String(bookingDate.getDate()).padStart(2, '0');
-        const month = String(bookingDate.getMonth() + 1).padStart(2, '0');
-        return `${day}/${month}`;
-      }
-    };
-
-    const relativeDate = getRelativeDateLabel(booking.booking_date);
-    const datePhrase = relativeDate ? ` vào ${relativeDate}` : '';
 
     // 3) Create clean notification card
     const newNotif = {
@@ -130,8 +239,12 @@ function Sidebar({ user, onLogout }) {
       bookingId: booking.id,
       bookingDate: booking.booking_date,
       title: 'Lịch hẹn mới! 🎉',
-      message: `${customerName} vừa đặt lịch ${serviceName} tại ${branchName} lúc ${startTime.substring(0, 5)}${datePhrase}`,
+      customerName,
+      serviceName,
+      branchName,
+      startTime,
       time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+      createdAt: new Date().toISOString(),
       read: false
     };
 
@@ -207,7 +320,7 @@ function Sidebar({ user, onLogout }) {
               handleNewBooking(booking);
             }
           } catch (err) {
-            console.error("Error fetching notification details:", err);
+
           }
         }
       )
@@ -225,7 +338,7 @@ function Sidebar({ user, onLogout }) {
 
       eventSource.addEventListener('booking.created', (e) => {
         const booking = JSON.parse(e.data);
-        console.log('🔔 Notification SSE: New booking', booking);
+
         handleNewBooking(booking);
       });
 
@@ -442,18 +555,41 @@ function Sidebar({ user, onLogout }) {
                   <p>Không có thông báo nào</p>
                 </div>
               ) : (
-                notifications.map(n => (
-                  <div
-                    key={n.id}
-                    className={`notif-item${!n.read ? ' unread' : ''}`}
-                    onClick={() => handleNotifClick(n)}
-                  >
-                    <div className="notif-item-header">
-                      <span className="notif-item-title">{n.title}</span>
-                      <span className="notif-item-time">{n.time}</span>
-                    </div>
-                    <p className="notif-item-msg">{n.message}</p>
-                    {!n.read && <span className="notif-unread-dot" />}
+                Object.entries(getGroupedNotifications()).map(([dateGroup, items]) => (
+                  <div key={dateGroup} className="notif-date-group">
+                    <button 
+                      className="notif-date-header-btn"
+                      onClick={() => toggleGroup(dateGroup)}
+                    >
+                      <div className="notif-date-header-left">
+                        {isGroupExpanded(dateGroup) ? <FiChevronDown size={14} /> : <FiChevronRight size={14} />}
+                        <span className="notif-date-header-text">{dateGroup}</span>
+                      </div>
+                      <span className="notif-date-header-count">{items.length}</span>
+                    </button>
+                    {isGroupExpanded(dateGroup) && (
+                      <div className="notif-date-group-content">
+                        {items.map(n => (
+                          <div
+                            key={n.id}
+                            className={`notif-item${!n.read ? ' unread' : ''}`}
+                            onClick={() => handleNotifClick(n)}
+                          >
+                            <div className="notif-item-header">
+                              <span className="notif-item-title">{n.title}</span>
+                              <span className="notif-item-time">
+                                {n.createdAt 
+                                  ? `${new Date(n.createdAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} - ${new Date(n.createdAt).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })}`
+                                  : n.time
+                                }
+                              </span>
+                            </div>
+                            <p className="notif-item-msg">{getNotifMessage(n)}</p>
+                            {!n.read && <span className="notif-unread-dot" />}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ))
               )}
