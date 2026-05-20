@@ -1,12 +1,11 @@
 [build]
-  command = "npm install"
-  functions = "netlify/functions"
   publish = "."
 
 [[redirects]]
   from = "/api/*"
-  to = "/.netlify/functions/api"
+  to = "https://ten-app-cua-ban.onrender.com/api/:splat"
   status = 200
+  force = true
 
 [[redirects]]
   from = "/booking"
