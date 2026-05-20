@@ -3,7 +3,7 @@
 
 [[redirects]]
   from = "/api/*"
-  to = "https://ten-app-cua-ban.onrender.com/api/:splat"
+  to = "https://spa-booking-system-vqmo.onrender.com/api/:splat"
   status = 200
   force = true
 
