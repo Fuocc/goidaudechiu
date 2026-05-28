@@ -64,11 +64,12 @@
   flex-shrink: 0;
 }
 
-/* ============================================
-   Responsive — Customers Mobile Cards
-   ============================================ */
-@media (max-width: 768px) {
-
+/* ==========================================================
+   Consolidated Responsive Media Queries & Mobile Typography
+   ========================================================== */
+@media only screen and (max-width: 768px) {
+  
+  /* Customers Mobile Cards */
   .customer-card-name {
     font-size: 16px;
     font-weight: 600;
@@ -89,7 +90,7 @@
   }
 
   .customer-card-id {
-    font-size: 12px;
+    font-size: 12px; /* Strict minimum font-size */
     color: var(--muted-gray);
     background: var(--chip-gray);
     padding: 2px 8px;
@@ -100,12 +101,8 @@
     width: 20px;
     height: 20px;
   }
-}
 
-/* ============================================
-   Responsive — Services Mobile Cards
-   ============================================ */
-@media (max-width: 768px) {
+  /* Services Mobile Cards */
   .service-card {
     padding-left: 14px;
   }
@@ -124,7 +121,7 @@
   }
 
   .service-card-name {
-    font-size: 15px;
+    font-size: 16px; /* Scaled up from 15px for enhanced readability */
     font-weight: 600;
     color: var(--black);
     flex: 1;
@@ -152,12 +149,8 @@
   .service-card-detail-item svg {
     color: var(--muted-gray);
   }
-}
 
-/* ============================================
-   Responsive — Employees Mobile Cards
-   ============================================ */
-@media (max-width: 768px) {
+  /* Employees Mobile Cards */
   .employee-card {
     flex-direction: row;
     align-items: center;
@@ -170,21 +163,17 @@
   }
 
   .employee-card-name {
-    font-size: 15px;
+    font-size: 16px; /* Scaled up from 15px for readability */
     font-weight: 600;
     color: var(--black);
   }
 
   .employee-card-branch {
-    font-size: 12px;
+    font-size: 12px; /* Enforced 12px strict minimum instead of smaller sizes */
     color: var(--muted-gray);
   }
-}
 
-/* ============================================
-   Responsive — Employee Schedules Mobile
-   ============================================ */
-@media (max-width: 768px) {
+  /* Employee Schedules Mobile */
   .schedule-mobile-list {
     display: flex;
     flex-direction: column;
@@ -208,13 +197,13 @@
   }
 
   .schedule-mobile-emp-name {
-    font-size: 14px;
+    font-size: 15px; /* Scaled up from 14px for readability */
     font-weight: 600;
     color: var(--black);
   }
 
   .schedule-mobile-emp-branch {
-    font-size: 11px;
+    font-size: 12px; /* Enforced 12px strict minimum instead of 11px */
     color: var(--muted-gray);
   }
 
@@ -262,7 +251,7 @@
   }
 
   .schedule-mobile-day-label {
-    font-size: 10px;
+    font-size: 12px; /* Enforced 12px strict minimum instead of 10px */
     font-weight: 700;
     color: var(--muted-gray);
     text-transform: uppercase;
@@ -287,7 +276,7 @@
   }
 
   .schedule-mobile-day-status {
-    font-size: 9px;
+    font-size: 12px; /* Enforced 12px strict minimum instead of microscopic 9px */
     font-weight: 600;
     padding: 2px 4px;
     border-radius: 4px;

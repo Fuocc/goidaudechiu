@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { FiPlus, FiEdit2, FiTrash2, FiMapPin } from 'react-icons/fi';
 import { getBranches, createBranch, updateBranch, deleteBranch } from '../api';
+import { CardSkeleton } from '../components/ui/Skeleton';
 
 const DEFAULT_OPENING_HOURS = {
   Monday: { isOpen: true, open: '08:00', close: '20:00' },
@@ -133,59 +134,65 @@ function Branches() {
         </button>
       </div>
 
-      <div style={{ display: 'flex', gap: 20 }}>
-        {branches.map(branch => (
-          <div key={branch.id} className="card" style={{ cursor: 'pointer' }} onClick={() => openEdit(branch)}>
-            <div className="card-body">
-              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-                <div style={{ display: 'flex', gap: 12, alignItems: 'center', width: '100%' }}>
-                  <div style={{
-                    width: 60, height: 60, borderRadius: 8,
-                    background: '#f7f7f7', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    overflow: 'hidden', flexShrink: 0, border: '1px solid #eef0f2'
-                  }}>
-                    {branch.image_url ? (
-                      <img src={branch.image_url} alt={branch.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                    ) : (
-                      <FiMapPin size={24} color="#888" />
-                    )}
+      <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+        {loading ? (
+          Array.from({ length: 2 }).map((_, i) => (
+            <CardSkeleton key={i} />
+          ))
+        ) : (
+          branches.map(branch => (
+            <div key={branch.id} className="card" style={{ cursor: 'pointer', flex: '1', minWidth: '300px', maxWidth: '400px' }} onClick={() => openEdit(branch)}>
+              <div className="card-body">
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', gap: 12, alignItems: 'center', width: '100%' }}>
+                    <div style={{
+                      width: 60, height: 60, borderRadius: 8,
+                      background: '#f7f7f7', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      overflow: 'hidden', flexShrink: 0, border: '1px solid #eef0f2'
+                    }}>
+                      {branch.image_url ? (
+                        <img src={branch.image_url} alt={branch.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      ) : (
+                        <FiMapPin size={24} color="#888" />
+                      )}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 16, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{branch.name}</div>
+                      <div style={{ fontSize: 13, color: '#4b4b4b', marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{branch.address || 'Chưa có địa chỉ'}</div>
+                      <div style={{ fontSize: 13, color: '#afafaf', marginTop: 2 }}>{branch.phone || ''}</div>
+                    </div>
                   </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 16, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{branch.name}</div>
-                    <div style={{ fontSize: 13, color: '#4b4b4b', marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{branch.address || 'Chưa có địa chỉ'}</div>
-                    <div style={{ fontSize: 13, color: '#afafaf', marginTop: 2 }}>{branch.phone || ''}</div>
+                  <div className="actions-cell" style={{ flexShrink: 0, marginLeft: 8 }}>
+                    <button className="btn-icon" onClick={(e) => { e.stopPropagation(); openEdit(branch); }}><FiEdit2 size={14} /></button>
+                    <button className="btn-icon danger" onClick={(e) => { e.stopPropagation(); handleDelete(branch.id); }}><FiTrash2 size={14} /></button>
                   </div>
                 </div>
-                <div className="actions-cell" style={{ flexShrink: 0, marginLeft: 8 }}>
-                  <button className="btn-icon" onClick={() => openEdit(branch)}><FiEdit2 size={14} /></button>
-                  <button className="btn-icon danger" onClick={() => handleDelete(branch.id)}><FiTrash2 size={14} /></button>
-                </div>
-              </div>
 
-              {/* Weekly schedule list directly on card */}
-              <div style={{ marginTop: 16, borderTop: '1px solid #f0f2f5', paddingTop: 12 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: '#9a9a9a', textTransform: 'uppercase', marginBottom: 6, letterSpacing: '0.5px' }}>Lịch hoạt động:</div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 20px', fontSize: 12, color: '#4b4b4b' }}>
-                  {Object.entries(DAYS_VN).map(([dayKey, dayLabel]) => {
-                    const dayData = branch.opening_hours?.[dayKey] || { isOpen: true, open: '09:00', close: '22:00' };
-                    return (
-                      <div key={dayKey} style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: '#8c8c8c' }}>{dayLabel}:</span>
-                        <span style={{ fontWeight: 500 }}>
-                          {dayData.isOpen ? `${formatTime12hCompact(dayData.open)} - ${formatTime12hCompact(dayData.close)}` : <span style={{ color: '#d9534f', fontWeight: 500, marginRight: 'auto' }}>Đóng cửa</span>}
-                        </span>
-                      </div>
-                    );
-                  })}
+                {/* Weekly schedule list directly on card */}
+                <div style={{ marginTop: 16, borderTop: '1px solid #f0f2f5', paddingTop: 12 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: '#9a9a9a', textTransform: 'uppercase', marginBottom: 6, letterSpacing: '0.5px' }}>Lịch hoạt động:</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 20px', fontSize: 12, color: '#4b4b4b' }}>
+                    {Object.entries(DAYS_VN).map(([dayKey, dayLabel]) => {
+                      const dayData = branch.opening_hours?.[dayKey] || { isOpen: true, open: '09:00', close: '22:00' };
+                      return (
+                        <div key={dayKey} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: '#8c8c8c' }}>{dayLabel}:</span>
+                          <span style={{ fontWeight: 500 }}>
+                            {dayData.isOpen ? `${formatTime12hCompact(dayData.open)} - ${formatTime12hCompact(dayData.close)}` : <span style={{ color: '#d9534f', fontWeight: 500, marginRight: 'auto' }}>Đóng cửa</span>}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        ))}
+          ))
+        )}
       </div>
 
       {
-        branches.length === 0 && (
+        !loading && branches.length === 0 && (
           <div className="card">
             <div className="empty-state">
               <h4>Chưa có chi nhánh</h4>

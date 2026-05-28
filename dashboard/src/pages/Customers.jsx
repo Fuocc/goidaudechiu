@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { FiPlus, FiEdit2, FiTrash2 } from 'react-icons/fi';
 import { HiOutlineChevronLeft, HiOutlineChevronRight } from "react-icons/hi";
 import { getCustomers, createCustomer, updateCustomer, deleteCustomer } from '../api';
-import { toast } from 'react-toastify'
+import { toast } from 'react-toastify';
+import { TableSkeleton, MobileCardSkeleton } from '../components/ui/Skeleton';
 
 import noteIcon from '../assets/note-icon.svg';
 
@@ -153,7 +154,17 @@ function Customers() {
           </div>
         </div>
 
-        {!isMobile ? (
+        {loading ? (
+          !isMobile ? (
+            <TableSkeleton rows={itemsPerPage} cols={7} />
+          ) : (
+            <div className="mobile-card-list">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <MobileCardSkeleton key={i} />
+              ))}
+            </div>
+          )
+        ) : !isMobile ? (
           <div className="table-container">
             <table className="data-table">
               <thead>
@@ -245,25 +256,20 @@ function Customers() {
             <span>kết quả mỗi trang</span>
           </div>
           <div className="pagination-controls">
-            <button className="page-btn" disabled={currentPage === 1} onClick={() => setCurrentPage(p => p - 1)}><HiOutlineChevronLeft /></button>
+            <button className="page-btn" disabled={currentPage === 1 || loading} onClick={() => setCurrentPage(p => p - 1)}><HiOutlineChevronLeft /></button>
             {Array.from({ length: Math.ceil(customers.length / itemsPerPage) }, (_, i) => (
               <button
                 key={i + 1}
                 className={`page-btn${currentPage === i + 1 ? ' active' : ''}`}
+                disabled={loading}
                 onClick={() => setCurrentPage(i + 1)}
               >
                 {i + 1}
               </button>
             )).slice(Math.max(0, currentPage - 3), Math.min(Math.ceil(customers.length / itemsPerPage), currentPage + 2))}
-            <button className="page-btn" disabled={currentPage >= Math.ceil(customers.length / itemsPerPage)} onClick={() => setCurrentPage(p => p + 1)}><HiOutlineChevronRight /></button>
+            <button className="page-btn" disabled={currentPage >= Math.ceil(customers.length / itemsPerPage) || loading} onClick={() => setCurrentPage(p => p + 1)}><HiOutlineChevronRight /></button>
           </div>
         </div>
-
-        {loading && (
-          <div style={{ padding: 12, fontSize: 13, color: '#afafaf' }}>
-            Đang tải...
-          </div>
-        )}
       </div>
 
 

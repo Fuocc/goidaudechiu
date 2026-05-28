@@ -1,11 +1,63 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../supabaseClient');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { GoogleGenerativeAI, SchemaType } = require('@google/generative-ai');
 
 // Initialize Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || 'dummy_key');
 
+// ============================================================
+// MULTI-INTENT RESPONSE SCHEMA (Gemini Structured Outputs)
+// Guarantees 100% strict JSON return from Gemini 2.5 Flash
+// ============================================================
+const MULTI_INTENT_SCHEMA = {
+  type: SchemaType.OBJECT,
+  properties: {
+    intent: {
+      type: SchemaType.STRING,
+      enum: ['BOOKING', 'STAFF_DUTY'],
+      description: 'BOOKING for spa booking commands, STAFF_DUTY for employee duty roster lists'
+    },
+    bookingData: {
+      type: SchemaType.OBJECT,
+      description: 'Parsed booking fields. Populated when intent is BOOKING.',
+      properties: {
+        action: { type: SchemaType.STRING, enum: ['create', 'update'] },
+        is_walk_in: { type: SchemaType.BOOLEAN },
+        customer_phone: { type: SchemaType.STRING, nullable: true },
+        short_phone: { type: SchemaType.STRING, nullable: true },
+        temporary_name: { type: SchemaType.STRING },
+        service_id: { type: SchemaType.STRING, nullable: true },
+        branch_id: { type: SchemaType.STRING, nullable: true },
+        booking_date: { type: SchemaType.STRING, description: 'YYYY-MM-DD' },
+        start_time: { type: SchemaType.STRING, nullable: true, description: 'HH:MM 24h' },
+        is_deadline: { type: SchemaType.BOOLEAN },
+        employee_id: { type: SchemaType.STRING, nullable: true },
+        num_guests: { type: SchemaType.INTEGER },
+        status: { type: SchemaType.STRING, enum: ['confirmed', 'arrived', 'pending'] },
+        notes: { type: SchemaType.STRING, nullable: true }
+      },
+      required: ['action', 'temporary_name', 'booking_date', 'num_guests', 'status']
+    },
+    staffDutyData: {
+      type: SchemaType.OBJECT,
+      description: 'Staff duty roster. Populated when intent is STAFF_DUTY.',
+      properties: {
+        orderedStaffNames: {
+          type: SchemaType.ARRAY,
+          items: { type: SchemaType.STRING },
+          description: 'Ordered list of on-duty employee names from top to bottom'
+        }
+      },
+      required: ['orderedStaffNames']
+    }
+  },
+  required: ['intent']
+};
+
+// ============================================================
+// HELPER FUNCTIONS
+// ============================================================
 function getBroadcast(req) {
   return req.app.get('broadcastSSE') || (() => { });
 }
@@ -16,10 +68,53 @@ function timeToMinutes(timeStr) {
   return parseInt(parts[0]) * 60 + parseInt(parts[1]);
 }
 
+const stripDiacritics = (str) => str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+// ============================================================
+// FALLBACK REGEX PARSER (Order-Insensitive, Multi-Intent)
+// Each entity (phone, time, service, name, employee) is
+// extracted independently via standalone regex scans,
+// so input token order does not matter.
+// ============================================================
 function fallbackRegexParse(command, current_branch_id, dbBranches, dbServices, dbEmployees) {
   const text = command.trim();
+
+  // ──────────────────────────────────────────────
+  // STAFF DUTY DETECTION
+  // If input has ≥2 short lines without booking keywords → STAFF_DUTY
+  // ──────────────────────────────────────────────
+  const lines = text.split(/\n/).map(l => l.trim()).filter(l => l.length > 0);
+  
+  // A command is STAFF_DUTY if it has NO booking keywords AND consists of names
+  // It can be multi-line or single-line separated by spaces
+  const hasBookingKeywords = /(?:\d+\s*[hg:]\s*\d*|\b(?:yvv|ydc|yvn|yph|y17|ybb|yn1g|yng|ynmg|cbph|cbdc|cb17|gddc|dcdc|body|massage|combo|goi|giu cho|kl|khách lẻ|qua liền)\b)/i.test(stripDiacritics(text));
+  
+  if (!hasBookingKeywords) {
+    let names = [];
+    if (lines.length >= 2) {
+      const allShortLines = lines.every(l => l.length <= 30);
+      if (allShortLines) {
+        names = lines.filter(l => !/^[-=_.*#>]+$/.test(l));
+      }
+    } else {
+      // Single line space-separated
+      // e.g. "Ngân Mai Tuyết Đào"
+      names = text.split(/\s+/).filter(w => w.length > 0 && !/^[-=_.*#>]+$/.test(w));
+    }
+    
+    if (names.length >= 1) {
+      return {
+        intent: 'STAFF_DUTY',
+        bookingData: null,
+        staffDutyData: { orderedStaffNames: names }
+      };
+    }
+  }
+
+  // ──────────────────────────────────────────────
+  // BOOKING PARSE (Order-Insensitive)
+  // ──────────────────────────────────────────────
   const lowerText = text.toLowerCase();
-  const stripDiacritics = (str) => str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const normalizedText = stripDiacritics(text);
 
   const parsedData = {
@@ -39,7 +134,7 @@ function fallbackRegexParse(command, current_branch_id, dbBranches, dbServices, 
     notes: ''
   };
 
-  // 1. Phone numbers
+  // ── 1. Phone (standalone scan) ──
   const fullPhoneMatch = text.match(/0\d{9}/);
   const shortPhoneMatch = text.match(/\b(\d{3,4})\b/);
   if (fullPhoneMatch) {
@@ -48,18 +143,18 @@ function fallbackRegexParse(command, current_branch_id, dbBranches, dbServices, 
     parsedData.short_phone = shortPhoneMatch[1];
   }
 
-  // 2. Status "tới"
+  // ── 2. Status "tới" (standalone scan) ──
   if (/\btới\b/i.test(text)) {
     parsedData.status = 'arrived';
     parsedData.action = 'update';
   }
 
-  // 3. Walk-in "kl"
+  // ── 3. Walk-in (standalone scan) ──
   parsedData.is_walk_in = /\b(?:kl|khách lẻ)\b/i.test(normalizedText);
 
-  // 4. Update action matching keywords
-  const updateRegex = /(?:đổi|chỉnh|chuyển)(?:\s+(?:thành|sang|lịch))?/i;
-  const updateMatch = lowerText.match(/(.*?)đổi thành(.*)/i) || normalizedText.match(/(.*?)doi thanh(.*)/i);
+  // ── 4. Update action keywords (standalone scan) ──
+  const updateRegex = /(?:đổi|chỉnh|chuyển|dời)(?:\s+(?:thành|sang|qua|lịch))?/i;
+  const updateMatch = lowerText.match(/(.*?)đổi thành(.*)/i) || normalizedText.match(/(.*?)doi thanh(.*)/i) || lowerText.match(/(.*?)(?:chuyển qua|dời sang)(.*)/i) || normalizedText.match(/(.*?)(?:chuyen qua|doi sang)(.*)/i);
   let targetServiceText = lowerText;
   if (updateMatch) {
     parsedData.action = 'update';
@@ -68,15 +163,70 @@ function fallbackRegexParse(command, current_branch_id, dbBranches, dbServices, 
     parsedData.action = 'update';
   }
 
-  // 5. Date parsing
+  // ── 5. Time (standalone scan — works regardless of position) ──
+  let hasExplicitTime = false;
+  const isQuaLien = lowerText.includes('qua liền') || lowerText.includes('qua lien') || normalizedText.includes('qua lien');
+  if (isQuaLien) {
+    hasExplicitTime = true;
+    parsedData.is_walk_in = true;
+    const now = new Date();
+    const min = Math.ceil(now.getMinutes() / 5) * 5;
+    now.setMinutes(min, 0, 0);
+    parsedData.start_time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  } else {
+    const timeRegex = /(\d{1,2})(?:h|g|:|giờ\s*)(\d{1,2})?(?!\s*(?:ng|kl|kh|n|k|người|khách))/i;
+    const timeMatch = lowerText.match(timeRegex);
+    if (timeMatch) {
+      hasExplicitTime = true;
+      let hour = parseInt(timeMatch[1]);
+      let minute = timeMatch[2] ? parseInt(timeMatch[2]) : 0;
+      const isPM = lowerText.includes('chiều') || lowerText.includes('tối') || lowerText.includes('pm');
+      const isAM = lowerText.includes('sáng') || lowerText.includes('am');
+      if (isPM && hour < 12) hour += 12;
+      else if (isAM && hour === 12) hour = 0;
+      else if (!isAM && !isPM) {
+        if (hour > 0 && hour <= 6) {
+          hour += 12;
+        } else if (hour > 6 && hour < 12) {
+          const d = new Date();
+          const currentHour = d.getHours();
+          const currentMinute = d.getMinutes();
+          if (currentHour > hour || (currentHour === hour && currentMinute > minute)) {
+            hour += 12;
+          }
+        }
+      }
+      parsedData.start_time = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+
+      const afterTimeText = lowerText.substring(timeMatch.index + timeMatch[0].length);
+      const beforeTimeText = lowerText.substring(0, timeMatch.index);
+      if (/(?:là\s+)?(?:phải\s+)?xong|ph\s+xong/i.test(afterTimeText) || /xong\s+(?:trước|lúc)\s*$/i.test(beforeTimeText)) {
+        parsedData.is_deadline = true;
+      }
+    } else {
+      parsedData.start_time = null;
+    }
+  }
+  // If no time specified → default to update action
+  if (!hasExplicitTime) {
+    parsedData.action = 'update';
+  }
+
+  // ── 6. Date (standalone scan) ──
   let targetDate = new Date();
   const isLateNight = targetDate.getHours() > 22 || (targetDate.getHours() === 22 && targetDate.getMinutes() >= 15);
   if (isLateNight) {
     targetDate.setDate(targetDate.getDate() + 1);
   }
-  const isQuaLien = lowerText.includes('qua liền') || lowerText.includes('qua lien') || normalizedText.includes('qua lien');
+
+  // "Mai" ambiguity: first word capitalized "Mai" → name, not date
+  const words = text.trim().split(/\s+/);
+  const firstWordIsMai = words.length > 0 && /^Mai$/i.test(words[0]) && words[0].charAt(0) === 'M';
+  // "mai" is a date reference ONLY if preceded by "ngày" or appears after other tokens (not as first word capitalized)
+  const maiAsDate = !firstWordIsMai && (lowerText.includes('ngày mai') || /\bmai\b/.test(lowerText));
+
   if (!isQuaLien) {
-    if (lowerText.includes('mai') || lowerText.includes('ngày mai')) {
+    if (maiAsDate) {
       targetDate.setDate(targetDate.getDate() + 1);
     } else if (lowerText.includes('mốt') || lowerText.includes('ngày kia') || lowerText.includes('ngày mốt')) {
       targetDate.setDate(targetDate.getDate() + 2);
@@ -116,20 +266,27 @@ function fallbackRegexParse(command, current_branch_id, dbBranches, dbServices, 
   }
   parsedData.booking_date = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, '0')}-${String(targetDate.getDate()).padStart(2, '0')}`;
 
-  // 6. Guest count
+  // ── 7. Guest count (standalone scan) ──
   const guestMatch = normalizedText.match(/(\d+)\s*ng(?:uoi)?(?:\s|$)/i) || lowerText.match(/(\d+)\s*người/i) || lowerText.match(/(\d+)\s*kl\b/i);
   if (guestMatch) {
     parsedData.num_guests = parseInt(guestMatch[1]) || 1;
   }
 
-  // 7. Name parsing
+  // ── 8. Name (standalone scan — scans anywhere in text) ──
   if (parsedData.is_walk_in) {
     parsedData.temporary_name = 'Khách Lạ';
+  } else if (firstWordIsMai) {
+    // "Mai 5h yvv" → name is Mai
+    parsedData.temporary_name = 'Mai';
   } else {
     const namePatterns = [
+      // "cho chị/anh/c. Tên ..." — anywhere in text
       /cho\s+(?:chị|anh|khách|bạn|em|cô|chú|c\.?|a\.?|kh\.?)\s+([A-ZÀ-ỹa-zà-ỹ\s]+?)(?=\s+(?:lúc|vào|ngày|ở|cn|chi nhánh|gội|massage|gói|nv|nhân viên|với|\d{1,2}h|\d{1,2}:\d{2}|\d{1,2}\s*giờ|tới|-|$))/i,
+      // "cho Tên ..." — anywhere in text
       /cho\s+([A-ZÀ-ỹa-zà-ỹ\s]+?)(?=\s+(?:lúc|vào|ngày|ở|cn|chi nhánh|gội|massage|gói|nv|nhân viên|với|\d{1,2}h|\d{1,2}:\d{2}|\d{1,2}\s*giờ|tới|-|$))/i,
-      /^(?:chị|anh|khách|bạn|em|cô|chú|c\.?|a\.?|kh\.?)\s+([A-ZÀ-ỹa-zà-ỹ\s]+?)(?=\s+(?:lúc|vào|ngày|ở|cn|chi nhánh|gội|massage|gói|nv|nhân viên|với|\d{1,2}h|\d{1,2}:\d{2}|\d{1,2}\s*giờ|\d+ng|tới|-|$))/i,
+      // "chị/anh/c. Tên ..." — anywhere (removed ^ anchor for order-insensitivity)
+      /(?:^|\s)(?:chị|anh|khách|bạn|em|cô|chú|c\.?|a\.?|kh\.?)\s+([A-ZÀ-ỹa-zà-ỹ\s]+?)(?=\s+(?:lúc|vào|ngày|ở|cn|chi nhánh|gội|massage|gói|nv|nhân viên|với|\d{1,2}h|\d{1,2}:\d{2}|\d{1,2}\s*giờ|\d+ng|tới|-|$))/i,
+      // "chị/anh Tên đặt lịch/book/lúc..." — anywhere
       /(?:chị|anh|khách|bạn|em|cô|chú|c\.?|a\.?|kh\.?)\s+([A-ZÀ-ỹa-zà-ỹ\s]+?)\s+(?:đặt lịch|book|lúc|vào|ngày|ở|cn|chi nhánh|gội|massage|gói|\d{1,2}h|\d{1,2}:\d{2}|\d{1,2}\s*giờ|tới|-)/i
     ];
     let matchedName = null;
@@ -149,7 +306,7 @@ function fallbackRegexParse(command, current_branch_id, dbBranches, dbServices, 
     }
   }
 
-  // 8. Branch
+  // ── 9. Branch (standalone scan) ──
   if (dbBranches) {
     const cnMatch = normalizedText.match(/cn\s*(\d+)/i) || lowerText.match(/chi\s*nhánh\s*(\d+)/i);
     if (cnMatch) {
@@ -170,56 +327,7 @@ function fallbackRegexParse(command, current_branch_id, dbBranches, dbServices, 
     parsedData.branch_id = dbBranches[0].id;
   }
 
-  // 9. Time
-  let hasExplicitTime = false;
-  if (isQuaLien) {
-    hasExplicitTime = true;
-    const now = new Date();
-    const min = Math.ceil(now.getMinutes() / 5) * 5;
-    now.setMinutes(min, 0, 0);
-    parsedData.start_time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-  } else {
-    const timeRegex = /(\d{1,2})(?:h|g|:|giờ\s*)\s*(\d{1,2})?(?!\s*(?:ng|kl|kh|n|k|người|khách))/i;
-    const timeMatch = lowerText.match(timeRegex);
-    if (timeMatch) {
-      hasExplicitTime = true;
-      let hour = parseInt(timeMatch[1]);
-      let minute = timeMatch[2] ? parseInt(timeMatch[2]) : 0;
-      const isPM = lowerText.includes('chiều') || lowerText.includes('tối') || lowerText.includes('pm');
-      const isAM = lowerText.includes('sáng') || lowerText.includes('am');
-      if (isPM && hour < 12) hour += 12;
-      else if (isAM && hour === 12) hour = 0;
-      else if (!isAM && !isPM) {
-        if (hour > 0 && hour <= 6) {
-          hour += 12;
-        } else if (hour > 6 && hour < 12) {
-          const d = new Date();
-          const currentHour = d.getHours();
-          const currentMinute = d.getMinutes();
-          if (currentHour > hour || (currentHour === hour && currentMinute > minute)) {
-            hour += 12;
-          }
-        }
-      }
-
-      parsedData.start_time = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
-
-      const afterTimeText = lowerText.substring(timeMatch.index + timeMatch[0].length);
-      const beforeTimeText = lowerText.substring(0, timeMatch.index);
-      if (/(?:là\s+)?(?:phải\s+)?xong|ph\s+xong/i.test(afterTimeText) || /xong\s+(?:trước|lúc)\s*$/i.test(beforeTimeText)) {
-        parsedData.is_deadline = true;
-      }
-    } else {
-      parsedData.start_time = null;
-    }
-  }
-
-  // If no time is specified, action defaults to update
-  if (!hasExplicitTime) {
-    parsedData.action = 'update';
-  }
-
-  // 10. Service
+  // ── 10. Service (standalone scan — scans full text independently) ──
   const serviceKeywords = {
     'body': 'ý 17',
     'massage body': 'ý 17',
@@ -270,42 +378,158 @@ function fallbackRegexParse(command, current_branch_id, dbBranches, dbServices, 
       }
     }
   }
-  if (!parsedData.service_id && dbServices && dbServices.length > 0) {
+  if (!parsedData.service_id && parsedData.action !== 'update' && dbServices && dbServices.length > 0) {
     const placeholderService = dbServices.find(s => s.name.toLowerCase().includes('giữ chỗ') || s.name.toLowerCase().includes('giu cho'));
     parsedData.service_id = placeholderService ? placeholderService.id : dbServices[0].id;
   }
 
-  // 11. Employee matching (from the end of command)
+  // ── 11. Employee (standalone scan — scans from end of text backward) ──
   if (dbEmployees && dbEmployees.length > 0) {
-    const words = text.trim().split(/\s+/);
-    if (words.length > 0) {
-      const lastWord = stripDiacritics(words[words.length - 1]);
-      const secondLastWord = words.length > 1 ? stripDiacritics(words[words.length - 2]) : '';
-
+    const tokens = text.trim().split(/\s+/);
+    for (let i = tokens.length - 1; i >= 0; i--) {
+      const token = stripDiacritics(tokens[i]);
       for (const emp of dbEmployees) {
         if (emp.branch_id && parsedData.branch_id && emp.branch_id !== parsedData.branch_id) continue;
         const empNorm = stripDiacritics(emp.name);
         const empParts = empNorm.split(/\s+/);
-        const firstName = empParts[empParts.length - 1]; // First name in VN, e.g. "yen" from "Nguyen Thi Yen"
-
-        if (lastWord === firstName || lastWord === empNorm) {
-          parsedData.employee_id = emp.id;
-          break;
-        } else if (secondLastWord === firstName || secondLastWord === empNorm) {
+        const firstName = empParts[empParts.length - 1];
+        if (token === firstName || token === empNorm) {
           parsedData.employee_id = emp.id;
           break;
         }
       }
+      if (parsedData.employee_id) break;
     }
   }
 
-  return parsedData;
+  return {
+    intent: 'BOOKING',
+    bookingData: parsedData,
+    staffDutyData: null
+  };
 }
 
-/**
- * POST /api/bookings/command
- * Parse natural language Vietnamese commands to create booking drafts or update existing bookings.
- */
+// ============================================================
+// STAFF DUTY HANDLER
+// Resets all branch employees then sets on-duty + tour order
+// Also updates settings.tour_order_{branchId} for backward compat
+// ============================================================
+async function handleStaffDuty(req, res, staffDutyData, currentBranchId, dbBranches, dbEmployees) {
+  const broadcast = getBroadcast(req);
+  const branchId = currentBranchId || (dbBranches && dbBranches[0]?.id);
+
+  if (!branchId) {
+    return res.status(400).json({ success: false, error: 'Không xác định được chi nhánh. Vui lòng chọn chi nhánh trước.' });
+  }
+
+  const { orderedStaffNames } = staffDutyData || {};
+  if (!orderedStaffNames || orderedStaffNames.length === 0) {
+    return res.status(400).json({ success: false, error: 'Danh sách nhân viên trống.' });
+  }
+
+  // Step 1: Reset ALL employees of this branch to OFF_DUTY
+  const { error: resetErr } = await supabase
+    .from('employees')
+    .update({ status: 'OFF_DUTY', current_tour_order: null })
+    .eq('branch_id', branchId);
+
+  if (resetErr) {
+    console.error('Error resetting employee duty status:', resetErr);
+    throw resetErr;
+  }
+
+  // Step 2: Match names and set ON_DUTY with tour order
+  const branchEmployees = (dbEmployees || []).filter(e => e.branch_id === branchId);
+  const matchedIds = [];
+  const matchedNames = [];
+  let updatedCount = 0;
+
+  for (let i = 0; i < orderedStaffNames.length; i++) {
+    const inputName = orderedStaffNames[i].trim();
+    if (!inputName) continue;
+
+    const normalizedInput = stripDiacritics(inputName);
+
+    // Find matching employee: compare against Vietnamese first name (last word of full name)
+    let matched = null;
+    for (const emp of branchEmployees) {
+      const empNorm = stripDiacritics(emp.name);
+      const empParts = empNorm.split(/\s+/);
+      const firstName = empParts[empParts.length - 1];
+
+      if (firstName === normalizedInput || empNorm === normalizedInput) {
+        matched = emp;
+        break;
+      }
+    }
+
+    if (matched) {
+      const { error: updateErr } = await supabase
+        .from('employees')
+        .update({ status: 'ON_DUTY', current_tour_order: i + 1 })
+        .eq('id', matched.id);
+
+      if (!updateErr) {
+        matchedIds.push(matched.id);
+        matchedNames.push(matched.name);
+        updatedCount++;
+      } else {
+        console.error(`Error updating employee ${matched.name}:`, updateErr);
+      }
+    } else {
+      console.warn(`STAFF_DUTY: No employee match found for name "${inputName}" in branch ${branchId}`);
+    }
+  }
+
+  // Step 3: Update settings tour_order and save it
+  let updatedSettings = null;
+  try {
+    const { data: upsertData, error: settingsErr } = await supabase
+      .from('settings')
+      .upsert({ key: `tour_order_${branchId}`, value: matchedIds }, { onConflict: 'key' })
+      .select()
+      .single();
+      
+    if (!settingsErr && upsertData) {
+      updatedSettings = upsertData;
+    }
+  } catch (settingsErr) {
+    console.error('Error updating tour_order setting:', settingsErr);
+  }
+
+  // Step 4: Fetch updated employee list
+  const { data: updatedEmployees } = await supabase
+    .from('employees')
+    .select('id, name, status, current_tour_order, branch_id, is_active')
+    .eq('branch_id', branchId)
+    .order('current_tour_order', { ascending: true, nullsFirst: false });
+
+  // Step 5: Broadcast SSE events
+  if (updatedSettings) {
+    broadcast('settings.updated', updatedSettings);
+  }
+  broadcast('staff.duty_updated', {
+    branch_id: branchId,
+    employees: updatedEmployees
+  });
+
+  // Step 6: Return response
+  return res.json({
+    success: true,
+    intent: 'STAFF_DUTY',
+    updatedCount,
+    totalNames: orderedStaffNames.length,
+    matchedNames,
+    summary: `Đã cập nhật ${updatedCount}/${orderedStaffNames.length} nhân viên trực.`,
+    employees: updatedEmployees
+  });
+}
+
+// ============================================================
+// POST /api/bookings/command
+// Parse natural language Vietnamese commands to create/update
+// bookings or set employee duty roster.
+// ============================================================
 router.post('/', async (req, res) => {
   try {
     const { command, current_branch_id, reply_to_booking_id } = req.body;
@@ -361,95 +585,105 @@ router.post('/', async (req, res) => {
       }
     }
 
-    const systemPrompt = `You are an AI assistant for a Spa booking system named YOi Spa.
-Your job is to parse a Vietnamese natural language booking command from a spa receptionist and output a structured JSON representing the booking intent.
+    // ──────────────────────────────────────────────
+    // SYSTEM PROMPT (Multi-Intent, Order-Insensitive)
+    // JSON schema is enforced by responseSchema — prompt focuses on business rules only
+    // ──────────────────────────────────────────────
+    const systemPrompt = `You are an AI assistant for YOi Spa booking system.
+Parse Vietnamese natural language commands from a spa receptionist and return structured data.
 
-Context:
-- Current date and time: ${now.toString()} (Today is ${currentDayOfWeekStr}, local time on Windows)
-- Today's date: ${todayDateStr}
-- Available Branches: ${JSON.stringify(dbBranches || [])}
-- Available Services: ${JSON.stringify(dbServices || [])}
-- Available Employees: ${JSON.stringify(dbEmployees || [])}
-- Current Chi Nhánh (Branch) ID: ${current_branch_id || 'null'}
-- Replied-To Booking Context (The receptionist is explicitly replying to this booking slot): ${replyBookingContext ? JSON.stringify({
-    id: replyBookingContext.id,
-    booking_date: replyBookingContext.booking_date,
-    start_time: replyBookingContext.start_time,
-    end_time: replyBookingContext.end_time,
-    customer_name: replyBookingContext.customers?.name || replyBookingContext.temporary_name || 'Khách',
-    customer_phone: replyBookingContext.customers?.phone || replyBookingContext.customer_phone || '',
-    service_name: replyBookingContext.services?.name || '',
-    branch_name: replyBookingContext.branches?.name || '',
-    employee_name: replyBookingContext.employees?.name || ''
-  }) : 'None'}
+## INTENT DETECTION
+- "STAFF_DUTY": The command is a list of employee names. This list can be MULTI-LINE (separated by line breaks) OR SINGLE-LINE separated by spaces (e.g., "Ngân Mai Tuyết Đào"). Use your natural language understanding of common Vietnamese names to accurately separate them into individual elements in the \`orderedStaffNames\` array, preserving their exact left-to-right or top-to-bottom priority order. Extract only the names, skip separator lines ("---", "===", "***") and non-name notes. Leave bookingData empty/default.
+- "BOOKING": Any single-line command or non-list text about booking a spa service. Parse into bookingData fields. Leave staffDutyData empty/default.
 
-Strict rules for mapping attributes:
-1. "action": Choose "update" if the user wants to reschedule, change services ("đổi thành", "chỉnh thành", "chuyển sang", "đổi sang"), check-in ("tới", "đã tới"), or alter an existing booking. 
-   CRITICAL RULE: If the command does NOT contain a specific time/hour of the day (e.g. no "4h", "5h", "1h40", "15:30", "qua liền" etc. - ignore relative day terms like "mai", "ngày mai" unless accompanied by a specific hour), you MUST assume the receptionist is modifying an existing booking, so set "action" to "update" by default. If a specific time is present, default "action" to "create" (unless specific update/check-in words are present).
-   ${replyBookingContext ? `CRITICAL REPLY-TO RULE: The user is explicitly replying to booking ID "${replyBookingContext.id}". Any edit command (like "dời 8h", "đổi sang ydc", "chuyển sang thứ 5") MUST be treated as "action": "update" on this booking.` : ''}
-2. "is_walk_in": Boolean. true if the command mentions "kl", "khách lẻ", or "qua liền", "qua lien".
-3. "customer_phone": String of exactly 10 digits starting with 0. If not found, null.
-4. "short_phone": String of 3-4 digits (e.g., 6557, 488). These are short phone numbers receptionists type as notes.
-5. "temporary_name": Extract the capitalized first name of the client (e.g. "Giang", "Lan", "Hương"). Clean any prefix titles (like 'chị', 'c.', 'c', 'anh', 'a.', 'a', 'bạn', 'em', 'khách'). If the receptionist says "kl" (khách lẻ) or walk-in, set this to "Khách Lạ". Default to "Khách Lạ" if no name is given.
-6. "service_id": String (UUID) | null. Match abbreviations to these specific services in the database:
-   - "yvv" -> "Ý vội vàng"
-   - "ydc" -> "Ý dễ chịu"
-   - "yvn" -> "Ý vỗ nhẹ"
-   - "yn1g" or "yng" or "ynmg" -> "Ý ngủ một giấc"
-   - "yph" -> "Ý phục hồi"
-   - "y17" -> "Ý 17"
-   - "ybb" -> "Ý bầu bí"
-   - "cbph" -> "Combo phục hồi"
-   - "cbdc" -> "Combo dễ chịu"
-   - "cb17" -> "Combo 17"
-   - "gddc" -> "Ý 4 tay gấp đôi dễ chịu"
-   - "dcdc" -> "Ý 4 tay đỉnh cao dễ chịu"
-   - "body", "massage body" -> "Ý 17"
-   Always map to the closest matching service's ID. If absolutely no match, use null or the first service's ID.
-7. "branch_id": String (UUID). Crucially, this must be one of the IDs from the "Available Branches" list. 
-   - Default to "Current Chi Nhánh (Branch) ID" (${current_branch_id}).
-   - If the command explicitly mentions a branch name (e.g. matching name of Branch 1 or Branch 2, or "cn1", "cn 1" -> Branch 1 UUID; "cn2", "cn 2" -> Branch 2 UUID), output that branch's UUID. Otherwise, you MUST default to ${current_branch_id || 'null'}.
-8. "booking_date": String "YYYY-MM-DD".
-   - Default to TODAY's date: ${todayDateStr}
-   - CRITICAL LATE NIGHT RULE: If current local hour is after 22:15 (10:15 PM) and the user does not specify a date (like "ngày mai", "t2", etc.), default to TOMORROW'S date.
-   - Relative terms: "mai" / "ngày mai" -> tomorrow's date. "mốt" -> day after tomorrow. "thứ hai" / "t2" -> next Monday.
-9. "start_time": String "HH:MM" (24-hour) if a specific time is specified in the command. If user specifies a deadline time (e.g. "1g30 là phải xong", "2h xong", "xong trước 2h"), output that target time as "start_time" and set "is_deadline" to true.
-   CRITICAL PM DEFAULT RULE: Spas only operate during day/evening hours. 
-   - If the hour is between 1 and 6 (e.g. 1h, 4h, 4h45, 5h, 1h40), unless "sáng" (morning) or "am" is explicitly mentioned, you MUST interpret it as PM (afternoon/evening) by adding 12 (e.g., "5h" -> "17:00", "1h40" -> "13:40", "4h" -> "16:00", "4h45" -> "16:45").
-   - If the hour is between 7 and 11 (e.g., 8h, 9h, 10h), unless "sáng" or "am" is explicitly mentioned, compare it to the current time of today (${now.getHours()}:${now.getMinutes()}). If that AM time has already passed today, you MUST interpret it as PM (evening) by adding 12 (e.g., if current time is 11:11 AM, "8h" must be interpreted as "20:00", and "10h" must be interpreted as "22:00", rather than placing the booking in the past).
-   CRITICAL RULE: If no specific time of day is mentioned or implied, you MUST output null for "start_time" (do NOT default to 1 hour from now or any time).
-10. "is_deadline": Boolean. Set to true if the receptionist specifies a completion/end time deadline (e.g., "phải xong", "ph xong", "xong trước").
-11. "employee_id": String (UUID) | null. If the user specifies an employee name (often at the end of the command, e.g. "C Tuyết 5h 1ng Yến" -> "Yến" is the employee), match it to one of the Available Employees' ID. If no employee name is specified or no match is found, output null.
-12. "num_guests": Integer. Parse guest counts like "2kl" -> 2, "3 người" -> 3. Default to 1.
-13. "status": "confirmed", "arrived", or "pending". Set to "arrived" if check-in word is present ("tới", "đến"). Default is "confirmed".
-14. "notes": String. Put short phone text ("Số điện thoại XXXX") or other special instructions here.
+## CRITICAL: ORDER INSENSITIVITY
+Booking command tokens can appear in ANY chaotic order. You MUST act as a keyword scanner — extract each entity independently regardless of position.
+ALL of these MUST produce the SAME booking result:
+"8h yvv c Mai" = "yvv c Mai 8h" = "c Mai 8h yvv" = "c Mai yvv 8h"
 
-Return ONLY a valid JSON object matching the following schema. No other text or markdown block.
+## CRITICAL: "MAI" AMBIGUITY RESOLUTION
+- If "Mai" is the FIRST WORD of a booking command (e.g., "Mai 5h yvv"), it is a PERSON'S NAME → set temporary_name: "Mai". Booking date defaults to TODAY (${todayDateStr}).
+- If "Mai" is found inside a STAFF_DUTY name list (e.g., "Ngân Mai Tuyết Đào"), it must be treated strictly as the name of an employee on-duty.
+- "Mai" means TOMORROW only when explicitly preceded by "ngày" (i.e., "ngày mai") or when it clearly functions as a time reference embedded after other booking tokens.
 
-Schema:
-{
-  "action": "create" | "update",
-  "is_walk_in": boolean,
-  "customer_phone": string | null,
-  "short_phone": string | null,
-  "temporary_name": string,
-  "service_id": string | null,
-  "branch_id": string | null,
-  "booking_date": "YYYY-MM-DD",
-  "start_time": "HH:MM" | null,
-  "is_deadline": boolean,
-  "employee_id": string | null,
-  "num_guests": number,
-  "status": "confirmed" | "arrived" | "pending",
-  "notes": string | null
-}`;
+${replyBookingContext ? `## CRITICAL: REPLY CONTEXT
+The receptionist is replying to an existing booking. You MUST set bookingData.action to "update".
+Reply booking: ${JSON.stringify({
+  id: replyBookingContext.id,
+  booking_date: replyBookingContext.booking_date,
+  start_time: replyBookingContext.start_time,
+  end_time: replyBookingContext.end_time,
+  customer_name: replyBookingContext.customers?.name || replyBookingContext.temporary_name || 'Khách',
+  customer_phone: replyBookingContext.customers?.phone || replyBookingContext.customer_phone || '',
+  service_name: replyBookingContext.services?.name || '',
+  branch_name: replyBookingContext.branches?.name || '',
+  employee_name: replyBookingContext.employees?.name || ''
+})}` : ''}
 
-    let parsedData;
+## Context
+- Current Server Date: ${todayDateStr} (${currentDayOfWeekStr})
+- Current Local Server Time: ${now.toLocaleTimeString('vi-VN', {timeZone: 'Asia/Ho_Chi_Minh'})} (Hour: ${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')})
+- Branches: ${JSON.stringify(dbBranches || [])}
+- Services: ${JSON.stringify(dbServices || [])}
+- Active Employees: ${JSON.stringify(dbEmployees || [])}
+- Current Branch ID: ${current_branch_id || 'null'}
+
+## BOOKING FIELD RULES
+
+1. **action**: "create" if a specific time/hour is mentioned. "update" if NO specific time, or update/check-in keywords present ("đổi thành", "chỉnh", "chuyển sang", "chuyển qua", "dời sang", "tới", "đã tới").
+   ${replyBookingContext ? `FORCED: action MUST be "update" (reply context).` : 'If the command has NO time (no "4h", "5h", "15:30", "qua liền" etc.) → default to "update".'}
+
+2. **is_walk_in**: true if "kl", "khách lẻ", "qua liền", "qua lien".
+
+3. **customer_phone**: Exactly 10 digits starting with 0. Null if not found.
+
+4. **short_phone**: 3-4 digit string (e.g., "6557", "488"). Null if not found.
+
+5. **temporary_name**: Capitalized first name. Clean prefixes ("chị", "c.", "c", "anh", "a.", "bạn", "em", "khách", "kh."). Walk-in → "Khách Lạ". Default "Khách Lạ".
+
+6. **service_id**: Match abbreviations to service UUIDs:
+   "yvv" → "Ý vội vàng" | "ydc" → "Ý dễ chịu" | "yvn" → "Ý vỗ nhẹ"
+   "yn1g"/"yng"/"ynmg" → "Ý ngủ một giấc" | "yph" → "Ý phục hồi"
+   "y17"/"body"/"massage body" → "Ý 17" | "ybb" → "Ý bầu bí"
+   "cbph" → "Combo phục hồi" | "cbdc" → "Combo dễ chịu" | "cb17" → "Combo 17"
+   "gddc" → "Ý 4 tay gấp đôi dễ chịu" | "dcdc" → "Ý 4 tay đỉnh cao dễ chịu"
+   Map to the closest service UUID. If no match → null.
+
+7. **branch_id**: Default to ${current_branch_id || 'null'}. Only change if command mentions branch ("cn1"/"cn 1" → Branch 1, "cn2"/"cn 2" → Branch 2, "dời sang cn2", "chuyển qua Lê Văn Huân"). Match branch names from Branches list.
+
+8. **booking_date**: "YYYY-MM-DD". Default TODAY ${todayDateStr}.
+   LATE NIGHT: If hour > 22:15 and no explicit date → TOMORROW.
+   "ngày mai" → tomorrow. "mốt"/"ngày mốt" → day after tomorrow. "t2" → next Monday. Similar for other weekdays. "dd/mm" format supported.
+
+9. **start_time**: "HH:MM" 24h or null. Apply these STRICT TIME RULES:
+   - **Spa Operating Hours**: Mon-Fri: 10:00 to 22:00, Sat-Sun: 09:00 to 22:00.
+   - **Smart AM/PM Deduction**: Commands specifying early hours like "7h", "8h", "9h" (on weekdays) MUST automatically resolve to PM (19:00, 20:00, 21:00) since the spa opens at 10:00.
+   - **The 12 o'clock Rule**: "12h" MUST always resolve to "12:00" PM (noon), NEVER 00:00 AM (midnight).
+   - **No Past Bookings (Anti-Past Logic)**: If the parsed appointment hour has ALREADY passed relative to the Current Local Server Time on TODAY, you MUST intelligently assume the appointment is for the FUTURE evening or next valid slot. For example, if it's 22:20 and the user types "10h c Mai", do NOT resolve to 10:00 AM in the past. Resolve to "22:00" TODAY (or flip to tomorrow if closing).
+   - "qua liền" → round up to nearest 5 min. NO time mentioned → null.
+
+10. **is_deadline**: true if "phải xong", "ph xong", "xong trước".
+
+11. **employee_id**: Match employee name (often at end of command) to UUID. Null if no match.
+
+12. **num_guests**: "2kl" → 2, "3 người" → 3. Default 1.
+
+13. **status**: "arrived" if "tới"/"đến". Default "confirmed".
+
+14. **notes**: Short phone as "Số điện thoại XXXX" or special instructions. Null if none.`;
+
+    // ──────────────────────────────────────────────
+    // GEMINI CALL (with responseSchema for guaranteed JSON)
+    // ──────────────────────────────────────────────
+    let geminiResult;
     let isFallbackUsed = false;
     try {
       const model = genAI.getGenerativeModel({
         model: 'gemini-2.5-flash',
-        generationConfig: { responseMimeType: 'application/json' }
+        generationConfig: {
+          responseMimeType: 'application/json',
+          responseSchema: MULTI_INTENT_SCHEMA
+        }
       });
 
       const response = await model.generateContent([
@@ -458,12 +692,25 @@ Schema:
       ]);
 
       const resultText = response.response.text();
-      parsedData = JSON.parse(resultText);
+      geminiResult = JSON.parse(resultText);
     } catch (apiErr) {
       console.warn("Gemini API Error (experiencing high demand or offline). Falling back to offline local parser:", apiErr.message);
-      parsedData = fallbackRegexParse(command, current_branch_id, dbBranches, dbServices, dbEmployees);
+      geminiResult = fallbackRegexParse(command, current_branch_id, dbBranches, dbServices, dbEmployees);
       isFallbackUsed = true;
     }
+
+    // ──────────────────────────────────────────────
+    // INTENT BRANCHING
+    // ──────────────────────────────────────────────
+    if (geminiResult.intent === 'STAFF_DUTY') {
+      if (!geminiResult.staffDutyData || !geminiResult.staffDutyData.orderedStaffNames || geminiResult.staffDutyData.orderedStaffNames.length === 0) {
+        return res.status(400).json({ success: false, error: 'Không nhận diện được danh sách nhân viên.' });
+      }
+      return handleStaffDuty(req, res, geminiResult.staffDutyData, current_branch_id, dbBranches, dbEmployees);
+    }
+
+    // ========== BOOKING INTENT — all existing logic preserved ==========
+    const parsedData = geminiResult.bookingData || {};
 
     // 2. Prepare structured data compatible with downstream logic
     const parsed = {
@@ -483,9 +730,9 @@ Schema:
 
     const isWalkIn = parsedData.is_walk_in || false;
 
-    // Check if service exists, default to "Giữ chỗ" if null
+    // Check if service exists, default to "Giữ chỗ" if null AND it's a new booking
     let targetService = dbServices?.find(s => s.id === parsed.service_id);
-    if (!targetService && dbServices && dbServices.length > 0) {
+    if (!targetService && !parsed.is_update && dbServices && dbServices.length > 0) {
       const placeholderService = dbServices.find(s => s.name.toLowerCase().includes('giữ chỗ') || s.name.toLowerCase().includes('giu cho'));
       targetService = placeholderService ? placeholderService : dbServices[0];
       parsed.service_id = targetService.id;
@@ -618,6 +865,9 @@ Schema:
         if (parsed.start_time) updateData.start_time = parsed.start_time;
         if (parsed.end_time) updateData.end_time = parsed.end_time;
         if (parsed.employee_id) updateData.employee_id = parsed.employee_id;
+        if (parsed.branch_id && parsed.branch_id !== matchedBooking.branch_id) {
+          updateData.branch_id = parsed.branch_id;
+        }
 
         const { data: updated, error: updErr } = await supabase
           .from('bookings')

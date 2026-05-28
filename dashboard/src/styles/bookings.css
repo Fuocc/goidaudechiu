@@ -137,9 +137,7 @@
   font-weight: 600;
 }
 
-/* ============================================
-   Calendar View (Google Calendar-style)
-   ============================================ */
+/* Calendar Container — Toolbar */
 .cal-toolbar {
   display: flex;
   flex-flow: column;
@@ -147,19 +145,26 @@
   top: 0;
   left: 0;
   z-index: 30;
+  background-color: var(--white);
   border-bottom: 1px solid #e5e7eb;
-  font-family: var(--font-heading);
 }
 
-.cal-toolbar-wrap {
+/* Row 1: Date nav + actions */
+.cal-toolbar-row1 {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 12px;
-  padding: 12px;
-  background-color: var(--white);
+  padding: 12px 16px;
+  gap: 8px;
   border-bottom: 1px solid #e5e7eb;
+}
+
+/* Row 2: Branch + view toggle */
+.cal-toolbar-row2 {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 16px;
 }
 
 .cal-toolbar-left {
@@ -174,7 +179,7 @@
   gap: 4px;
 }
 
-.cal-toolbar-right {
+.cal-toolbar-actions {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -182,11 +187,12 @@
 
 .cal-toolbar-left .form-select {
   border: none;
-  padding: 12px;
+  padding: 8px 12px;
   background-color: transparent;
   transition: all 0.25s ease-out;
   border-radius: 10px;
   font-weight: 500;
+  font-size: 14px;
 }
 
 .cal-toolbar-left .form-select:hover {
@@ -196,19 +202,20 @@
 .cal-week-label {
   font-weight: 500;
   font-size: 16px;
-  padding: 12px 16px;
+  padding: 8px 8px;
+  white-space: nowrap;
 }
 
 .cal-toolbar-middle .btn-icon {
-  width: 42px;
-  height: 42px;
+  width: 36px;
+  height: 36px;
   background-color: transparent;
   transition: all 0.25s ease-out;
 }
 
 .cal-toolbar-middle .btn-icon svg {
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
 }
 
 .cal-toolbar-middle .btn-icon:hover {
@@ -217,8 +224,7 @@
 
 .cal-view-toggle {
   display: flex;
-  gap: 12px;
-  padding: 12px;
+  gap: 8px;
 }
 
 .cal-view-btn {
@@ -226,14 +232,12 @@
   border: none;
   color: var(--body-gray);
   cursor: pointer;
-  transition: all 0.15s;
   display: flex;
   align-items: center;
   gap: 4px;
   font-size: 13px;
   transition: all 0.25s ease-out;
 }
-
 
 .cal-view-btn.active path {
   stroke: #292524;
@@ -243,16 +247,21 @@
   stroke: #292524;
 }
 
-.cal-toolbar-right .btn-create {
+.cal-toolbar-actions .btn-create,
+.cal-toolbar-row2 .btn-create {
   font-size: 16px;
   color: #1C1A17;
-  padding: 10px 16px 10px 12px;
+  padding: 8px 14px;
   background-color: #F4F2F0;
   border-radius: 10px;
   transition: all 0.25s ease-out;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
-.cal-toolbar-right .btn-create:hover {
+.cal-toolbar-actions .btn-create:hover,
+.cal-toolbar-row2 .btn-create:hover {
   background-color: #1C1A17;
   color: #F4F2F0;
 }
@@ -434,6 +443,12 @@
 }
 
 /* --- New Calendar Styles (Premium Overhaul) --- */
+
+/* Scroll wrapper — on mobile creates scrollable freeze-pane context */
+.cal-scroll-wrapper {
+  position: relative;
+}
+
 .cal-staff-grid {
   display: grid;
   grid-template-columns: 80px repeat(var(--staff-count, 1), 1fr);
@@ -455,9 +470,8 @@
   font-size: 14px;
   color: #57534E;
   background-color: #fff;
-  position: sticky;
-  top: 0;
-  z-index: 10;
+  display: flex;
+  align-items: center;
 }
 
 .calendar-grid {
@@ -482,7 +496,7 @@
   border-bottom: none;
   border-right: 1px solid var(--chip-gray);
   border-top: 1px solid var(--chip-gray);
-  font-family: var(--font-heading);
+
 }
 
 .cal-time-slot span {
@@ -1240,17 +1254,94 @@
 }
 
 /* ============================================
-   Responsive Bookings — Tablet (≤1024px)
+   Shimmering Skeleton Loader Animations
    ============================================ */
-@media (max-width: 1024px) {
-  .cal-toolbar-wrap {
-    padding: 16px;
+.skeleton-shimmer {
+  background: linear-gradient(90deg,
+      rgba(255, 255, 255, 0.03) 25%,
+      rgba(255, 255, 255, 0.08) 37%,
+      rgba(255, 255, 255, 0.03) 63%);
+  background-size: 400% 100%;
+  animation: skeleton-loading-keyframes 1.4s ease infinite;
+}
+
+.skeleton-shimmer-light {
+  background: linear-gradient(90deg,
+      rgba(0, 0, 0, 0.04) 25%,
+      rgba(0, 0, 0, 0.08) 37%,
+      rgba(0, 0, 0, 0.04) 63%);
+  background-size: 400% 100%;
+  animation: skeleton-loading-keyframes 1.4s ease infinite;
+}
+
+@keyframes skeleton-loading-keyframes {
+  0% {
+    background-position: 100% 50%;
+  }
+
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+/* ============================================
+   Disabled Slot Hold Bookings (Khách Đang Đặt)
+   ============================================ */
+.cal-booking-card-wrapper.is-hold-disabled {
+  cursor: not-allowed !important;
+}
+
+.cal-booking-card-wrapper.is-hold-disabled .cal-booking-card {
+  cursor: not-allowed !important;
+  box-shadow: none !important;
+  border: 1px dashed rgba(0, 0, 0, 0.15) !important;
+  filter: grayscale(15%);
+}
+
+.booking-card-mobile.is-hold-disabled {
+  cursor: not-allowed !important;
+  opacity: 0.8;
+  border-left: 4px dashed #ccc !important;
+}
+
+/* ============================================
+   Premium Highlight Animation for Notifications
+   ============================================ */
+@keyframes highlight-glow {
+  0% {
+    outline: 4px solid rgba(237, 211, 169, 0.8);
+  }
+
+  50% {
+    outline: 4px solid rgba(237, 211, 169, 1);
+  }
+
+  100% {
+    outline: 4px solid rgba(237, 211, 169, 0);
+  }
+}
+
+.highlight-appointment {
+  animation: highlight-glow 1.5s ease-in-out 3 !important;
+  z-index: 1000 !important;
+  position: relative !important;
+  border-radius: 2px;
+}
+
+/* ==========================================================
+   Consolidated Responsive Media Queries (only screen)
+   ========================================================== */
+
+/* Tablet Bookings (≤1024px) */
+@media only screen and (max-width: 1024px) {
+  .cal-toolbar-row1,
+  .cal-toolbar-row2 {
+    padding: 10px 16px;
     gap: 8px;
   }
 
   .cal-week-label {
     font-size: 14px;
-    margin-right: 8px;
   }
 
   .cal-staff-header {
@@ -1259,44 +1350,68 @@
   }
 }
 
-/* ============================================
-   Responsive Bookings — Mobile (≤768px)
-   ============================================ */
-@media (max-width: 768px) {
+/* Mobile Bookings (≤768px) */
+@media only screen and (max-width: 768px) {
   .full-view-bookings {
     min-height: calc(100vh - var(--mobile-header-height, 56px) - var(--mobile-bottom-nav-height, 64px));
   }
 
   .cal-toolbar {
     position: sticky;
+    width: 100vw;
   }
 
-  .cal-toolbar-wrap {
-    flex-direction: column;
-    padding: 56px 16px 12px;
-    gap: 12px;
-    align-items: stretch;
+  /* Row 1 compact: safe area top padding */
+  .cal-toolbar-row1 {
+    padding: 56px 12px 8px;
+    border-bottom: none;
   }
 
-  .cal-toolbar-left {
-    justify-content: space-between;
-    width: 100%;
+  /* Row 2 compact */
+  .cal-toolbar-row2 {
+    padding: 4px 12px 8px;
+    border-bottom: 1px solid #e5e7eb;
   }
 
-  .cal-toolbar-right {
-    gap: 8px;
-    width: 100%;
-  }
-
-  .cal-toolbar-right .form-select {
-    flex: 1;
-    max-width: none;
+  .cal-toolbar-middle {
+    gap: 2px;
   }
 
   .cal-week-label {
     font-size: 14px;
-    margin-right: 4px;
+    padding: 6px 4px;
+  }
+
+  .cal-toolbar-middle .btn-icon {
+    width: 32px;
+    height: 32px;
+  }
+
+  .cal-toolbar-middle .btn-icon svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  /* Hide "Tạo lịch" text, show only + icon on mobile */
+  .btn-create-label {
+    display: none;
+  }
+
+  .cal-toolbar-actions .btn-create {
+    padding: 14px;
+  }
+
+  .cal-toolbar-left {
     flex: 1;
+  }
+
+  .cal-toolbar-left .form-select {
+    font-size: 13px;
+    padding: 6px 8px;
+  }
+
+  .cal-view-toggle {
+    gap: 6px;
   }
 
   /* Mobile list view: card-based instead of table */
@@ -1411,12 +1526,51 @@
     width: 100%;
     text-align: center;
   }
+
+  /* ---- Mobile Freeze Pane (Excel-style) ---- */
+  .full-view-bookings {
+    overflow-x: clip;
+  }
+
+  .cal-scroll-wrapper {
+    overflow-x: auto;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+  }
+
+  /* Give staff columns enough width so content isn't cramped */
+  .cal-staff-header-wrap {
+    grid-template-columns: 60px repeat(var(--staff-count, 1), 12em);
+    width: max-content;
+    min-width: 100%;
+  }
+
+  .calendar-grid {
+    grid-template-columns: 60px repeat(var(--staff-count, 1), 12em);
+    width: max-content;
+    min-width: 100%;
+  }
+
+  /* Freeze the time column on the left */
+  .cal-time-column {
+    position: sticky;
+    left: 0;
+    z-index: 10;
+    background-color: #fff;
+  }
+
+  /* Freeze the first header cell (corner intersection) */
+  .cal-staff-header-wrap>.cal-staff-header:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 12;
+    background-color: #fff;
+  }
 }
 
-/* ============================================
-   Responsive Bookings — Small mobile (≤400px)
-   ============================================ */
-@media (max-width: 400px) {
+/* Small mobile Bookings (≤400px) */
+@media only screen and (max-width: 400px) {
   .cal-toolbar-left {
     flex-wrap: wrap;
     gap: 6px;
@@ -1426,86 +1580,4 @@
     font-size: 13px;
     width: 100%;
   }
-}
-
-/* ============================================
-   Shimmering Skeleton Loader Animations
-   ============================================ */
-
-.skeleton-shimmer {
-  background: linear-gradient(90deg,
-      rgba(255, 255, 255, 0.03) 25%,
-      rgba(255, 255, 255, 0.08) 37%,
-      rgba(255, 255, 255, 0.03) 63%);
-  background-size: 400% 100%;
-  animation: skeleton-loading-keyframes 1.4s ease infinite;
-}
-
-.skeleton-shimmer-light {
-  background: linear-gradient(90deg,
-      rgba(0, 0, 0, 0.04) 25%,
-      rgba(0, 0, 0, 0.08) 37%,
-      rgba(0, 0, 0, 0.04) 63%);
-  background-size: 400% 100%;
-  animation: skeleton-loading-keyframes 1.4s ease infinite;
-}
-
-@keyframes skeleton-loading-keyframes {
-  0% {
-    background-position: 100% 50%;
-  }
-
-  100% {
-    background-position: 0% 50%;
-  }
-}
-
-/* ============================================
-   Disabled Slot Hold Bookings (Khách Đang Đặt)
-   ============================================ */
-
-.cal-booking-card-wrapper.is-hold-disabled {
-  cursor: not-allowed !important;
-}
-
-.cal-booking-card-wrapper.is-hold-disabled {
-  cursor: not-allowed !important;
-}
-
-.cal-booking-card-wrapper.is-hold-disabled .cal-booking-card {
-  cursor: not-allowed !important;
-  box-shadow: none !important;
-  border: 1px dashed rgba(0, 0, 0, 0.15) !important;
-  filter: grayscale(15%);
-}
-
-.booking-card-mobile.is-hold-disabled {
-  cursor: not-allowed !important;
-  opacity: 0.8;
-  border-left: 4px dashed #ccc !important;
-}
-
-/* ============================================
-   Premium Highlight Animation for Notifications
-   ============================================ */
-
-@keyframes highlight-glow {
-  0% {
-    outline: 4px solid rgba(237, 211, 169, 0.8);
-  }
-
-  50% {
-    outline: 4px solid rgba(237, 211, 169, 1);
-  }
-
-  100% {
-    outline: 4px solid rgba(237, 211, 169, 0);
-  }
-}
-
-.highlight-appointment {
-  animation: highlight-glow 1.5s ease-in-out 3 !important;
-  z-index: 1000 !important;
-  position: relative !important;
-  border-radius: 2px;
 }

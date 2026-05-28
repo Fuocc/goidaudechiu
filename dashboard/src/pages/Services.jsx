@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { FiPlus, FiEdit2, FiTrash2, FiEdit3, FiFileText, FiClock, FiDollarSign, FiFolder, FiChevronDown } from 'react-icons/fi';
 import { getServices, createService, updateService, deleteService } from '../api';
 import { toast } from 'react-toastify';
+import { TableSkeleton, MobileCardSkeleton } from '../components/ui/Skeleton';
 import '../styles/services.css';
 
 const CATEGORIES = ["Gội Đầu", "Massage", "Combo", "4 Tay", "Dịch vụ thêm"];
@@ -151,7 +152,17 @@ function Services() {
       </div>
 
       <div className="card">
-        {!isMobile ? (
+        {loading ? (
+          !isMobile ? (
+            <TableSkeleton rows={5} cols={7} />
+          ) : (
+            <div className="mobile-card-list">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <MobileCardSkeleton key={i} />
+              ))}
+            </div>
+          )
+        ) : !isMobile ? (
           <div className="table-container">
             <table className="data-table">
               <thead>

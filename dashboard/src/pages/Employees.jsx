@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { FiPlus, FiEdit2, FiTrash2 } from 'react-icons/fi';
 import { getEmployees, createEmployee, updateEmployee, deleteEmployee, getBranches } from '../api';
-import { toast } from 'react-toastify'
+import { toast } from 'react-toastify';
+import { TableSkeleton, MobileCardSkeleton } from '../components/ui/Skeleton';
 
 
 function Employees() {
@@ -121,7 +122,17 @@ function Employees() {
           </select>
         </div>
 
-        {!isMobile ? (
+        {loading ? (
+          !isMobile ? (
+            <TableSkeleton rows={5} cols={5} />
+          ) : (
+            <div className="mobile-card-list">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <MobileCardSkeleton key={i} />
+              ))}
+            </div>
+          )
+        ) : !isMobile ? (
           <div className="table-container">
             <table className="data-table">
               <thead>

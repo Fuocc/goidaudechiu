@@ -28,6 +28,19 @@ function AIChatPanel({ onClose, currentBranchId }) {
   const [loading, setLoading] = useState(false);
   const messagesEndRef = useRef(null);
 
+  // Command History States
+  const [commandHistory, setCommandHistory] = useState(() => {
+    try {
+      const saved = localStorage.getItem('yoi_command_history');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      console.error('Failed to load command history', e);
+      return [];
+    }
+  });
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [unfinishedText, setUnfinishedText] = useState('');
+
   // States for Custom UI and Actions
   const [isBranchSelectOpen, setIsBranchSelectOpen] = useState(false);
   const [replyingTo, setReplyingTo] = useState(null); // { bookingId, label }
@@ -109,12 +122,26 @@ function AIChatPanel({ onClose, currentBranchId }) {
 
     setMessages(prev => {
       const filtered = prev.filter(m => m.id !== 'welcome');
-      return [...filtered, userMsg];
+      return [...filtered, userMsg].slice(-50);
     });
 
     const commandText = inputText;
     setInputText('');
     setLoading(true);
+
+    if (commandText.trim() && commandText !== commandHistory[0]) {
+      setCommandHistory(prev => {
+        const newHistory = [commandText, ...prev].slice(0, 50);
+        try {
+          localStorage.setItem('yoi_command_history', JSON.stringify(newHistory));
+        } catch (e) {
+          console.error('Failed to save command history', e);
+        }
+        return newHistory;
+      });
+    }
+    setHistoryIndex(-1);
+    setUnfinishedText('');
 
     const replyContextId = replyingTo ? replyingTo.bookingId : undefined;
     setReplyingTo(null); // Clear reply context immediately on send
@@ -141,7 +168,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
           bookings: bookings || [], // Store booking IDs for undo action
           time: getNowTime()
         };
-        setMessages(prev => [...prev, aiMsg]);
+        setMessages(prev => [...prev, aiMsg].slice(-50));
 
         // Dispatch global refresh-bookings event
         window.dispatchEvent(new CustomEvent('refresh-bookings'));
@@ -156,7 +183,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
         text: `Lỗi: ${err.message}`,
         time: getNowTime()
       };
-      setMessages(prev => [...prev, aiErrorMsg]);
+      setMessages(prev => [...prev, aiErrorMsg].slice(-50));
     } finally {
       setLoading(false);
     }
@@ -183,7 +210,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
           isUndoSuccess: true,
           time: getNowTime()
         };
-        setMessages(prev => [...prev, aiMsg]);
+        setMessages(prev => [...prev, aiMsg].slice(-50));
 
         // Dispatch global refresh-bookings event
         window.dispatchEvent(new CustomEvent('refresh-bookings'));
@@ -396,6 +423,27 @@ function AIChatPanel({ onClose, currentBranchId }) {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 handleSend();
+              } else if (e.key === 'ArrowUp') {
+                if (commandHistory.length > 0) {
+                  e.preventDefault();
+                  if (historyIndex === -1) {
+                    setUnfinishedText(inputText);
+                  }
+                  const nextIndex = Math.min(historyIndex + 1, commandHistory.length - 1);
+                  setHistoryIndex(nextIndex);
+                  setInputText(commandHistory[nextIndex]);
+                }
+              } else if (e.key === 'ArrowDown') {
+                if (historyIndex > -1) {
+                  e.preventDefault();
+                  const nextIndex = historyIndex - 1;
+                  setHistoryIndex(nextIndex);
+                  if (nextIndex === -1) {
+                    setInputText(unfinishedText);
+                  } else {
+                    setInputText(commandHistory[nextIndex]);
+                  }
+                }
               }
             }}
           />

@@ -138,11 +138,44 @@ function Sidebar({ user, onLogout }) {
   // ---- VAPID Web Push Notification Hook ----
   const { isSupported, isSubscribed, loading, subscribe, unsubscribe } = useWebPush();
 
-  // Tự động bật đẩy trình duyệt ngầm dưới nền khi trang tải
+  // Auto-subscribe if permission is already granted
   useEffect(() => {
     if (isSupported && !isSubscribed && !loading) {
-      if (Notification.permission !== 'denied') {
+      if (Notification.permission === 'granted') {
         subscribe().catch(() => { });
+      }
+    }
+  }, [isSupported, isSubscribed, loading, subscribe]);
+
+  // Interaction-driven auto-prompt for default permission
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      if (Notification.permission === 'default') {
+        const autoRequest = async () => {
+          // Remove the listeners immediately after the first interaction trigger
+          document.removeEventListener('click', autoRequest);
+          document.removeEventListener('keydown', autoRequest);
+
+          try {
+            const permission = await Notification.requestPermission();
+            if (permission === 'granted') {
+              console.log("Notification permission granted via auto-prompt.");
+              if (isSupported && !isSubscribed && !loading) {
+                subscribe().catch(() => { });
+              }
+            }
+          } catch (err) {
+            console.error("Auto request notification failed:", err);
+          }
+        };
+
+        document.addEventListener('click', autoRequest);
+        document.addEventListener('keydown', autoRequest);
+
+        return () => {
+          document.removeEventListener('click', autoRequest);
+          document.removeEventListener('keydown', autoRequest);
+        };
       }
     }
   }, [isSupported, isSubscribed, loading, subscribe]);
@@ -465,14 +498,6 @@ function Sidebar({ user, onLogout }) {
     }, 1500);
   }, [fetchNotifications]);
 
-  // Request browser permission for native push notifications on mount
-  useEffect(() => {
-    if (typeof window !== 'undefined' && 'Notification' in window) {
-      if (Notification.permission !== 'granted' && Notification.permission !== 'denied') {
-        Notification.requestPermission();
-      }
-    }
-  }, []);
 
   const handleNotifClick = (n) => {
     markAsRead(n.id);
@@ -630,23 +655,25 @@ function Sidebar({ user, onLogout }) {
 
   const roleLabel = role === 'admin' ? 'Quản trị viên' : 'Nhân viên';
 
-  // Close sidebar on route change (mobile)
+  // Close sidebar and notif panel on route change (mobile and desktop)
   useEffect(() => {
     setMobileOpen(false);
+    setPanelOpen(false);
   }, [location.pathname]);
 
-  // Lock body scroll when mobile sidebar is open
+  // Lock body scroll when mobile sidebar or AI Chat is open
   useEffect(() => {
-    if (mobileOpen) {
+    if (mobileOpen || aiChatOpen) {
       document.body.style.overflow = 'hidden';
     } else {
       document.body.style.overflow = '';
     }
     return () => { document.body.style.overflow = ''; };
-  }, [mobileOpen]);
+  }, [mobileOpen, aiChatOpen]);
 
   const toggleMobile = useCallback(() => {
     setMobileOpen(prev => !prev);
+    setPanelOpen(false);
   }, []);
 
   const closeMobile = useCallback(() => {
@@ -675,6 +702,7 @@ function Sidebar({ user, onLogout }) {
             className="sidebar-header-gemini"
             onClick={(e) => {
               e.preventDefault();
+              setPanelOpen(false);
               window.dispatchEvent(new CustomEvent('toggle-ai-chat'));
             }}
             title="Trò chuyện AI (ChatLGBT)"
@@ -774,54 +802,59 @@ function Sidebar({ user, onLogout }) {
       {/* Mobile Bottom Navigation */}
       <nav className="mobile-bottom-nav">
         <div className="mobile-bottom-nav-inner">
-          {bottomNavItems.map(item => (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              end={item.path === '/'}
-              className={({ isActive }) => `mobile-nav-item${isActive ? ' active' : ''}`}
-            >
-              <item.icon />
-              <span>{item.label}</span>
-            </NavLink>
-          ))}
-          {role === 'admin' && (
-            <button
-              className={`mobile-nav-item${mobileOpen ? ' active' : ''}`}
-              onClick={toggleMobile}
-              style={{ position: 'relative' }}
-            >
-              <svg className="sidebar-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="3" y1="12" x2="21" y2="12"></line>
-                <line x1="3" y1="6" x2="21" y2="6"></line>
-                <line x1="3" y1="18" x2="21" y2="18"></line>
-              </svg>
-              {unreadCount > 0 && (
-                <span className="notif-badge" style={{ top: 2, right: 12, minWidth: 10, height: 10, border: '1px solid white' }}></span>
-              )}
-              <span>Thêm</span>
-            </button>
-          )}
+          {/* Lịch hẹn */}
+          <NavLink
+            to="/"
+            end
+            className={({ isActive }) => `mobile-nav-item${isActive && !panelOpen && !mobileOpen ? ' active' : ''}`}
+          >
+            <CalendarIcon />
+            <span>Lịch hẹn</span>
+          </NavLink>
 
-          {role === 'staff' && (
-            <button
-              className={`mobile-nav-item${mobileOpen ? ' active' : ''}`}
-              onClick={toggleMobile}
-              style={{ position: 'relative' }}
-            >
-              <svg className="sidebar-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="3" y1="12" x2="21" y2="12"></line>
-                <line x1="3" y1="6" x2="21" y2="6"></line>
-                <line x1="3" y1="18" x2="21" y2="18"></line>
-              </svg>
+          {/* Thông báo */}
+          <button
+            className={`mobile-nav-item${panelOpen ? ' active' : ''}`}
+            onClick={() => setPanelOpen(prev => !prev)}
+            style={{ position: 'relative' }}
+          >
+            <div style={{ position: 'relative', display: 'inline-flex' }}>
+              <BellIcon />
               {unreadCount > 0 && (
-                <span className="notif-badge" style={{ top: 2, right: 12, minWidth: 10, height: 10, border: '1px solid white' }}></span>
+                <span className="notif-badge" style={{ top: -2, right: -4, minWidth: 8, height: 8 }}></span>
               )}
-              <span>Thêm</span>
-            </button>
-          )}
+            </div>
+            <span>Thông báo</span>
+          </button>
+
+          {/* Nhân viên */}
+          <NavLink
+            to="/employees"
+            className={({ isActive }) => `mobile-nav-item${isActive && !panelOpen && !mobileOpen ? ' active' : ''}`}
+          >
+            <UsersIcon />
+            <span>Nhân viên</span>
+          </NavLink>
+
+          {/* Menu — no notif-badge */}
+          <button
+            className={`mobile-nav-item${mobileOpen ? ' active' : ''}`}
+            onClick={toggleMobile}
+          >
+            <svg className="sidebar-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="3" y1="6" x2="21" y2="6"></line>
+              <line x1="3" y1="12" x2="21" y2="12"></line>
+              <line x1="3" y1="18" x2="21" y2="18"></line>
+            </svg>
+            <span>Menu</span>
+          </button>
         </div>
       </nav>
+
+      {/* Notifications Slide-over Sheet overlay */}
+      {panelOpen && (
+        <div className="notif-panel-overlay" onClick={() => setPanelOpen(false)}></div>
+      )}
 
       {/* Notifications Slide-over Sheet */}
       {panelOpen && (
@@ -1050,14 +1083,31 @@ function Sidebar({ user, onLogout }) {
       )}
 
       {/* AI Chat Slide-over Sheet (Floating like Notifications) */}
-      {aiChatOpen && (
-        <div className="ai-chat-panel-floating" onClick={e => e.stopPropagation()}>
-          <AIChatPanel
-            onClose={() => setAiChatOpen(false)}
-            currentBranchId=""
-          />
-        </div>
-      )}
+      <div
+        className={`ai-chat-overlay${aiChatOpen ? ' visible' : ''}`}
+        onClick={() => setAiChatOpen(false)}
+      />
+      <div
+        className={`ai-chat-panel-floating${aiChatOpen ? ' visible' : ''}`}
+        onClick={e => e.stopPropagation()}
+      >
+        <AIChatPanel
+          onClose={() => setAiChatOpen(false)}
+          currentBranchId=""
+        />
+      </div>
+      {/* Floating AI Chat Button (Mobile/Tablet only) */}
+      <button
+        className="float-gemini-btn"
+        onClick={(e) => {
+          e.preventDefault();
+          setPanelOpen(false);
+          window.dispatchEvent(new CustomEvent('toggle-ai-chat'));
+        }}
+        title="Trò chuyện AI (ChatLGBT)"
+      >
+        <img src={geminiLogo} alt="AI Chat" />
+      </button>
     </>
   );
 }
