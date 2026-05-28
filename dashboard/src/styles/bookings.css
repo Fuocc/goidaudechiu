@@ -148,6 +148,7 @@
   left: 0;
   z-index: 30;
   border-bottom: 1px solid #e5e7eb;
+  font-family: var(--font-heading);
 }
 
 .cal-toolbar-wrap {
@@ -156,7 +157,7 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 12px;
-  padding: 24px;
+  padding: 12px;
   background-color: var(--white);
   border-bottom: 1px solid #e5e7eb;
 }
@@ -167,30 +168,62 @@
   gap: 8px;
 }
 
+.cal-toolbar-middle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .cal-toolbar-right {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 4px;
+}
+
+.cal-toolbar-left .form-select {
+  border: none;
+  padding: 12px;
+  background-color: transparent;
+  transition: all 0.25s ease-out;
+  border-radius: 10px;
+  font-weight: 500;
+}
+
+.cal-toolbar-left .form-select:hover {
+  background-color: #F4F2F0;
 }
 
 .cal-week-label {
-  color: var(--black);
   font-weight: 500;
   font-size: 16px;
-  margin-right: 16px;
+  padding: 12px 16px;
+}
+
+.cal-toolbar-middle .btn-icon {
+  width: 42px;
+  height: 42px;
+  background-color: transparent;
+  transition: all 0.25s ease-out;
+}
+
+.cal-toolbar-middle .btn-icon svg {
+  width: 24px;
+  height: 24px;
+}
+
+.cal-toolbar-middle .btn-icon:hover {
+  background-color: #F4F2F0;
 }
 
 .cal-view-toggle {
   display: flex;
-  border: 1px solid var(--border-gray);
-  border-radius: var(--radius-pill);
-  overflow: hidden;
+  gap: 12px;
+  padding: 12px;
 }
 
 .cal-view-btn {
-  padding: 6px 14px;
+  padding: 4px;
   border: none;
-  background: var(--white);
   color: var(--body-gray);
   cursor: pointer;
   transition: all 0.15s;
@@ -198,19 +231,30 @@
   align-items: center;
   gap: 4px;
   font-size: 13px;
+  transition: all 0.25s ease-out;
 }
 
-.cal-view-btn:first-child {
-  border-right: 1px solid var(--border-gray);
+
+.cal-view-btn.active path {
+  stroke: #292524;
 }
 
-.cal-view-btn.active {
-  background: var(--black);
-  color: var(--white);
+.cal-view-btn:hover path {
+  stroke: #292524;
 }
 
-.cal-view-btn:hover:not(.active) {
-  background: var(--chip-gray);
+.cal-toolbar-right .btn-create {
+  font-size: 16px;
+  color: #1C1A17;
+  padding: 10px 16px 10px 12px;
+  background-color: #F4F2F0;
+  border-radius: 10px;
+  transition: all 0.25s ease-out;
+}
+
+.cal-toolbar-right .btn-create:hover {
+  background-color: #1C1A17;
+  color: #F4F2F0;
 }
 
 /* Calendar Container */
@@ -405,15 +449,12 @@
 }
 
 .cal-staff-header {
-  height: 50px;
+  height: 48px;
   border-right: 1px solid #e5e7eb;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 600;
-  font-size: 16px;
-  color: #1f2937;
-  background: #fff;
+  padding: 6px 16px;
+  font-size: 14px;
+  color: #57534E;
+  background-color: #fff;
   position: sticky;
   top: 0;
   z-index: 10;
@@ -434,13 +475,20 @@
   height: 100px;
   display: flex;
   align-items: flex-start;
-  justify-content: center;
-  padding-top: 8px;
-  font-size: 13px;
-  color: #9ca3af;
+  justify-content: flex-end;
+  padding: 8px 10px;
+  font-size: 14px;
+  color: #78716C;
   border-bottom: none;
   border-right: 1px solid var(--chip-gray);
   border-top: 1px solid var(--chip-gray);
+  font-family: var(--font-heading);
+}
+
+.cal-time-slot span {
+  color: #A8A29E;
+  font-size: 10px;
+  margin: 5px 0 0 1px;
 }
 
 .cal-staff-column {

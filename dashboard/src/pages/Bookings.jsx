@@ -81,7 +81,7 @@ const getBookingColor = (booking) => {
     return STATUS_COLORS.pending.bg;
   }
 
-  const name = normalize(booking.customers?.name || '');
+  const name = normalize(booking.temporary_name || booking.customers?.name || '');
   if (name === 'khach la') {
     return '#F1F1EF'; // Grey
   }
@@ -99,7 +99,7 @@ const formatTime = (t) => {
   const period = h < 12 ? 'AM' : 'PM';
   let h12 = h % 12;
   if (h12 === 0) h12 = 12;
-  return `${String(h12).padStart(2, '0')}:${mStr} ${period}`;
+  return `${String(h12).padStart(2)}:${mStr} ${period}`;
 };
 
 
@@ -122,6 +122,20 @@ const getLogicalDate = () => {
     d.setDate(d.getDate() + 1);
   }
   return d;
+};
+
+const formatDateVietnamese = (date) => {
+  const days = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
+  const dayName = days[date.getDay()];
+  const d = date.getDate();
+  const m = date.getMonth() + 1;
+  const y = date.getFullYear();
+
+  return (
+    <>
+      {dayName}, {d}/{m} <span style={{ color: '#A8A29E' }}>{y}</span>
+    </>
+  );
 };
 
 function Bookings({ data }) {
@@ -147,6 +161,54 @@ function Bookings({ data }) {
   const [filterBranch, setFilterBranch] = useState('');
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(new Date());
+
+  useEffect(() => {
+    const handleRefresh = () => {
+      refreshBookingsOnly();
+      loadBookings();
+    };
+    const handleEditDraftEvent = (e) => {
+      const { draft, matched } = e.detail;
+      handleEditDraft(draft, matched);
+    };
+
+    window.addEventListener('refresh-bookings', handleRefresh);
+    window.addEventListener('edit-booking-draft', handleEditDraftEvent);
+    return () => {
+      window.removeEventListener('refresh-bookings', handleRefresh);
+      window.removeEventListener('edit-booking-draft', handleEditDraftEvent);
+    };
+  }, [services, employees]);
+
+  const handleEditDraft = (draft, matched) => {
+    const matchedService = services.find(s => s.id === draft.service_id);
+    const matchedEmployee = employees.find(e => e.id === draft.employee_id);
+
+    setBookForm({
+      branch_id: draft.branch_id || filterBranch || (branches[0]?.id || ''),
+      service_id: draft.service_id || '',
+      num_guests: 1,
+      customer_id: '',
+      customer_name: draft.temporary_name || '',
+      customer_phone: '',
+      customer_email: '',
+      service_search: matchedService ? matchedService.name : '',
+      employee_search: matchedEmployee ? matchedEmployee.name : '',
+      employee_id: draft.employee_id || '',
+      booking_date: draft.booking_date || toDateStr(new Date()),
+      start_time: draft.start_time ? draft.start_time.substring(0, 5) : '--:--',
+      end_time: draft.end_time ? draft.end_time.substring(0, 5) : '--:--',
+      notes: draft.notes || ''
+    });
+
+    if (matchedService) {
+      setSelectedService(matchedService);
+    }
+
+    setCustomerView('default');
+    setBookStep(1);
+    setModalOpen(true);
+  };
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -335,11 +397,31 @@ function Bookings({ data }) {
     const handleGotoBooking = (detail) => {
       if (!detail || !detail.bookingId || !detail.bookingDate) return;
 
-      // 1. Change the date of the calendar grid
+      // 1. Switch to the correct branch if different
+      let targetBranchId = detail.branchId;
+      if (!targetBranchId && detail.branchName && branches.length > 0) {
+        const isCN1 = detail.branchName.includes('CN 1') || detail.branchName.includes('CN1');
+        const isCN2 = detail.branchName.includes('CN 2') || detail.branchName.includes('CN2');
+        const matched = branches.find(b => {
+          const name = b.name || '';
+          if (isCN1) return name.includes('CN 1') || name.includes('CN1');
+          if (isCN2) return name.includes('CN 2') || name.includes('CN2');
+          return name.toLowerCase().includes(detail.branchName.toLowerCase());
+        });
+        if (matched) {
+          targetBranchId = matched.id;
+        }
+      }
+
+      if (targetBranchId && targetBranchId !== filterBranchRef.current) {
+        setFilterBranch(targetBranchId);
+      }
+
+      // 2. Change the date of the calendar grid
       const targetDate = new Date(detail.bookingDate + 'T00:00:00');
       setCurrentDate(targetDate);
 
-      // 2. Wait for the state to update, the new date's bookings to load and the DOM to render
+      // 3. Wait for the state to update, the new date's bookings to load and the DOM to render
       // We can poll the DOM for the booking card element
       let attempts = 0;
       const interval = setInterval(() => {
@@ -358,7 +440,7 @@ function Bookings({ data }) {
           }, 3000);
         }
         attempts++;
-        if (attempts > 30) { // Timeout after 3 seconds (30 * 100ms)
+        if (attempts > 60) { // Timeout after 6 seconds (60 * 100ms)
           clearInterval(interval);
         }
       }, 100);
@@ -393,7 +475,7 @@ function Bookings({ data }) {
     return () => {
       window.removeEventListener('goto-booking', onGotoEvent);
     };
-  }, [loading, bookings]);
+  }, [loading, bookings, branches]);
 
   // --- Drag-to-create: global mousemove/mouseup ---
   useEffect(() => {
@@ -995,10 +1077,18 @@ function Bookings({ data }) {
         ...bookForm,
         service_id: finalServiceId,
         end_time: finalEndTime,
-        customer_id: finalCustomerId,
+        customer_id: finalCustomerId || null,
         customer_name: normalizeName(finalCustomerName || 'Khách lạ'),
-        customer_phone: finalCustomerPhone
+        customer_phone: finalCustomerPhone || null
       };
+
+      if (customerView !== 'creating' && !finalCustomerId && finalCustomerName) {
+        finalForm.temporary_name = finalCustomerName;
+        finalForm.customer_id = null;
+        finalForm.customer_name = null;
+        finalForm.customer_phone = null;
+      }
+
       await createBooking(finalForm);
       notify('Đặt lịch thành công!');
       setModalOpen(false);
@@ -1029,20 +1119,26 @@ function Bookings({ data }) {
         end_time: detailEdit.end_time,
         employee_id: detailEdit.employee_id,
         notes: detailEdit.notes,
-        customer_id: detailEdit.customer_id || (detailModal.customer_id || detailModal.customers?.id)
+        customer_id: detailEdit.customer_id || null
       };
+
+      if (!bookingUpdate.customer_id && detailEdit.customer_name) {
+        bookingUpdate.temporary_name = detailEdit.customer_name;
+      } else {
+        bookingUpdate.temporary_name = null;
+      }
 
       const updated = await updateBooking(detailModal.id, bookingUpdate);
 
       // 2. Update Customer Info if it's the SAME customer but info changed
       const cust = detailModal.customers;
-      if (detailEdit.customer_id === (detailModal.customer_id || detailModal.customers?.id) && cust && (
+      if (bookingUpdate.customer_id && cust && (
         detailEdit.customer_name !== cust.name ||
         detailEdit.customer_phone !== (cust.phone || '') ||
         detailEdit.customer_habits !== (cust.habits || '') ||
         detailEdit.customer_email !== (cust.email || '')
       )) {
-        await updateCustomer(detailEdit.customer_id, {
+        await updateCustomer(bookingUpdate.customer_id, {
           name: detailEdit.customer_name,
           phone: detailEdit.customer_phone,
           email: detailEdit.customer_email,
@@ -1082,10 +1178,10 @@ function Bookings({ data }) {
       end_time: (booking.end_time || '').substring(0, 5),
       employee_id: booking.employee_id || booking.employees?.id || '',
       employee_search: booking.employees?.name || '',
-      customer_search: booking.customers?.name || '',
+      customer_search: booking.temporary_name || booking.customers?.name || '',
       notes: booking.notes || '',
       internal_note: booking.internal_note || '',
-      customer_name: booking.customers?.name || '',
+      customer_name: booking.temporary_name || booking.customers?.name || '',
       customer_id: booking.customers?.id || '',
       customer_phone: booking.customers?.phone || '',
       customer_email: booking.customers?.email || '',
@@ -1174,7 +1270,7 @@ function Bookings({ data }) {
       detailEdit.end_time !== (detailModal.end_time || '').substring(0, 5) ||
       detailEdit.employee_id !== (detailModal.employee_id || detailModal.employees?.id) ||
       detailEdit.notes !== (detailModal.notes || '') ||
-      detailEdit.customer_name !== (detailModal.customers?.name || '') ||
+      detailEdit.customer_name !== (detailModal.temporary_name || detailModal.customers?.name || '') ||
       detailEdit.customer_phone !== (detailModal.customers?.phone || '') ||
       detailEdit.customer_habits !== (detailModal.customers?.habits || '') ||
       detailEdit.customer_email !== (detailModal.customers?.email || '') ||
@@ -1214,7 +1310,8 @@ function Bookings({ data }) {
         booking_date: booking.booking_date || '',
         start_time: (booking.start_time || '').substring(0, 5),
         end_time: (booking.end_time || '').substring(0, 5),
-        customer_id: booking.customer_id || booking.customers?.id || '',
+        customer_id: booking.customer_id || booking.customers?.id || null,
+        temporary_name: booking.temporary_name || null,
         notes: booking.notes || '',
         internal_note: null // Clear warning
       };
@@ -1291,34 +1388,44 @@ function Bookings({ data }) {
       <div className="cal-toolbar">
         <div className="cal-toolbar-wrap">
           <div className="cal-toolbar-left">
+            <select className="form-select max-w-200"
+              value={filterBranch} onChange={e => setFilterBranch(e.target.value)}>
+              {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+
+          </div>
+          <div className="cal-toolbar-middle">
             <span className="cal-week-label">
-              {currentDate.toLocaleDateString('vi-VN', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })}
+              {formatDateVietnamese(currentDate)}
             </span>
             <button className="btn-icon" onClick={goPrev} title="Ngày trước"><FiChevronLeft /></button>
             <button className="btn-icon" onClick={goNext} title="Ngày sau"><FiChevronRight /></button>
-            <button className="btn btn-sm btn-ghost fs-15 fw-500" onClick={goToday}>Hôm nay</button>
+            <button className="btn btn-sm btn-ghost fs-16 fw-500" onClick={goToday}>Hôm nay</button>
           </div>
           <div className="cal-toolbar-right">
             {/* Hide view toggle on mobile — mobile always shows list */}
             {!isMobile && (
               <div className="cal-view-toggle">
                 <button className={`cal-view-btn${effectiveViewMode === 'calendar' ? ' active' : ''}`} onClick={() => setViewMode('calendar')}>
-                  <FiCalendar size={14} />
+                  <svg width="19" height="19" viewBox="0 0 19 19" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M4.39984 0.916748H3.84984C2.82307 0.916748 2.30969 0.916748 1.91752 1.11657C1.57256 1.29234 1.29209 1.5728 1.11633 1.91777C0.916504 2.30994 0.916504 2.82332 0.916504 3.85008V14.4834C0.916504 15.5102 0.916504 16.0236 1.11633 16.4157C1.29209 16.7607 1.57256 17.0412 1.91752 17.2169C2.30969 17.4167 2.82307 17.4167 3.84984 17.4167H4.39984C5.4266 17.4167 5.93998 17.4167 6.33215 17.2169C6.67712 17.0412 6.95758 16.7607 7.13335 16.4157C7.33317 16.0236 7.33317 15.5102 7.33317 14.4834V3.85008C7.33317 2.82332 7.33317 2.30994 7.13335 1.91777C6.95758 1.5728 6.67712 1.29234 6.33215 1.11657C5.93998 0.916748 5.4266 0.916748 4.39984 0.916748Z" stroke="#D6D3D1" stroke-width="1.83333" stroke-linecap="round" stroke-linejoin="round" />
+                    <path d="M14.4832 0.916748H13.9332C12.9064 0.916748 12.393 0.916748 12.0009 1.11657C11.6559 1.29234 11.3754 1.5728 11.1997 1.91777C10.9998 2.30994 10.9998 2.82332 10.9998 3.85008V14.4834C10.9998 15.5102 10.9998 16.0236 11.1997 16.4157C11.3754 16.7607 11.6559 17.0412 12.0009 17.2169C12.393 17.4167 12.9064 17.4167 13.9332 17.4167H14.4832C15.5099 17.4167 16.0233 17.4167 16.4155 17.2169C16.7605 17.0412 17.0409 16.7607 17.2167 16.4157C17.4165 16.0236 17.4165 15.5102 17.4165 14.4834V3.85008C17.4165 2.82332 17.4165 2.30994 17.2167 1.91777C17.0409 1.5728 16.7605 1.29234 16.4155 1.11657C16.0233 0.916748 15.5099 0.916748 14.4832 0.916748Z" stroke="#D6D3D1" stroke-width="1.83333" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
                 </button>
                 <button className={`cal-view-btn${effectiveViewMode === 'list' ? ' active' : ''}`} onClick={() => setViewMode('list')}>
-                  <FiList size={14} />
+                  <svg width="19" height="19" viewBox="0 0 19 19" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M14.4832 7.33342C15.5099 7.33342 16.0233 7.33342 16.4155 7.13359C16.7604 6.95783 17.0409 6.67736 17.2167 6.3324C17.4165 5.94023 17.4165 5.42684 17.4165 4.40008V3.85008C17.4165 2.82332 17.4165 2.30994 17.2167 1.91777C17.0409 1.5728 16.7605 1.29234 16.4155 1.11657C16.0233 0.916749 15.5099 0.916749 14.4832 0.916749L3.84984 0.916748C2.82307 0.916748 2.30969 0.916748 1.91752 1.11657C1.57256 1.29234 1.29209 1.5728 1.11633 1.91777C0.916504 2.30994 0.916504 2.82332 0.916504 3.85008L0.916504 4.40008C0.916504 5.42684 0.916504 5.94023 1.11633 6.3324C1.29209 6.67736 1.57256 6.95783 1.91752 7.13359C2.30969 7.33341 2.82307 7.33341 3.84984 7.33341L14.4832 7.33342Z" stroke="#D6D3D1" stroke-width="1.83333" stroke-linecap="round" stroke-linejoin="round" />
+                    <path d="M14.4832 17.4167C15.5099 17.4167 16.0233 17.4167 16.4155 17.2169C16.7604 17.0412 17.0409 16.7607 17.2167 16.4157C17.4165 16.0236 17.4165 15.5102 17.4165 14.4834V13.9334C17.4165 12.9067 17.4165 12.3933 17.2167 12.0011C17.0409 11.6561 16.7605 11.3757 16.4155 11.1999C16.0233 11.0001 15.5099 11.0001 14.4832 11.0001L3.84984 11.0001C2.82307 11.0001 2.30969 11.0001 1.91752 11.1999C1.57256 11.3757 1.29209 11.6561 1.11633 12.0011C0.916504 12.3933 0.916504 12.9067 0.916504 13.9334L0.916504 14.4834C0.916504 15.5102 0.916504 16.0236 1.11633 16.4157C1.29209 16.7607 1.57256 17.0412 1.91752 17.2169C2.30969 17.4167 2.82307 17.4167 3.84984 17.4167H14.4832Z" stroke="#D6D3D1" stroke-width="1.83333" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
                 </button>
               </div>
             )}
-            <select className="form-select max-w-200"
-              value={filterBranch} onChange={e => setFilterBranch(e.target.value)}>
-              {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-            </select>
-            <button className="btn btn-primary" onClick={() => openBookingModal()}>
-              <FiPlus />
+            <button className="btn btn-primary btn-create" onClick={() => openBookingModal()}>
+              Tạo lịch <FiPlus />
             </button>
           </div>
         </div>
+
         {effectiveViewMode === 'calendar' && (
           <div className="cal-staff-header-wrap">
             {/* Header row */}
@@ -1360,7 +1467,11 @@ function Bookings({ data }) {
                   {(() => {
                     const h12 = hour % 12 === 0 ? 12 : hour % 12;
                     const period = hour < 12 ? 'AM' : 'PM';
-                    return `${String(h12).padStart(2, '0')}:00 ${period}`;
+                    return (
+                      <>
+                        {String(h12).padStart(2)}<span>{period}</span>
+                      </>
+                    );
                   })()}
                 </div>
               ))}
@@ -1594,7 +1705,7 @@ function Bookings({ data }) {
                               {b.notes ? <img src={noteIcon} alt='note icon' className="cal-booking-icon" /> : null}
                               <div className="cal-booking-name" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                                 {isSpamWarning && <FiAlertTriangle size={12} className="text-warning-orange" style={{ minWidth: '12px' }} />}
-                                {b.customers?.name}
+                                {b.temporary_name || b.customers?.name}
                               </div>
                               <div className="cal-booking-service">{b.services?.name}</div>
                               <div className="cal-booking-time">{formatTime(b.start_time)} - {formatTime(b.end_time)}</div>
@@ -1630,7 +1741,7 @@ function Bookings({ data }) {
                               }}
                             >
                               {b.notes ? <img src={noteIcon} alt='note icon' className="cal-booking-icon" /> : null}
-                              <div className="cal-booking-name">{b.customers?.name}</div>
+                              <div className="cal-booking-name">{b.temporary_name || b.customers?.name}</div>
                               <div className="cal-booking-service">{b.services?.name}</div>
                               <div className="cal-booking-time">{formatTime(ghostStart)} - {formatTime(ghostEnd)}</div>
                             </div>
@@ -1712,8 +1823,8 @@ function Bookings({ data }) {
                       .map(b => (
                         <tr key={b.id} id={`booking-card-${b.id}`} onClick={() => handleOpenDetail(b)} className={`cursor-pointer${b.status === 'pending' && b.internal_note ? ' row-spam-warning' : ''}`}>
                           <td>
-                            <div className="fw-600">{b.customers?.name || '-'}</div>
-                            <div className="fs-12 text-muted">{b.customers?.phone}</div>
+                            <div className="fw-600">{b.temporary_name || b.customers?.name || '-'}</div>
+                            <div className="fs-12 text-muted">{b.customers?.phone || ''}</div>
                           </td>
                           <td>{b.services?.name || '-'}</td>
                           <td>{b.branches?.name || '-'}</td>
@@ -1773,7 +1884,7 @@ function Bookings({ data }) {
                         onClick={() => { if (!isHold) handleOpenDetail(b); }}
                       >
                         <div className="booking-card-mobile-header">
-                          <span className="booking-card-mobile-customer">{b.customers?.name || '-'}</span>
+                          <span className="booking-card-mobile-customer">{b.temporary_name || b.customers?.name || '-'}</span>
                           <span className="booking-card-mobile-time">{formatTime(b.start_time)} - {formatTime(b.end_time)}</span>
                         </div>
                         <div className="booking-card-mobile-body">
@@ -2152,11 +2263,11 @@ function Bookings({ data }) {
               ) : (
                 <div className="customer-view">
                   <div className="text-center my-14">
-                    <p className='customer-id'>Mã KH: {detailModal.customers?.id}</p>
+                    <p className='customer-id'>Mã KH: {detailModal.customers?.id || 'Tạm thời'}</p>
                     <div className="customer-avatar-lg mx-auto mb-16">
                       {detailEdit.customer_name?.trim().split(' ').at(-1)[0].toUpperCase() || 'A'}
                     </div>
-                    <h2 className="fs-24 fw-700">{detailModal.customers?.name}</h2>
+                    <h2 className="fs-24 fw-700">{detailModal.temporary_name || detailModal.customers?.name || 'Khách tạm'}</h2>
                   </div>
 
                   <div className="booking-row no-hover">

@@ -1,0 +1,200 @@
+/* =============================================
+   YOi Spa Dashboard - Share Link Page Styles
+   ============================================= */
+
+.share-link-container {
+  padding: 32px;
+}
+
+.share-link-header {
+  margin-bottom: 24px;
+}
+
+.share-link-title {
+  font-size: 24px;
+  fontWeight: 700;
+  color: #1C1A17;
+  font-family: var(--font-heading);
+}
+
+.share-link-subtitle {
+  font-size: 14px;
+  color: #878580;
+  margin-top: 4px;
+}
+
+.share-link-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.share-link-card {
+  background: #ffffff;
+  border-radius: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  padding: 24px;
+}
+
+.share-link-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  border-bottom: none;
+  padding: 0;
+}
+
+.share-link-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: rgba(37, 131, 107, 0.1);
+  color: #25836B;
+}
+
+.share-link-card-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1C1A17;
+  margin: 0;
+}
+
+.share-link-description {
+  font-size: 14px;
+  color: #44403C;
+  line-height: 1.6;
+  margin-bottom: 16px;
+}
+
+.share-link-copy-area {
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.share-link-url-display {
+  flex: 1;
+  background: #F5F5F4;
+  border-radius: 8px;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  border: 1px solid #E7E5E4;
+  overflow: hidden;
+}
+
+.share-link-url-code {
+  font-size: 14px;
+  color: #25836B;
+  font-weight: 500;
+  word-break: break-all;
+  user-select: all;
+  font-family: monospace;
+}
+
+.share-link-copy-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 20px;
+  border-radius: 8px;
+  background: #25836B;
+  border: none;
+  color: #ffffff;
+  cursor: pointer;
+  font-weight: 500;
+  transition: background-color 0.2s ease;
+}
+
+.share-link-copy-btn:hover {
+  background-color: #1c624f;
+}
+
+.share-link-form-body {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.share-link-info-banner {
+  display: flex;
+  align-items: start;
+  gap: 8px;
+  background: #F5F5F4;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid #E7E5E4;
+}
+
+.share-link-info-text {
+  font-size: 13px;
+  color: #878580;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.share-link-info-icon {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.share-link-field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.share-link-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #44403C;
+}
+
+.share-link-input {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid #E7E5E4;
+  fontSize: 14px;
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.share-link-input:focus {
+  border-color: #25836B;
+  box-shadow: 0 0 0 2px rgba(37, 131, 107, 0.15);
+}
+
+.share-link-submit-wrap {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.share-link-save-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 24px;
+  border-radius: 8px;
+  background: #25836B;
+  border: none;
+  color: #ffffff;
+  cursor: pointer;
+  font-weight: 600;
+  fontSize: 15px;
+  transition: background-color 0.2s ease, transform 0.1s ease;
+}
+
+.share-link-save-btn:hover {
+  background-color: #1c624f;
+}
+
+.share-link-save-btn:active {
+  transform: scale(0.98);
+}

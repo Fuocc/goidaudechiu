@@ -1761,6 +1761,13 @@ body {
     transition: transform 0.2s, box-shadow 0.2s;
   }
 
+  .summary-sidebar.step-customerinfo #btn-drawer-submit-peek.button-skeleton,
+  .summary-sidebar.step-customerinfo #btn-drawer-submit-bottom.button-skeleton {
+    background: #EAE5DD !important;
+    box-shadow: none !important;
+    color: transparent !important;
+  }
+
   /* In step-customerinfo, hide skip button in drawer */
   .summary-sidebar.step-customerinfo #btn-skip-service {
     display: none !important;
@@ -1891,6 +1898,11 @@ body {
     border-bottom: 1px solid var(--_colours---border);
     padding: 0 32px;
     background-color: var(--_colours---white-bg);
+  }
+
+  #booking-countdown-mobile.timer-skeleton {
+    background: #EAE5DD !important;
+    border-color: #E2DBD5 !important;
   }
 
   #booking-countdown-mobile.hidden {

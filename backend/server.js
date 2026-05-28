@@ -64,7 +64,7 @@ const corsOptions = {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Dashboard-Source', 'x-dashboard-source']
 };
 
 // Middleware
@@ -78,6 +78,7 @@ app.use('/api/services', require('./routes/services'));
 app.use('/api/employees', require('./routes/employees'));
 app.use('/api/customers', require('./routes/customers'));
 app.use('/api/beds', require('./routes/beds'));
+app.use('/api/bookings/command', require('./routes/bookingCommands'));
 const bookingsRouter = require('./routes/bookings');
 app.use('/api/bookings', bookingsRouter);
 app.use('/api/availability', require('./routes/availability'));

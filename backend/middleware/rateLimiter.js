@@ -12,6 +12,11 @@ const MAX_LIMIT = 3;
  * Protects booking creation from spam by restricting attempts per IP and Phone number.
  */
 async function bookingRateLimiter(req, res, next) {
+  // Dashboard/Admin bypass: never rate-limit requests from the admin dashboard
+  if (req.headers['x-dashboard-source'] === 'admin') {
+    return next();
+  }
+
   const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
   const { customer_phone } = req.body;
   const now = Date.now();

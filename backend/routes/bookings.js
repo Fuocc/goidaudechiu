@@ -4,6 +4,7 @@ const supabase = require('../supabaseClient');
 const webpush = require('web-push');
 const bookingRateLimiter = require('../middleware/rateLimiter');
 
+
 // Cấu hình thông số VAPID tiêu chuẩn cho web-push
 webpush.setVapidDetails(
   process.env.VAPID_SUBJECT,
@@ -40,6 +41,8 @@ function getRelativeDateLabel(dateStr) {
     return `ngày ${day}/${month}`;
   }
 }
+
+
 
 // Cache to deduplicate recent Web Push notifications (prevent multiple alerts for group bookings)
 const recentPushCache = new Map();
@@ -109,7 +112,7 @@ async function notifyNewBooking(bookingData) {
       }
     }
     // Phân tích dữ liệu khách hàng, dịch vụ và chi nhánh đồng bộ với Dashboard
-    let customerName = bookingData.customers?.name || bookingData.customer_name || '';
+    let customerName = bookingData.temporary_name || bookingData.customers?.name || bookingData.customer_name || '';
     let serviceName = bookingData.services?.name || bookingData.service_name || '';
     let branchName = bookingData.branches?.name || '';
 
@@ -573,7 +576,7 @@ router.get('/:id', async (req, res) => {
  */
 router.put('/:id', async (req, res) => {
   try {
-    const { service_id, branch_id, start_time, end_time: clientEndTime, employee_id, notes, customer_id, booking_date, internal_note } = req.body;
+    const { service_id, branch_id, start_time, end_time: clientEndTime, employee_id, notes, customer_id, booking_date, internal_note, temporary_name } = req.body;
 
     // Basic validation
     if (!service_id || !branch_id || !start_time || !employee_id) {
@@ -641,6 +644,7 @@ router.put('/:id', async (req, res) => {
         branch_id,
         employee_id,
         customer_id: customer_id !== undefined ? customer_id : booking.customer_id,
+        temporary_name: temporary_name !== undefined ? temporary_name : booking.temporary_name,
         booking_date: booking_date !== undefined ? booking_date : booking.booking_date,
         start_time,
         end_time,
@@ -686,14 +690,25 @@ router.post('/', bookingRateLimiter, async (req, res) => {
     const {
       branch_id, service_id, duration_minutes, num_guests,
       customer_name, customer_phone, customer_email,
-      booking_date, start_time, end_time: clientEndTime, notes
+      booking_date, start_time, end_time: clientEndTime, notes,
+      temporary_name
     } = req.body;
 
-    if (!branch_id || !customer_name || !customer_phone || !booking_date || !start_time) {
+    if (!branch_id || (!customer_name && !temporary_name) || !booking_date || !start_time) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
     const guestCount = parseInt(num_guests) || 1;
+
+    let isTemporary = false;
+    let finalTemporaryName = temporary_name || null;
+
+    if (finalTemporaryName) {
+      isTemporary = true;
+    } else if (!req.body.customer_id && !customer_phone && customer_name) {
+      isTemporary = true;
+      finalTemporaryName = customer_name;
+    }
 
     // 1) Resolve service-like data (duration + price)
     let resolvedService = null;
@@ -731,50 +746,52 @@ router.post('/', bookingRateLimiter, async (req, res) => {
     }
 
     // 3) Find or create customer
-    let customer;
-    if (req.body.customer_id) {
-      const { data: cById } = await supabase
-        .from('customers')
-        .select('*')
-        .eq('id', req.body.customer_id)
-        .single();
-      if (cById) customer = cById;
-    }
-
-    if (!customer) {
-      const { data: existingCustomer } = await supabase
-        .from('customers')
-        .select('*')
-        .eq('phone', customer_phone)
-        .single();
-
-      if (existingCustomer) {
-        customer = existingCustomer;
-      }
-    }
-
-    if (customer) {
-      // Update customer info if changed
-      if (customer_name !== customer.name || (customer_email && customer_email !== customer.email)) {
-        const updateData = { name: customer_name };
-        if (customer_email) updateData.email = customer_email;
-        const { data: updated } = await supabase
+    let customer = null;
+    if (!isTemporary) {
+      if (req.body.customer_id) {
+        const { data: cById } = await supabase
           .from('customers')
-          .update(updateData)
-          .eq('id', customer.id)
+          .select('*')
+          .eq('id', req.body.customer_id)
+          .single();
+        if (cById) customer = cById;
+      }
+
+      if (!customer && customer_phone) {
+        const { data: existingCustomer } = await supabase
+          .from('customers')
+          .select('*')
+          .eq('phone', customer_phone)
+          .single();
+
+        if (existingCustomer) {
+          customer = existingCustomer;
+        }
+      }
+
+      if (customer) {
+        // Update customer info if changed
+        if (customer_name !== customer.name || (customer_email && customer_email !== customer.email)) {
+          const updateData = { name: customer_name };
+          if (customer_email) updateData.email = customer_email;
+          const { data: updated } = await supabase
+            .from('customers')
+            .update(updateData)
+            .eq('id', customer.id)
+            .select()
+            .single();
+          if (updated) customer = updated;
+        }
+      } else {
+        const { data: newCustomer, error: custErr } = await supabase
+          .from('customers')
+          .insert([{ name: customer_name, phone: customer_phone || null, email: customer_email || null }])
           .select()
           .single();
-        if (updated) customer = updated;
-      }
-    } else {
-      const { data: newCustomer, error: custErr } = await supabase
-        .from('customers')
-        .insert([{ name: customer_name, phone: customer_phone, email: customer_email || null }])
-        .select()
-        .single();
 
-      if (custErr) throw custErr;
-      customer = newCustomer;
+        if (custErr) throw custErr;
+        customer = newCustomer;
+      }
     }
 
     // --- If hold_ids are provided, update them instead of creating new bookings ---
@@ -787,9 +804,9 @@ router.post('/', bookingRateLimiter, async (req, res) => {
         let bookingStatus = 'confirmed';
         let internalNote = null;
 
-        const isWalkIn = normalize(customer_name).includes('khach la') && /^0+$/.test(customer_phone);
+        const isWalkIn = !isTemporary && normalize(customer_name).includes('khach la') && (!customer_phone || /^0+$/.test(customer_phone));
 
-        if (!isWalkIn) {
+        if (!isTemporary && !isWalkIn && customer_phone) {
           try {
             const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
             const { data: recentBookings, error: recentErr } = await supabase
@@ -809,7 +826,8 @@ router.post('/', bookingRateLimiter, async (req, res) => {
         const { data: updated, error: upErr } = await supabase
           .from('bookings')
           .update({
-            customer_id: customer.id,
+            customer_id: isTemporary ? null : customer.id,
+            temporary_name: isTemporary ? finalTemporaryName : null,
             status: bookingStatus,
             notes: notes || null,
             internal_note: internalNote // clear the GIỮ CHỖ TẠM THỜI note!
@@ -992,9 +1010,9 @@ router.post('/', bookingRateLimiter, async (req, res) => {
       let bookingStatus = 'confirmed';
       let internalNote = null;
 
-      const isWalkIn = normalize(customer_name).includes('khach la') && /^0+$/.test(customer_phone);
+      const isWalkIn = !isTemporary && normalize(customer_name).includes('khach la') && (!customer_phone || /^0+$/.test(customer_phone));
 
-      if (!isWalkIn) {
+      if (!isTemporary && !isWalkIn && customer_phone) {
         try {
           const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
           
@@ -1026,7 +1044,8 @@ router.post('/', bookingRateLimiter, async (req, res) => {
 
       // Create booking row
       const insertPayload = {
-        customer_id: customer.id,
+        customer_id: isTemporary ? null : customer.id,
+        temporary_name: isTemporary ? finalTemporaryName : null,
         service_id: service_id || null,
         employee_id: assignedEmployee.id,
         bed_id: assignedBed.id,

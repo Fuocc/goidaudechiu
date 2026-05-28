@@ -12,6 +12,7 @@ import Bookings from './pages/Bookings';
 import Branches from './pages/Branches';
 import EmployeeSchedules from './pages/EmployeeSchedules';
 import Settings from './pages/Settings';
+import ShareLink from './pages/ShareLink';
 import Sidebar from './components/Sidebar';
 
 function App() {
@@ -77,6 +78,7 @@ function App() {
                 <Route path="/branches" element={<Branches />} />
                 <Route path="/schedules" element={<EmployeeSchedules />} />
                 <Route path="/settings" element={<Settings />} />
+                <Route path="/share-link" element={<ShareLink />} />
               </>
             )}
             <Route path="*" element={<Navigate to="/" replace />} />

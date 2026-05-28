@@ -1,9 +1,10 @@
 const API_BASE = import.meta.env.VITE_API_BASE;
 
-async function request(url, options = {}) {
+export async function request(url, options = {}) {
   const token = localStorage.getItem('sb_access_token');
   const headers = {
     'Content-Type': 'application/json',
+    'X-Dashboard-Source': 'admin',
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...options.headers
   };
@@ -99,3 +100,10 @@ export const getTopServices = () => request('/dashboard/top-services');
  // Settings
  export const getSettings = () => request('/settings');
  export const updateSetting = (data) => request('/settings', { method: 'POST', body: JSON.stringify(data) });
+
+// Notifications
+export const getDashboardNotifications = () => request('/notifications/dashboard');
+export const markNotificationRead = (id, read = true) => request(`/notifications/dashboard/${id}/read`, { method: 'PUT', body: JSON.stringify({ read }) });
+export const markAllNotificationsRead = () => request('/notifications/dashboard/mark-all-read', { method: 'POST' });
+export const deleteNotification = (id) => request(`/notifications/dashboard/${id}`, { method: 'DELETE' });
+

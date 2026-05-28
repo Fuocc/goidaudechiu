@@ -134,4 +134,109 @@ router.post('/send-test', async (req, res) => {
     }
 });
 
+// ---- Dashboard Notifications Endpoints (Bypasses Frontend RLS via Service Role Key) ----
+
+// GET /api/notifications/dashboard
+router.get('/dashboard', async (req, res) => {
+    try {
+        const { data: notifications, error } = await supabase
+            .from('dashboard_notifications')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(50);
+
+        if (error) throw error;
+
+        if (!notifications || notifications.length === 0) {
+            return res.json([]);
+        }
+
+        // Gộp danh sách các booking_id
+        const bookingIds = notifications
+            .map(n => n.booking_id)
+            .filter(id => !!id);
+
+        let bookingsMap = {};
+        if (bookingIds.length > 0) {
+            const { data: bookingsData, error: bkError } = await supabase
+                .from('bookings')
+                .select(`
+                    *,
+                    customers(name, phone),
+                    services(name, color),
+                    branches(name),
+                    employees(name)
+                `)
+                .in('id', bookingIds);
+
+            if (!bkError && bookingsData) {
+                bookingsData.forEach(b => {
+                    bookingsMap[b.id] = b;
+                });
+            }
+        }
+
+        // Ghép nối dữ liệu trong bộ nhớ (In-memory merge)
+        const merged = notifications.map(n => ({
+            ...n,
+            bookings: bookingsMap[n.booking_id] || null
+        }));
+
+        res.json(merged);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// PUT /api/notifications/dashboard/:id/read
+router.put('/dashboard/:id/read', async (req, res) => {
+    try {
+        const readVal = req.body && req.body.read !== undefined ? req.body.read : true;
+        const { data, error } = await supabase
+            .from('dashboard_notifications')
+            .update({ read: readVal })
+            .eq('id', req.params.id)
+            .select()
+            .single();
+
+        if (error) throw error;
+        res.json(data);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// POST /api/notifications/dashboard/mark-all-read
+router.post('/dashboard/mark-all-read', async (req, res) => {
+    try {
+        const { data, error } = await supabase
+            .from('dashboard_notifications')
+            .update({ read: true })
+            .eq('read', false)
+            .select();
+
+        if (error) throw error;
+        res.json(data);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// DELETE /api/notifications/dashboard/:id
+router.delete('/dashboard/:id', async (req, res) => {
+    try {
+        const { data, error } = await supabase
+            .from('dashboard_notifications')
+            .delete()
+            .eq('id', req.params.id)
+            .select();
+
+        if (error) throw error;
+        res.json({ message: 'Thông báo đã được xóa thành công', data });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 module.exports = router;
+

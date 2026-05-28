@@ -1,10 +1,12 @@
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&display=swap');
+
 /* ---- Variables ---- */
 :root {
   --black: #333333;
   --white: #ffffff;
   --hover-gray: #e2e2e2;
   --hover-light: #f3f3f3;
-  --chip-gray: #efefef;
+  --chip-gray: #F2F2F2;
   --body-gray: #4b4b4b;
   --muted-gray: #afafaf;
   --border-gray: #d4d4d4;
@@ -17,17 +19,24 @@
   --error-bg: #fde8e8;
   --info: #2563eb;
   --info-bg: #eff6ff;
+  --_colours---black: #043f3e;
+  --_colours---heading: #055c5b;
+  --_colours---paragraph-dark: #386665;
+  --_colours---teal-bg: #e7efe6;
+  --_colours---accent-bg: #edd3a9;
+  --_colours---accent-text: #603813;
+  --_colours---cta-text: #301e0d;
+  --_colours---white-bg: #f8f3ec;
+  --_colours---cta: #e6a02a;
+  --_colours---illustration: #136968;
+  --_colours---paragraph-light: #bbc6c0;
+  --midnight-black: #031315;
+  --ivory-white: #f9f8f2;
+  --pure-white: #faf9f6;
 
-  --shadow-sm: rgba(0, 0, 0, 0.08) 0px 2px 8px 0px;
-  --shadow-md: rgba(0, 0, 0, 0.12) 0px 4px 16px 0px;
-  --shadow-lg: rgba(0, 0, 0, 0.16) 0px 4px 24px 0px;
-
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-pill: 999px;
-
-  --font: 'Inter', system-ui, -apple-system, sans-serif;
-  --sidebar-width: 260px;
+  --font-heading: 'Bricolage Grotesque', sans-serif;
+  --font-body: 'Inter', system-ui, -apple-system, sans-serif;
+  --sidebar-width: 300px;
   --header-height: 64px;
   --mobile-header-height: 56px;
   --mobile-bottom-nav-height: 64px;

@@ -19,6 +19,8 @@ const SPA_CLOSE_HOUR = 22; // 22:00 PM (10:00 PM) closing hour of the spa
 const SKIP_DURATION_MINUTES = 60;
 const CUSTOMER_STORAGE_KEY = 'spa_booking_customer';
 
+
+
 const STEPS = {
   SERVICES: 'services',
   TIME: 'timing',
@@ -72,6 +74,10 @@ const availabilityCache = {
   
   has(key) {
     return this.get(key) !== null;
+  },
+  
+  clear() {
+    this.store.clear();
   }
 };
 
@@ -289,6 +295,13 @@ async function handleRouting() {
   }
 
   renderUI(step, params);
+
+  // Mobile UX: Step 2 (Timing) must automatically scroll to top of screen
+  if (step === STEPS.TIME) {
+    window.scrollTo({ top: 0, behavior: 'instant' });
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+  }
 }
 
 /** Check if a step is accessible given the current URL params */
@@ -302,8 +315,8 @@ function canAccessStep(step, params) {
 }
 
 /** Navigate to a step, optionally updating other params */
-function navigateTo(step, extraParams = {}) {
-  setParams({ step, ...extraParams });
+function navigateTo(step, extraParams = {}, replace = false) {
+  setParams({ step, ...extraParams }, replace);
   handleRouting();
 }
 
@@ -481,6 +494,7 @@ function renderUI(step, params) {
   if (step === STEPS.CUSTOMERINFO) {
     checkBookingBlock();
   }
+
 }
 
 function renderServices(params) {
@@ -1604,9 +1618,13 @@ function updateSummary(step, params) {
     $btnSkipWrap.classList.toggle('hidden', step !== STEPS.SERVICES);
   }
 
-  const drawerSubmitBtn = document.getElementById('btn-drawer-submit');
-  if (drawerSubmitBtn) {
-    drawerSubmitBtn.style.display = (step === STEPS.CUSTOMERINFO) ? 'block' : 'none';
+  const peekBtn = document.getElementById('btn-drawer-submit-peek');
+  const bottomBtn = document.getElementById('btn-drawer-submit-bottom');
+  if (peekBtn) {
+    peekBtn.style.display = (step === STEPS.CUSTOMERINFO) ? 'block' : 'none';
+  }
+  if (bottomBtn) {
+    bottomBtn.style.display = (step === STEPS.CUSTOMERINFO) ? 'block' : 'none';
   }
 
   if (sumTag) {
@@ -1715,8 +1733,8 @@ function populateConfirmation(params, customerData) {
         // Use specific Google Maps links per branch if available, otherwise fall back to search
         const BRANCH_MAP_LINKS = {
           // Map branch names to their specific Google Maps URLs from the website
-          'CN 1': 'https://maps.app.goo.gl/bce3bzSfE4KNGqcp7',
-          'CN 2': 'https://maps.app.goo.gl/m3PdKh93LyTX32XX9',
+          'CN 1': 'https://maps.app.goo.gl/CHKBaCVmCtAzKqXu8',
+          'CN 2': 'https://maps.app.goo.gl/GhcwqqUKWatqQB1bA',
         };
         // Try to match by branch name
         const specificLink = Object.entries(BRANCH_MAP_LINKS).find(([key]) =>
@@ -1814,9 +1832,14 @@ async function handleSubmit(e) {
     stopCountdown();
     clearHoldStorage();
 
+    // Clear local availability cache to force fetching fresh slots if the user navigates back
+    if (typeof availabilityCache !== 'undefined' && typeof availabilityCache.clear === 'function') {
+      availabilityCache.clear();
+    }
+
     saveCustomerToStorage(customerData);
     populateConfirmation(params, customerData);
-    navigateTo(STEPS.CONFIRMATION);
+    navigateTo(STEPS.CONFIRMATION, {}, true);
   } catch (err) {
     if (err.message === 'RATE_LIMIT_BLOCKED') {
       showToast('Bạn đã đặt lịch quá nhiều lần trong khoảng thời gian ngắn. Vui lòng đợi 5 phút để có thể đặt lịch mới hoặc liên hệ <a href="https://zalo.me/0968241808" style="color: inherit; text-decoration:underline; text-underline-offset:3px;" target="_blank" rel="noopener noreferrer">Zalo</a> để được hỗ trợ nhanh nhất.', 12000);
@@ -2028,7 +2051,7 @@ function startCountdown(expiresAt) {
     $countdown.classList.remove('hidden', 'timer-skeleton');
   }
   if ($countdownMobile) {
-    $countdownMobile.classList.remove('hidden');
+    $countdownMobile.classList.remove('hidden', 'timer-skeleton');
   }
   document.body.classList.add('has-countdown');
 
@@ -2073,6 +2096,7 @@ function stopCountdown() {
   }
   if ($countdownMobile) {
     $countdownMobile.classList.add('hidden');
+    $countdownMobile.classList.remove('timer-skeleton');
   }
 
   document.body.classList.remove('has-countdown');
@@ -2241,6 +2265,14 @@ async function handleHoldState(params) {
     if ($countdown) {
       $countdown.classList.remove('hidden');
       $countdown.classList.add('timer-skeleton');
+    }
+
+    // Render skeleton loader for countdown timer on mobile
+    const $countdownMobile = document.getElementById('booking-countdown-mobile');
+    if ($countdownMobile) {
+      $countdownMobile.classList.remove('hidden');
+      $countdownMobile.classList.add('timer-skeleton');
+      document.body.classList.add('has-countdown');
     }
 
     try {
