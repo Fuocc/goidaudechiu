@@ -61,7 +61,7 @@ export const TableSkeleton = ({ rows = 5, cols = 5 }) => {
           {Array.from({ length: rows }).map((_, r) => (
             <tr key={r}>
               {Array.from({ length: cols }).map((_, c) => (
-                <td key={c} style={{ padding: '14px 16px' }}>
+                <td key={c} style={{ padding: '10px 16px' }}>
                   {c === 0 ? (
                     <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
                       <Skeleton circle width="32px" height="32px" />
@@ -82,7 +82,7 @@ export const TableSkeleton = ({ rows = 5, cols = 5 }) => {
 
 export const MobileCardSkeleton = () => {
   return (
-    <div className="mobile-card" style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div className="mobile-card" style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Skeleton width="50%" height="15px" />
         <div style={{ display: 'flex', gap: 8 }}>

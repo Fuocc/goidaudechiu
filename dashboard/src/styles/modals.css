@@ -5,7 +5,7 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.4);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -25,23 +25,23 @@
 
 .modal {
   background: var(--white);
-  border-radius: var(--radius-md);
+  border-radius: 20px;
   width: 100%;
-  padding: 32px;
+  padding: 28px;
   display: flex;
   flex-flow: column;
-  gap: 24px;
+  gap: 20px;
   max-width: 560px;
   max-height: 90vh;
   overflow-y: auto;
-  box-shadow: var(--shadow-lg);
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.12);
   animation: slideUp 0.3s ease;
 }
 
-@media (max-width: 768px) {
+@media only screen and (max-width: 768px) {
   .modal {
-    padding: 24px 20px;
-    gap: 16px;
+    padding: 20px 18px;
+    gap: 14px;
     max-width: 100%;
   }
 }
@@ -65,17 +65,17 @@
 }
 
 .modal-header h3 {
-  font-size: 24px;
-  font-weight: 700;
+  font-size: 20px;
+  font-weight: 600;
 }
 
 .modal-close {
-  width: 36px;
-  height: 36px;
-  padding: 9px;
+  width: 32px;
+  height: 32px;
+  padding: 8px;
   border-radius: 50%;
   border: none;
-  background: var(--chip-gray);
+  background: transparent;
   color: var(--black);
   display: flex;
   align-items: center;
@@ -85,21 +85,21 @@
 }
 
 .modal-close:hover {
-  background: var(--hover-gray);
+  background: #F4F2F0;
 }
 
 .modal-body {
   display: flex;
   flex-flow: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .modal-footer {
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  gap: 12px;
-  margin-top: 24px;
+  gap: 10px;
+  margin-top: 20px;
 }
 
 .modal-viewing {
@@ -108,13 +108,13 @@
 }
 
 .detail-tabs {
-  margin: 10px 0 24px;
+  margin: 8px 0 20px;
   display: flex;
-  gap: 16px;
+  gap: 12px;
 }
 
 .detail-tabs .tab-btn {
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 600;
   cursor: pointer;
 }
@@ -122,7 +122,7 @@
 .detail-view {
   display: flex;
   flex-flow: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 /* .detail-view>.booking-row:nth-child(3)>.booking-row-content {
@@ -133,15 +133,15 @@
   color: rgb(255, 77, 79);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   cursor: pointer;
-  font-size: 16px;
-  padding: 12px 16px;
+  font-size: 14px;
+  padding: 10px 14px;
   border-radius: var(--radius-pill);
 }
 
 .modal-viewing .btn-trash:hover {
-  background-color: rgba(255, 77, 79, 0.2);
+  background-color: rgba(255, 77, 79, 0.1);
 }
 
 /* ============================================
@@ -157,8 +157,8 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px 0;
-  border-bottom: 1px solid var(--chip-gray);
+  padding: 14px 0;
+  border-bottom: 1px solid #f5f5f4;
 }
 
 .detail-row:last-child {
@@ -166,14 +166,14 @@
 }
 
 .detail-label {
-  font-size: 13px;
-  color: var(--body-gray);
+  font-size: 12px;
+  color: var(--muted-gray);
   font-weight: 500;
 }
 
 .detail-value,
 .detail-select {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--black);
   background-color: white;

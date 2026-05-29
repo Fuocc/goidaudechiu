@@ -141,7 +141,7 @@ function Branches() {
           ))
         ) : (
           branches.map(branch => (
-            <div key={branch.id} className="card" style={{ cursor: 'pointer', flex: '1', minWidth: '300px', maxWidth: '400px' }} onClick={() => openEdit(branch)}>
+            <div key={branch.id} className="card" style={{ cursor: 'pointer', minWidth: '300px' }} onClick={() => openEdit(branch)}>
               <div className="card-body">
                 <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
                   <div style={{ display: 'flex', gap: 12, alignItems: 'center', width: '100%' }}>
@@ -158,8 +158,8 @@ function Branches() {
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 16, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{branch.name}</div>
-                      <div style={{ fontSize: 13, color: '#4b4b4b', marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{branch.address || 'Chưa có địa chỉ'}</div>
-                      <div style={{ fontSize: 13, color: '#afafaf', marginTop: 2 }}>{branch.phone || ''}</div>
+                      <div style={{ fontSize: 13, color: '#4b4b4b', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{branch.address || 'Chưa có địa chỉ'}</div>
+                      <div style={{ fontSize: 13, color: '#afafaf', marginTop: 4 }}>{branch.phone || ''}</div>
                     </div>
                   </div>
                   <div className="actions-cell" style={{ flexShrink: 0, marginLeft: 8 }}>
@@ -298,13 +298,13 @@ function Branches() {
                               </label>
                               {dayData.isOpen ? (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                  <input type="time" className="form-input" style={{ width: 100, padding: '4px 8px', fontSize: 13 }} value={dayData.open || '08:00'} onChange={e => {
+                                  <input type="time" className="form-input" style={{ padding: '4px 8px', fontSize: 13 }} value={dayData.open || '08:00'} onChange={e => {
                                     const newHours = { ...form.opening_hours };
                                     newHours[dayKey] = { ...dayData, open: e.target.value };
                                     setForm({ ...form, opening_hours: newHours });
                                   }} />
                                   <span style={{ fontSize: 12, color: '#888' }}>-</span>
-                                  <input type="time" className="form-input" style={{ width: 100, padding: '4px 8px', fontSize: 13 }} value={dayData.close || '20:00'} onChange={e => {
+                                  <input type="time" className="form-input" style={{ padding: '4px 8px', fontSize: 13 }} value={dayData.close || '20:00'} onChange={e => {
                                     const newHours = { ...form.opening_hours };
                                     newHours[dayKey] = { ...dayData, close: e.target.value };
                                     setForm({ ...form, opening_hours: newHours });

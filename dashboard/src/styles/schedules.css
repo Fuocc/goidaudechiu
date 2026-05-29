@@ -9,16 +9,19 @@
 }
 
 .schedule-table th {
-  padding: 12px 8px;
-  font-size: 12px;
+  padding: 10px 8px;
+  font-size: 11px;
   font-weight: 600;
   text-align: center;
-  border-bottom: 1px solid var(--chip-gray);
-  background: var(--bg-gray);
+  border-bottom: 1px solid #f0f0f0;
+  background: transparent;
+  color: var(--muted-gray);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .schedule-emp-col {
-  width: 160px;
+  width: 150px;
   text-align: left !important;
   padding-left: 16px !important;
 }
@@ -39,14 +42,15 @@
 }
 
 .schedule-day-col.today {
-  background: rgba(0, 0, 0, 0.03);
+  background: rgba(0, 0, 0, 0.02);
 }
 
 .schedule-table td {
-  padding: 8px 6px;
-  border-bottom: 1px solid var(--chip-gray);
+  padding: 12px 0px;
+  border-bottom: 1px solid #f5f5f4;
   text-align: center;
   vertical-align: middle;
+  font-size: 13px;
 }
 
 .schedule-emp-name {
@@ -57,11 +61,11 @@
 .schedule-cell {
   cursor: pointer;
   transition: background 0.15s;
-  min-height: 56px;
+  min-height: 52px;
 }
 
 .schedule-cell:hover {
-  background: var(--hover-light);
+  background: #FAFAF8;
 }
 
 .schedule-cell.today {
@@ -70,9 +74,9 @@
 
 .schedule-badge {
   display: inline-block;
-  padding: 4px 10px;
-  border-radius: var(--radius-pill);
-  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.15s;
@@ -97,21 +101,21 @@
 }
 
 .schedule-note {
-  font-size: 10px;
+  font-size: 11px;
   margin-top: 2px;
   opacity: 0.8;
 }
 
 .schedule-empty {
-  width: 28px;
-  height: 28px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
-  border: 2px dashed var(--border-gray);
+  border: 1.5px dashed #e5e7eb;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   color: var(--muted-gray);
-  font-size: 16px;
+  font-size: 20px;
   transition: all 0.15s;
 }
 
@@ -121,10 +125,10 @@
 }
 
 .schedule-day-btn {
-  padding: 8px 14px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--border-gray);
-  background: var(--white);
+  padding: 7px 12px;
+  border-radius: 5px;
+  border: 1px solid #e5e7eb;
+  background-color: var(--white);
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
@@ -132,31 +136,53 @@
 }
 
 .schedule-day-btn:hover {
-  background: var(--chip-gray);
+  background-color: #F4F2F0;
+  border-color: #F4F2F0;
 }
 
 .schedule-day-btn.selected {
-  background: var(--black);
-  color: var(--white);
-  border-color: var(--black);
+  background-color: #F4F2F0;
+  border-color: #F4F2F0;
+}
+
+/* Calendar Toolbar — Shared with Schedules page */
+.schedules-page .cal-toolbar {
+  display: flex;
+  align-items: center;
+  flex-flow: row;
+  justify-content: space-between;
+  padding: 12px 0 16px 0;
+  gap: 12px;
+  border-bottom: 0px;
+}
+
+.schedules-page .cal-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.schedules-page .cal-toolbar-right {
+  display: flex;
+  align-items: center;
 }
 
 /* ============================================
    Responsive Schedule — Mobile
    ============================================ */
-@media (max-width: 768px) {
+@media only screen and (max-width: 768px) {
   .schedule-table {
     table-layout: auto;
   }
 
   .schedule-emp-col {
-    width: 100px;
+    width: 90px;
     padding-left: 8px !important;
   }
 
   .schedule-table th {
     padding: 8px 4px;
-    font-size: 11px;
+    font-size: 10px;
   }
 
   .schedule-table td {
@@ -165,11 +191,11 @@
 
   .schedule-emp-name {
     padding-left: 8px !important;
-    font-size: 13px;
+    font-size: 12px;
   }
 
   .schedule-badge {
-    padding: 3px 6px;
+    padding: 2px 5px;
     font-size: 10px;
   }
 }
@@ -180,13 +206,13 @@
   box-sizing: border-box;
 }
 
-@media (max-width: 768px) {
+@media only screen and (max-width: 768px) {
   .schedules-page {
     padding: 0;
   }
 
   .schedules-page .page-header {
-    gap: 12px;
+    gap: 10px;
   }
 
   .schedules-page .btn {
@@ -194,5 +220,25 @@
     white-space: normal;
     /* Allow text to wrap if button is too small */
     text-align: center;
+  }
+
+  .schedules-page .cal-toolbar {
+    flex-direction: column;
+    gap: 8px;
+    align-items: stretch;
+  }
+
+  .schedules-page .cal-toolbar-left {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .schedules-page .cal-toolbar-right {
+    width: 100%;
+  }
+
+  .schedules-page .cal-toolbar-right .form-select {
+    max-width: 100%;
+    width: 100%;
   }
 }

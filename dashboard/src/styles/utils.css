@@ -415,13 +415,13 @@
 }
 
 /* Responsive Utilities */
-@media (max-width: 1024px) {
+@media only screen and (max-width: 1024px) {
   .stats-grid {
     grid-template-columns: repeat(2, 1fr);
   }
 }
 
-@media (max-width: 768px) {
+@media only screen and (max-width: 768px) {
   .stats-grid {
     grid-template-columns: 1fr;
   }
@@ -440,35 +440,35 @@
   .data-table th,
   .data-table td {
     white-space: nowrap;
-    padding: 10px 12px;
-    font-size: 13px;
+    padding: 8px 10px;
+    font-size: 12px;
   }
 }
 
 /* Mobile: hide "desktop-only" helpers */
-@media (max-width: 768px) {
+@media only screen and (max-width: 768px) {
   .hide-mobile {
     display: none !important;
   }
 }
 
 /* Desktop: hide "mobile-only" helpers */
-@media (min-width: 769px) {
+@media only screen and (min-width: 769px) {
   .hide-desktop {
     display: none !important;
   }
 }
 
 /* Touch-friendly tap targets */
-@media (max-width: 768px) {
+@media only screen and (max-width: 768px) {
   .btn {
-    min-height: 44px;
-    padding: 10px 16px;
+    min-height: 40px;
+    padding: 8px 14px;
   }
 
   .btn-icon {
-    width: 40px;
-    height: 40px;
+    width: 36px;
+    height: 36px;
   }
 
   .modal {

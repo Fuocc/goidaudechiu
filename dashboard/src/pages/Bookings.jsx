@@ -1386,44 +1386,85 @@ function Bookings({ data }) {
     <div className='full-view full-view-bookings' style={{ '--staff-count': loading ? 3 : (employees.length || 1) }}>
       {/* Calendar Toolbar */}
       <div className="cal-toolbar">
-        {/* Row 1: Date navigation + Create button */}
-        <div className="cal-toolbar-row1">
-          <div className="cal-toolbar-middle">
-            <button className="btn-icon" onClick={goPrev} title="Ngày trước"><FiChevronLeft /></button>
-            <span className="cal-week-label">
-              {formatDateVietnamese(currentDate)}
-            </span>
-            <button className="btn-icon" onClick={goNext} title="Ngày sau"><FiChevronRight /></button>
-          </div>
-          <div className="cal-toolbar-actions">
-            <button className="btn btn-sm btn-ghost fs-16 fw-500" onClick={goToday}>Hôm nay</button>
-            <button className="btn btn-primary btn-create" onClick={() => openBookingModal()}>
-              <span className="btn-create-label">Tạo lịch</span> <FiPlus />
-            </button>
-          </div>
-        </div>
-
-        {/* Row 2: Branch selector + View toggle */}
-        <div className="cal-toolbar-row2">
+        <div className="cal-toolbar-desktop">
           <div className="cal-toolbar-left">
             <select className="form-select max-w-200"
               value={filterBranch} onChange={e => setFilterBranch(e.target.value)}>
               {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
             </select>
+
           </div>
-          <div className="cal-view-toggle">
-            <button className={`cal-view-btn${effectiveViewMode === 'calendar' ? ' active' : ''}`} onClick={() => setViewMode('calendar')}>
-              <svg width="19" height="19" viewBox="0 0 19 19" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M4.39984 0.916748H3.84984C2.82307 0.916748 2.30969 0.916748 1.91752 1.11657C1.57256 1.29234 1.29209 1.5728 1.11633 1.91777C0.916504 2.30994 0.916504 2.82332 0.916504 3.85008V14.4834C0.916504 15.5102 0.916504 16.0236 1.11633 16.4157C1.29209 16.7607 1.57256 17.0412 1.91752 17.2169C2.30969 17.4167 2.82307 17.4167 3.84984 17.4167H4.39984C5.4266 17.4167 5.93998 17.4167 6.33215 17.2169C6.67712 17.0412 6.95758 16.7607 7.13335 16.4157C7.33317 16.0236 7.33317 15.5102 7.33317 14.4834V3.85008C7.33317 2.82332 7.33317 2.30994 7.13335 1.91777C6.95758 1.5728 6.67712 1.29234 6.33215 1.11657C5.93998 0.916748 5.4266 0.916748 4.39984 0.916748Z" stroke="#D6D3D1" strokeWidth="1.83333" strokeLinecap="round" strokeLinejoin="round" />
-                <path d="M14.4832 0.916748H13.9332C12.9064 0.916748 12.393 0.916748 12.0009 1.11657C11.6559 1.29234 11.3754 1.5728 11.1997 1.91777C10.9998 2.30994 10.9998 2.82332 10.9998 3.85008V14.4834C10.9998 15.5102 10.9998 16.0236 11.1997 16.4157C11.3754 16.7607 11.6559 17.0412 12.0009 17.2169C12.393 17.4167 12.9064 17.4167 13.9332 17.4167H14.4832C15.5099 17.4167 16.0233 17.4167 16.4155 17.2169C16.7605 17.0412 17.0409 16.7607 17.2167 16.4157C17.4165 16.0236 17.4165 15.5102 17.4165 14.4834V3.85008C17.4165 2.82332 17.4165 2.30994 17.2167 1.91777C17.0409 1.5728 16.7605 1.29234 16.4155 1.11657C16.0233 0.916748 15.5099 0.916748 14.4832 0.916748Z" stroke="#D6D3D1" strokeWidth="1.83333" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
+          <div className="cal-toolbar-middle">
+            <span className="cal-week-label">
+              {formatDateVietnamese(currentDate)}
+            </span>
+            <button className="btn-icon" onClick={goPrev} title="Ngày trước"><FiChevronLeft /></button>
+            <button className="btn-icon" onClick={goNext} title="Ngày sau"><FiChevronRight /></button>
+            <button className="btn btn-sm btn-ghost fs-16 fw-500" onClick={goToday}>Hôm nay</button>
+          </div>
+          <div className="cal-toolbar-right">
+            {/* Hide view toggle on mobile — mobile always shows list */}
+            {!isMobile && (
+              <div className="cal-view-toggle">
+                <button className={`cal-view-btn${effectiveViewMode === 'calendar' ? ' active' : ''}`} onClick={() => setViewMode('calendar')}>
+                  <svg width="19" height="19" viewBox="0 0 19 19" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M4.39984 0.916748H3.84984C2.82307 0.916748 2.30969 0.916748 1.91752 1.11657C1.57256 1.29234 1.29209 1.5728 1.11633 1.91777C0.916504 2.30994 0.916504 2.82332 0.916504 3.85008V14.4834C0.916504 15.5102 0.916504 16.0236 1.11633 16.4157C1.29209 16.7607 1.57256 17.0412 1.91752 17.2169C2.30969 17.4167 2.82307 17.4167 3.84984 17.4167H4.39984C5.4266 17.4167 5.93998 17.4167 6.33215 17.2169C6.67712 17.0412 6.95758 16.7607 7.13335 16.4157C7.33317 16.0236 7.33317 15.5102 7.33317 14.4834V3.85008C7.33317 2.82332 7.33317 2.30994 7.13335 1.91777C6.95758 1.5728 6.67712 1.29234 6.33215 1.11657C5.93998 0.916748 5.4266 0.916748 4.39984 0.916748Z" stroke="#D6D3D1" stroke-width="1.83333" stroke-linecap="round" stroke-linejoin="round" />
+                    <path d="M14.4832 0.916748H13.9332C12.9064 0.916748 12.393 0.916748 12.0009 1.11657C11.6559 1.29234 11.3754 1.5728 11.1997 1.91777C10.9998 2.30994 10.9998 2.82332 10.9998 3.85008V14.4834C10.9998 15.5102 10.9998 16.0236 11.1997 16.4157C11.3754 16.7607 11.6559 17.0412 12.0009 17.2169C12.393 17.4167 12.9064 17.4167 13.9332 17.4167H14.4832C15.5099 17.4167 16.0233 17.4167 16.4155 17.2169C16.7605 17.0412 17.0409 16.7607 17.2167 16.4157C17.4165 16.0236 17.4165 15.5102 17.4165 14.4834V3.85008C17.4165 2.82332 17.4165 2.30994 17.2167 1.91777C17.0409 1.5728 16.7605 1.29234 16.4155 1.11657C16.0233 0.916748 15.5099 0.916748 14.4832 0.916748Z" stroke="#D6D3D1" stroke-width="1.83333" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </button>
+                <button className={`cal-view-btn${effectiveViewMode === 'list' ? ' active' : ''}`} onClick={() => setViewMode('list')}>
+                  <svg width="19" height="19" viewBox="0 0 19 19" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M14.4832 7.33342C15.5099 7.33342 16.0233 7.33342 16.4155 7.13359C16.7604 6.95783 17.0409 6.67736 17.2167 6.3324C17.4165 5.94023 17.4165 5.42684 17.4165 4.40008V3.85008C17.4165 2.82332 17.4165 2.30994 17.2167 1.91777C17.0409 1.5728 16.7605 1.29234 16.4155 1.11657C16.0233 0.916749 15.5099 0.916749 14.4832 0.916749L3.84984 0.916748C2.82307 0.916748 2.30969 0.916748 1.91752 1.11657C1.57256 1.29234 1.29209 1.5728 1.11633 1.91777C0.916504 2.30994 0.916504 2.82332 0.916504 3.85008L0.916504 4.40008C0.916504 5.42684 0.916504 5.94023 1.11633 6.3324C1.29209 6.67736 1.57256 6.95783 1.91752 7.13359C2.30969 7.33341 2.82307 7.33341 3.84984 7.33341L14.4832 7.33342Z" stroke="#D6D3D1" stroke-width="1.83333" stroke-linecap="round" stroke-linejoin="round" />
+                    <path d="M14.4832 17.4167C15.5099 17.4167 16.0233 17.4167 16.4155 17.2169C16.7604 17.0412 17.0409 16.7607 17.2167 16.4157C17.4165 16.0236 17.4165 15.5102 17.4165 14.4834V13.9334C17.4165 12.9067 17.4165 12.3933 17.2167 12.0011C17.0409 11.6561 16.7605 11.3757 16.4155 11.1999C16.0233 11.0001 15.5099 11.0001 14.4832 11.0001L3.84984 11.0001C2.82307 11.0001 2.30969 11.0001 1.91752 11.1999C1.57256 11.3757 1.29209 11.6561 1.11633 12.0011C0.916504 12.3933 0.916504 12.9067 0.916504 13.9334L0.916504 14.4834C0.916504 15.5102 0.916504 16.0236 1.11633 16.4157C1.29209 16.7607 1.57256 17.0412 1.91752 17.2169C2.30969 17.4167 2.82307 17.4167 3.84984 17.4167H14.4832Z" stroke="#D6D3D1" stroke-width="1.83333" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </button>
+              </div>
+            )}
+            <button className="btn btn-primary btn-create" onClick={() => openBookingModal()}>
+              Tạo lịch <FiPlus />
             </button>
-            <button className={`cal-view-btn${effectiveViewMode === 'list' ? ' active' : ''}`} onClick={() => setViewMode('list')}>
-              <svg width="19" height="19" viewBox="0 0 19 19" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M14.4832 7.33342C15.5099 7.33342 16.0233 7.33342 16.4155 7.13359C16.7604 6.95783 17.0409 6.67736 17.2167 6.3324C17.4165 5.94023 17.4165 5.42684 17.4165 4.40008V3.85008C17.4165 2.82332 17.4165 2.30994 17.2167 1.91777C17.0409 1.5728 16.7605 1.29234 16.4155 1.11657C16.0233 0.916749 15.5099 0.916749 14.4832 0.916749L3.84984 0.916748C2.82307 0.916748 2.30969 0.916748 1.91752 1.11657C1.57256 1.29234 1.29209 1.5728 1.11633 1.91777C0.916504 2.30994 0.916504 2.82332 0.916504 3.85008L0.916504 4.40008C0.916504 5.42684 0.916504 5.94023 1.11633 6.3324C1.29209 6.67736 1.57256 6.95783 1.91752 7.13359C2.30969 7.33341 2.82307 7.33341 3.84984 7.33341L14.4832 7.33342Z" stroke="#D6D3D1" strokeWidth="1.83333" strokeLinecap="round" strokeLinejoin="round" />
-                <path d="M14.4832 17.4167C15.5099 17.4167 16.0233 17.4167 16.4155 17.2169C16.7604 17.0412 17.0409 16.7607 17.2167 16.4157C17.4165 16.0236 17.4165 15.5102 17.4165 14.4834V13.9334C17.4165 12.9067 17.4165 12.3933 17.2167 12.0011C17.0409 11.6561 16.7605 11.3757 16.4155 11.1999C16.0233 11.0001 15.5099 11.0001 14.4832 11.0001L3.84984 11.0001C2.82307 11.0001 2.30969 11.0001 1.91752 11.1999C1.57256 11.3757 1.29209 11.6561 1.11633 12.0011C0.916504 12.3933 0.916504 12.9067 0.916504 13.9334L0.916504 14.4834C0.916504 15.5102 0.916504 16.0236 1.11633 16.4157C1.29209 16.7607 1.57256 17.0412 1.91752 17.2169C2.30969 17.4167 2.82307 17.4167 3.84984 17.4167H14.4832Z" stroke="#D6D3D1" strokeWidth="1.83333" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </button>
+          </div>
+        </div>
+        <div className="cal-toolbar-mobile">
+          {/* Row 1: Date navigation + Create button */}
+          <div className="cal-toolbar-row1">
+            <div className="cal-toolbar-middle">
+              <button className="btn-icon" onClick={goPrev} title="Ngày trước"><FiChevronLeft /></button>
+              <span className="cal-week-label">
+                {formatDateVietnamese(currentDate)}
+              </span>
+              <button className="btn-icon" onClick={goNext} title="Ngày sau"><FiChevronRight /></button>
+            </div>
+            <div className="cal-toolbar-actions">
+              <button className="btn btn-sm btn-ghost fs-16 fw-500" onClick={goToday}>Hôm nay</button>
+              <button className="btn btn-primary btn-create" onClick={() => openBookingModal()}>
+                <span className="btn-create-label">Tạo lịch</span> <FiPlus />
+              </button>
+            </div>
+          </div>
+
+          {/* Row 2: Branch selector + View toggle */}
+          <div className="cal-toolbar-row2">
+            <div className="cal-toolbar-left">
+              <select className="form-select max-w-200"
+                value={filterBranch} onChange={e => setFilterBranch(e.target.value)}>
+                {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
+            </div>
+            <div className="cal-view-toggle">
+              <button className={`cal-view-btn${effectiveViewMode === 'calendar' ? ' active' : ''}`} onClick={() => setViewMode('calendar')}>
+                <svg width="19" height="19" viewBox="0 0 19 19" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M4.39984 0.916748H3.84984C2.82307 0.916748 2.30969 0.916748 1.91752 1.11657C1.57256 1.29234 1.29209 1.5728 1.11633 1.91777C0.916504 2.30994 0.916504 2.82332 0.916504 3.85008V14.4834C0.916504 15.5102 0.916504 16.0236 1.11633 16.4157C1.29209 16.7607 1.57256 17.0412 1.91752 17.2169C2.30969 17.4167 2.82307 17.4167 3.84984 17.4167H4.39984C5.4266 17.4167 5.93998 17.4167 6.33215 17.2169C6.67712 17.0412 6.95758 16.7607 7.13335 16.4157C7.33317 16.0236 7.33317 15.5102 7.33317 14.4834V3.85008C7.33317 2.82332 7.33317 2.30994 7.13335 1.91777C6.95758 1.5728 6.67712 1.29234 6.33215 1.11657C5.93998 0.916748 5.4266 0.916748 4.39984 0.916748Z" stroke="#D6D3D1" strokeWidth="1.83333" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M14.4832 0.916748H13.9332C12.9064 0.916748 12.393 0.916748 12.0009 1.11657C11.6559 1.29234 11.3754 1.5728 11.1997 1.91777C10.9998 2.30994 10.9998 2.82332 10.9998 3.85008V14.4834C10.9998 15.5102 10.9998 16.0236 11.1997 16.4157C11.3754 16.7607 11.6559 17.0412 12.0009 17.2169C12.393 17.4167 12.9064 17.4167 13.9332 17.4167H14.4832C15.5099 17.4167 16.0233 17.4167 16.4155 17.2169C16.7605 17.0412 17.0409 16.7607 17.2167 16.4157C17.4165 16.0236 17.4165 15.5102 17.4165 14.4834V3.85008C17.4165 2.82332 17.4165 2.30994 17.2167 1.91777C17.0409 1.5728 16.7605 1.29234 16.4155 1.11657C16.0233 0.916748 15.5099 0.916748 14.4832 0.916748Z" stroke="#D6D3D1" strokeWidth="1.83333" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+              <button className={`cal-view-btn${effectiveViewMode === 'list' ? ' active' : ''}`} onClick={() => setViewMode('list')}>
+                <svg width="19" height="19" viewBox="0 0 19 19" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M14.4832 7.33342C15.5099 7.33342 16.0233 7.33342 16.4155 7.13359C16.7604 6.95783 17.0409 6.67736 17.2167 6.3324C17.4165 5.94023 17.4165 5.42684 17.4165 4.40008V3.85008C17.4165 2.82332 17.4165 2.30994 17.2167 1.91777C17.0409 1.5728 16.7605 1.29234 16.4155 1.11657C16.0233 0.916749 15.5099 0.916749 14.4832 0.916749L3.84984 0.916748C2.82307 0.916748 2.30969 0.916748 1.91752 1.11657C1.57256 1.29234 1.29209 1.5728 1.11633 1.91777C0.916504 2.30994 0.916504 2.82332 0.916504 3.85008L0.916504 4.40008C0.916504 5.42684 0.916504 5.94023 1.11633 6.3324C1.29209 6.67736 1.57256 6.95783 1.91752 7.13359C2.30969 7.33341 2.82307 7.33341 3.84984 7.33341L14.4832 7.33342Z" stroke="#D6D3D1" strokeWidth="1.83333" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M14.4832 17.4167C15.5099 17.4167 16.0233 17.4167 16.4155 17.2169C16.7604 17.0412 17.0409 16.7607 17.2167 16.4157C17.4165 16.0236 17.4165 15.5102 17.4165 14.4834V13.9334C17.4165 12.9067 17.4165 12.3933 17.2167 12.0011C17.0409 11.6561 16.7605 11.3757 16.4155 11.1999C16.0233 11.0001 15.5099 11.0001 14.4832 11.0001L3.84984 11.0001C2.82307 11.0001 2.30969 11.0001 1.91752 11.1999C1.57256 11.3757 1.29209 11.6561 1.11633 12.0011C0.916504 12.3933 0.916504 12.9067 0.916504 13.9334L0.916504 14.4834C0.916504 15.5102 0.916504 16.0236 1.11633 16.4157C1.29209 16.7607 1.57256 17.0412 1.91752 17.2169C2.30969 17.4167 2.82307 17.4167 3.84984 17.4167H14.4832Z" stroke="#D6D3D1" strokeWidth="1.83333" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -1461,315 +1502,315 @@ function Bookings({ data }) {
             <div className='calendar-grid' ref={gridRef}>
               {/* Time labels column */}
               <div className="cal-time-column">
-              {HOURS.map(hour => (
-                <div key={hour} className="cal-time-slot">
-                  {(() => {
-                    const h12 = hour % 12 === 0 ? 12 : hour % 12;
-                    const period = hour < 12 ? 'AM' : 'PM';
-                    return (
-                      <>
-                        {String(h12).padStart(2)}<span>{period}</span>
-                      </>
-                    );
-                  })()}
-                </div>
-              ))}
-            </div>
-
-            {/* Hover ghost (rendered in grid layer) */}
-            {hoverInfo && !dragInfo && !cardDrag && (
-              <div
-                className="cal-hover-ghost"
-                style={{
-                  top: `${hoverInfo.y}px`,
-                  left: `${hoverInfo.colLeft + 4}px`,
-                  width: `${hoverInfo.colWidth - 8}px`,
-                  height: `${ROW_HEIGHT}px`
-                }}
-              >
-                {formatTime(hoverInfo.time)}
-              </div>
-            )}
-
-            {/* Staff columns */}
-            {loading ? (
-              // Calendar View Skeleton (3 columns)
-              Array.from({ length: 3 }).map((_, colIdx) => (
-                <div
-                  key={`skeleton-col-${colIdx}`}
-                  className="cal-staff-column available skeleton-col"
-                  style={{ minHeight: '1400px', backgroundColor: '#ffffff', opacity: 0.8 }}
-                >
-                  <div
-                    className="skeleton-shimmer-light"
-                    style={{
-                      position: 'absolute',
-                      top: '120px',
-                      left: '8px',
-                      right: '8px',
-                      height: '90px',
-                      borderRadius: '8px',
-                      opacity: 0.6
-                    }}
-                  />
-                  <div
-                    className="skeleton-shimmer-light"
-                    style={{
-                      position: 'absolute',
-                      top: '320px',
-                      left: '8px',
-                      right: '8px',
-                      height: '140px',
-                      borderRadius: '8px',
-                      opacity: 0.6
-                    }}
-                  />
-                  <div
-                    className="skeleton-shimmer-light"
-                    style={{
-                      position: 'absolute',
-                      top: '650px',
-                      left: '8px',
-                      right: '8px',
-                      height: '80px',
-                      borderRadius: '8px',
-                      opacity: 0.6
-                    }}
-                  />
-                </div>
-              ))
-            ) : (
-              (() => {
-                const currentDayEn = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][currentDate.getDay()];
-                const currentBranchInfo = branches.find(b => b.id === filterBranch);
-                const branchDaySchedule = currentBranchInfo?.opening_hours?.[currentDayEn];
-                const branchIsOpen = branchDaySchedule ? branchDaySchedule.isOpen : true;
-
-                const baseBranchOpenMin = branchDaySchedule?.open ? timeToMinutes(branchDaySchedule.open) : OPEN_HOUR * 60;
-                const isWeekday = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'].includes(currentDayEn);
-                const branchOpenMin = isWeekday ? Math.max(baseBranchOpenMin, 10 * 60) : baseBranchOpenMin;
-                const branchCloseMin = branchDaySchedule?.close ? timeToMinutes(branchDaySchedule.close) : CLOSE_HOUR * 60;
-
-                return employees.map(emp => {
-                  const empSched = employeeSchedules.find(s => s.employee_id === emp.id);
-                  let isAvailable = empSched && !empSched.is_day_off && branchIsOpen;
-
-                  let startPx = 0;
-                  let endPx = 0;
-                  if (isAvailable) {
-                    const empStartMin = timeToMinutes(String(empSched.start_time).substring(0, 5));
-                    const empEndMin = timeToMinutes(String(empSched.end_time).substring(0, 5));
-                    const startMin = Math.max(empStartMin, branchOpenMin);
-                    const endMin = Math.max(Math.min(empEndMin, branchCloseMin), 23 * 60);
-                    if (startMin >= endMin) {
-                      isAvailable = false;
-                    } else {
-                      startPx = ((startMin - OPEN_HOUR * 60) / 60) * 100;
-                      endPx = ((endMin - OPEN_HOUR * 60) / 60) * 100;
-                    }
-                  }
-
-                  return (
-                    <div
-                      key={emp.id}
-                      className={`cal-staff-column ${isAvailable ? 'available' : 'unavailable'}`}
-                      data-staff-id={emp.id}
-                      data-staff-name={emp.name}
-                      style={{
-                        '--shift-start': isAvailable ? `${startPx}px` : '0px',
-                        '--shift-end': isAvailable ? `${endPx}px` : '0px'
-                      }}
-                      onMouseDown={(e) => handleDragStart(e, emp)}
-                      onMouseMove={(e) => handleColumnHover(e, emp)}
-                      onMouseLeave={() => { if (!dragInfo) setHoverInfo(null); }}
-                    >
-                      {/* Unavailable overlays to disable drag-to-create and set cursor to not-allowed */}
-                      {!isAvailable ? (
-                        <div
-                          className="cal-unavailable-overlay"
-                          style={{
-                            position: 'absolute',
-                            top: 0,
-                            left: 0,
-                            right: 0,
-                            bottom: 0,
-                            cursor: 'not-allowed',
-                            zIndex: 5,
-                          }}
-                          onMouseDown={(e) => {
-                            e.stopPropagation();
-                            e.preventDefault();
-                          }}
-                          onMouseMove={(e) => {
-                            e.stopPropagation();
-                          }}
-                        />
-                      ) : (
+                {HOURS.map(hour => (
+                  <div key={hour} className="cal-time-slot">
+                    {(() => {
+                      const h12 = hour % 12 === 0 ? 12 : hour % 12;
+                      const period = hour < 12 ? 'AM' : 'PM';
+                      return (
                         <>
-                          {startPx > 0 && (
-                            <div
-                              className="cal-unavailable-overlay"
-                              style={{
-                                position: 'absolute',
-                                top: 0,
-                                left: 0,
-                                right: 0,
-                                height: `${startPx}px`,
-                                cursor: 'not-allowed',
-                                zIndex: 5,
-                              }}
-                              onMouseDown={(e) => {
-                                e.stopPropagation();
-                                e.preventDefault();
-                              }}
-                              onMouseMove={(e) => {
-                                e.stopPropagation();
-                              }}
-                            />
-                          )}
-                          {endPx < 1400 && (
-                            <div
-                              className="cal-unavailable-overlay"
-                              style={{
-                                position: 'absolute',
-                                top: `${endPx}px`,
-                                left: 0,
-                                right: 0,
-                                bottom: 0,
-                                cursor: 'not-allowed',
-                                zIndex: 5,
-                              }}
-                              onMouseDown={(e) => {
-                                e.stopPropagation();
-                                e.preventDefault();
-                              }}
-                              onMouseMove={(e) => {
-                                e.stopPropagation();
-                              }}
-                            />
-                          )}
+                          {String(h12).padStart(2)}<span>{period}</span>
                         </>
-                      )}
-                      {/* Now Line (rendered in each column or once for the whole grid) */}
-                      {toDateStr(currentDate) === toDateStr(now) && (
-                        <div className="cal-now-line" style={{ top: `${(timeToMinutes(`${now.getHours()}:${now.getMinutes()}`) - OPEN_HOUR * 60) / 60 * 100}px` }}>
-                          {/* We only show badge on the first column for cleaner UI */}
-                          {employees.indexOf(emp) === 0 && (
-                            <div className="cal-now-badge">
-                              {(() => {
-                                const h = now.getHours();
-                                const m = String(now.getMinutes()).padStart(2, '0');
-                                const h12 = h % 12 === 0 ? 12 : h % 12;
-                                const period = h < 12 ? 'AM' : 'PM';
-                                return `${String(h12).padStart(2, '0')}:${m} ${period}`;
-                              })()}
-                            </div>
-                          )}
-                        </div>
-                      )}
+                      );
+                    })()}
+                  </div>
+                ))}
+              </div>
 
-                      {/* Bookings for this staff */}
-                      {bookings.filter(b => (b.employee_id === emp.id || b.employees?.id === emp.id)).map(b => {
-                        const startMin = timeToMinutes(b.start_time);
-                        const endMin = timeToMinutes(b.end_time);
-                        const top = (startMin - OPEN_HOUR * 60) / 60 * 100;
-                        const height = (endMin - startMin) / 60 * 100;
-                        const cardBg = getBookingColor(b);
-                        const textColor = '#555555';
+              {/* Hover ghost (rendered in grid layer) */}
+              {hoverInfo && !dragInfo && !cardDrag && (
+                <div
+                  className="cal-hover-ghost"
+                  style={{
+                    top: `${hoverInfo.y}px`,
+                    left: `${hoverInfo.colLeft + 4}px`,
+                    width: `${hoverInfo.colWidth - 8}px`,
+                    height: `${ROW_HEIGHT}px`
+                  }}
+                >
+                  {formatTime(hoverInfo.time)}
+                </div>
+              )}
 
-                        const isHold = b.status === 'pending' && b.internal_note && b.internal_note.includes('GIỮ CHỖ TẠM THỜI');
-                        const isSpamWarning = b.status === 'pending' && b.internal_note && !isHold;
+              {/* Staff columns */}
+              {loading ? (
+                // Calendar View Skeleton (3 columns)
+                Array.from({ length: 3 }).map((_, colIdx) => (
+                  <div
+                    key={`skeleton-col-${colIdx}`}
+                    className="cal-staff-column available skeleton-col"
+                    style={{ minHeight: '1400px', backgroundColor: '#ffffff', opacity: 0.8 }}
+                  >
+                    <div
+                      className="skeleton-shimmer-light"
+                      style={{
+                        position: 'absolute',
+                        top: '120px',
+                        left: '8px',
+                        right: '8px',
+                        height: '90px',
+                        borderRadius: '8px',
+                        opacity: 0.6
+                      }}
+                    />
+                    <div
+                      className="skeleton-shimmer-light"
+                      style={{
+                        position: 'absolute',
+                        top: '320px',
+                        left: '8px',
+                        right: '8px',
+                        height: '140px',
+                        borderRadius: '8px',
+                        opacity: 0.6
+                      }}
+                    />
+                    <div
+                      className="skeleton-shimmer-light"
+                      style={{
+                        position: 'absolute',
+                        top: '650px',
+                        left: '8px',
+                        right: '8px',
+                        height: '80px',
+                        borderRadius: '8px',
+                        opacity: 0.6
+                      }}
+                    />
+                  </div>
+                ))
+              ) : (
+                (() => {
+                  const currentDayEn = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][currentDate.getDay()];
+                  const currentBranchInfo = branches.find(b => b.id === filterBranch);
+                  const branchDaySchedule = currentBranchInfo?.opening_hours?.[currentDayEn];
+                  const branchIsOpen = branchDaySchedule ? branchDaySchedule.isOpen : true;
 
-                        return (
+                  const baseBranchOpenMin = branchDaySchedule?.open ? timeToMinutes(branchDaySchedule.open) : OPEN_HOUR * 60;
+                  const isWeekday = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'].includes(currentDayEn);
+                  const branchOpenMin = isWeekday ? Math.max(baseBranchOpenMin, 10 * 60) : baseBranchOpenMin;
+                  const branchCloseMin = branchDaySchedule?.close ? timeToMinutes(branchDaySchedule.close) : CLOSE_HOUR * 60;
+
+                  return employees.map(emp => {
+                    const empSched = employeeSchedules.find(s => s.employee_id === emp.id);
+                    let isAvailable = empSched && !empSched.is_day_off && branchIsOpen;
+
+                    let startPx = 0;
+                    let endPx = 0;
+                    if (isAvailable) {
+                      const empStartMin = timeToMinutes(String(empSched.start_time).substring(0, 5));
+                      const empEndMin = timeToMinutes(String(empSched.end_time).substring(0, 5));
+                      const startMin = Math.max(empStartMin, branchOpenMin);
+                      const endMin = Math.max(Math.min(empEndMin, branchCloseMin), 23 * 60);
+                      if (startMin >= endMin) {
+                        isAvailable = false;
+                      } else {
+                        startPx = ((startMin - OPEN_HOUR * 60) / 60) * 100;
+                        endPx = ((endMin - OPEN_HOUR * 60) / 60) * 100;
+                      }
+                    }
+
+                    return (
+                      <div
+                        key={emp.id}
+                        className={`cal-staff-column ${isAvailable ? 'available' : 'unavailable'}`}
+                        data-staff-id={emp.id}
+                        data-staff-name={emp.name}
+                        style={{
+                          '--shift-start': isAvailable ? `${startPx}px` : '0px',
+                          '--shift-end': isAvailable ? `${endPx}px` : '0px'
+                        }}
+                        onMouseDown={(e) => handleDragStart(e, emp)}
+                        onMouseMove={(e) => handleColumnHover(e, emp)}
+                        onMouseLeave={() => { if (!dragInfo) setHoverInfo(null); }}
+                      >
+                        {/* Unavailable overlays to disable drag-to-create and set cursor to not-allowed */}
+                        {!isAvailable ? (
                           <div
-                            key={b.id}
-                            id={`booking-card-${b.id}`}
-                            className={`cal-booking-card-wrapper${cardDrag && cardDrag.booking.id === b.id ? ' is-original-placeholder' : ''}${isSpamWarning ? ' is-spam-warning' : ''}${isHold ? ' is-hold-disabled' : ''}`}
+                            className="cal-unavailable-overlay"
                             style={{
                               position: 'absolute',
-                              top: `${top}px`,
-                              width: '100%',
-                              zIndex: 10
+                              top: 0,
+                              left: 0,
+                              right: 0,
+                              bottom: 0,
+                              cursor: 'not-allowed',
+                              zIndex: 5,
                             }}
-                            onMouseDown={(e) => handleCardDragStart(e, b)}
-                          >
-                            <div
-                              className="cal-booking-card"
-                              style={{
-                                height: `calc(${height}px - 4px)`,
-                                backgroundColor: cardBg,
-                                color: textColor,
-                              }}
-                            >
-                              {b.notes ? <img src={noteIcon} alt='note icon' className="cal-booking-icon" /> : null}
-                              <div className="cal-booking-name" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                {isSpamWarning && <FiAlertTriangle size={12} className="text-warning-orange" style={{ minWidth: '12px' }} />}
-                                {b.temporary_name || b.customers?.name}
+                            onMouseDown={(e) => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                            }}
+                            onMouseMove={(e) => {
+                              e.stopPropagation();
+                            }}
+                          />
+                        ) : (
+                          <>
+                            {startPx > 0 && (
+                              <div
+                                className="cal-unavailable-overlay"
+                                style={{
+                                  position: 'absolute',
+                                  top: 0,
+                                  left: 0,
+                                  right: 0,
+                                  height: `${startPx}px`,
+                                  cursor: 'not-allowed',
+                                  zIndex: 5,
+                                }}
+                                onMouseDown={(e) => {
+                                  e.stopPropagation();
+                                  e.preventDefault();
+                                }}
+                                onMouseMove={(e) => {
+                                  e.stopPropagation();
+                                }}
+                              />
+                            )}
+                            {endPx < 1400 && (
+                              <div
+                                className="cal-unavailable-overlay"
+                                style={{
+                                  position: 'absolute',
+                                  top: `${endPx}px`,
+                                  left: 0,
+                                  right: 0,
+                                  bottom: 0,
+                                  cursor: 'not-allowed',
+                                  zIndex: 5,
+                                }}
+                                onMouseDown={(e) => {
+                                  e.stopPropagation();
+                                  e.preventDefault();
+                                }}
+                                onMouseMove={(e) => {
+                                  e.stopPropagation();
+                                }}
+                              />
+                            )}
+                          </>
+                        )}
+                        {/* Now Line (rendered in each column or once for the whole grid) */}
+                        {toDateStr(currentDate) === toDateStr(now) && (
+                          <div className="cal-now-line" style={{ top: `${(timeToMinutes(`${now.getHours()}:${now.getMinutes()}`) - OPEN_HOUR * 60) / 60 * 100}px` }}>
+                            {/* We only show badge on the first column for cleaner UI */}
+                            {employees.indexOf(emp) === 0 && (
+                              <div className="cal-now-badge">
+                                {(() => {
+                                  const h = now.getHours();
+                                  const m = String(now.getMinutes()).padStart(2, '0');
+                                  const h12 = h % 12 === 0 ? 12 : h % 12;
+                                  const period = h < 12 ? 'AM' : 'PM';
+                                  return `${String(h12).padStart(2, '0')}:${m} ${period}`;
+                                })()}
                               </div>
-                              <div className="cal-booking-service">{b.services?.name}</div>
-                              <div className="cal-booking-time">{formatTime(b.start_time)} - {formatTime(b.end_time)}</div>
-                            </div>
+                            )}
                           </div>
-                        );
-                      })}
+                        )}
 
-                      {/* Card drag ghost */}
-                      {cardDrag && cardDrag.currentCol?.getAttribute('data-staff-id') === emp.id && (() => {
-                        const b = cardDrag.booking;
-                        const ghostStart = convertYToTime(cardDrag.currentTop);
-                        const ghostEnd = convertYToTime(cardDrag.currentTop + cardDrag.heightPx);
-                        const cardBg = getBookingColor(b);
-                        const textColor = '#555555';
+                        {/* Bookings for this staff */}
+                        {bookings.filter(b => (b.employee_id === emp.id || b.employees?.id === emp.id)).map(b => {
+                          const startMin = timeToMinutes(b.start_time);
+                          const endMin = timeToMinutes(b.end_time);
+                          const top = (startMin - OPEN_HOUR * 60) / 60 * 100;
+                          const height = (endMin - startMin) / 60 * 100;
+                          const cardBg = getBookingColor(b);
+                          const textColor = '#555555';
 
-                        return (
-                          <div
-                            className="cal-booking-card-wrapper is-moving-active"
-                            style={{
-                              position: 'absolute',
-                              top: `${cardDrag.currentTop}px`,
-                              width: '100%',
-                              zIndex: 100
-                            }}
-                          >
+                          const isHold = b.status === 'pending' && b.internal_note && b.internal_note.includes('GIỮ CHỖ TẠM THỜI');
+                          const isSpamWarning = b.status === 'pending' && b.internal_note && !isHold;
+
+                          return (
                             <div
-                              className="cal-booking-card"
+                              key={b.id}
+                              id={`booking-card-${b.id}`}
+                              className={`cal-booking-card-wrapper${cardDrag && cardDrag.booking.id === b.id ? ' is-original-placeholder' : ''}${isSpamWarning ? ' is-spam-warning' : ''}${isHold ? ' is-hold-disabled' : ''}`}
                               style={{
-                                height: `${cardDrag.heightPx}px`,
-                                backgroundColor: cardBg,
-                                color: textColor,
+                                position: 'absolute',
+                                top: `${top}px`,
+                                width: '100%',
+                                zIndex: 10
+                              }}
+                              onMouseDown={(e) => handleCardDragStart(e, b)}
+                            >
+                              <div
+                                className="cal-booking-card"
+                                style={{
+                                  height: `calc(${height}px - 4px)`,
+                                  backgroundColor: cardBg,
+                                  color: textColor,
+                                }}
+                              >
+                                {b.notes ? <img src={noteIcon} alt='note icon' className="cal-booking-icon" /> : null}
+                                <div className="cal-booking-name" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                  {isSpamWarning && <FiAlertTriangle size={12} className="text-warning-orange" style={{ minWidth: '12px' }} />}
+                                  {b.temporary_name || b.customers?.name}
+                                </div>
+                                <div className="cal-booking-service">{b.services?.name}</div>
+                                <div className="cal-booking-time">{formatTime(b.start_time)} - {formatTime(b.end_time)}</div>
+                              </div>
+                            </div>
+                          );
+                        })}
+
+                        {/* Card drag ghost */}
+                        {cardDrag && cardDrag.currentCol?.getAttribute('data-staff-id') === emp.id && (() => {
+                          const b = cardDrag.booking;
+                          const ghostStart = convertYToTime(cardDrag.currentTop);
+                          const ghostEnd = convertYToTime(cardDrag.currentTop + cardDrag.heightPx);
+                          const cardBg = getBookingColor(b);
+                          const textColor = '#555555';
+
+                          return (
+                            <div
+                              className="cal-booking-card-wrapper is-moving-active"
+                              style={{
+                                position: 'absolute',
+                                top: `${cardDrag.currentTop}px`,
+                                width: '100%',
+                                zIndex: 100
                               }}
                             >
-                              {b.notes ? <img src={noteIcon} alt='note icon' className="cal-booking-icon" /> : null}
-                              <div className="cal-booking-name">{b.temporary_name || b.customers?.name}</div>
-                              <div className="cal-booking-service">{b.services?.name}</div>
-                              <div className="cal-booking-time">{formatTime(ghostStart)} - {formatTime(ghostEnd)}</div>
+                              <div
+                                className="cal-booking-card"
+                                style={{
+                                  height: `${cardDrag.heightPx}px`,
+                                  backgroundColor: cardBg,
+                                  color: textColor,
+                                }}
+                              >
+                                {b.notes ? <img src={noteIcon} alt='note icon' className="cal-booking-icon" /> : null}
+                                <div className="cal-booking-name">{b.temporary_name || b.customers?.name}</div>
+                                <div className="cal-booking-service">{b.services?.name}</div>
+                                <div className="cal-booking-time">{formatTime(ghostStart)} - {formatTime(ghostEnd)}</div>
+                              </div>
                             </div>
-                          </div>
-                        );
-                      })()}
+                          );
+                        })()}
 
-                      {/* Drag selection overlay */}
-                      {dragInfo && dragInfo.staffId === emp.id && (() => {
-                        const top = dragInfo.startY;
-                        const height = Math.max(ROW_HEIGHT, dragInfo.currentY - dragInfo.startY);
-                        const startT = convertYToTime(top);
-                        const endT = convertYToTime(top + height);
-                        return (
-                          <div
-                            className="cal-drag-selection"
-                            style={{ top: `${top}px`, height: `${height}px` }}
-                          >
-                            <span className="cal-drag-time">{formatTime(startT)} – {formatTime(endT)}</span>
-                          </div>
-                        );
-                      })()}
-                    </div>
-                  );
-                })
-              })()
-            )}
+                        {/* Drag selection overlay */}
+                        {dragInfo && dragInfo.staffId === emp.id && (() => {
+                          const top = dragInfo.startY;
+                          const height = Math.max(ROW_HEIGHT, dragInfo.currentY - dragInfo.startY);
+                          const startT = convertYToTime(top);
+                          const endT = convertYToTime(top + height);
+                          return (
+                            <div
+                              className="cal-drag-selection"
+                              style={{ top: `${top}px`, height: `${height}px` }}
+                            >
+                              <span className="cal-drag-time">{formatTime(startT)} – {formatTime(endT)}</span>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    );
+                  })
+                })()
+              )}
+            </div>
           </div>
-        </div>
         </div>
       ) : (
         /* List View */

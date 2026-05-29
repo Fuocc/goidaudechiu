@@ -10,11 +10,12 @@
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  background-color: var(--white);
   transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .page-content>div:not(.full-view) {
-  padding: 32px;
+  padding: 24px;
   flex: 1;
 }
 
@@ -23,42 +24,42 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 32px;
+  margin-bottom: 20px;
 }
 
 .page-title {
-  font-size: 28px;
-  font-weight: 700;
-  letter-spacing: -0.5px;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
 }
 
 .page-subtitle {
-  font-size: 14px;
-  color: var(--body-gray);
-  margin-top: 4px;
+  font-size: 13px;
+  color: var(--muted-gray);
+  margin-top: 2px;
 }
 
 /* ============================================
    Responsive Layout — Tablet (≤1024px)
    ============================================ */
-@media (max-width: 1024px) {
+@media only screen and (max-width: 1024px) {
   .main-content {
-    margin-left: 72px;
+    margin-left: 64px;
   }
 
   .page-content>div:not(.full-view) {
-    padding: 56px 24px 0px;
+    padding: 48px 20px 0px;
   }
 
   .page-title {
-    font-size: 24px;
+    font-size: 20px;
   }
 }
 
 /* ============================================
    Responsive Layout — Mobile (≤768px)
    ============================================ */
-@media (max-width: 768px) {
+@media only screen and (max-width: 768px) {
   .main-content {
     margin-left: 0;
     padding-bottom: calc(var(--mobile-bottom-nav-height, 64px) + env(safe-area-inset-bottom, 0px));
@@ -67,11 +68,11 @@
   .page-header {
     flex-direction: column;
     align-items: flex-start;
-    gap: 12px;
-    margin-bottom: 20px;
+    gap: 10px;
+    margin-bottom: 16px;
   }
 
   .page-title {
-    font-size: 22px;
+    font-size: 20px;
   }
 }

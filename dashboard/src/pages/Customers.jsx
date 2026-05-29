@@ -192,7 +192,7 @@ function Customers() {
                   paginatedCustomers.map(c => (
                     <tr key={c.id}>
                       <td>{c.id}</td>
-                      <td style={{ fontWeight: 600 }}>{c.name}</td>
+                      <td className="data-table-name">{c.name}</td>
                       <td>{c.phone}</td>
                       <td>{c.email || '—'}</td>
                       <td><p style={{ width: 120, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.habits || '—'}</p></td>

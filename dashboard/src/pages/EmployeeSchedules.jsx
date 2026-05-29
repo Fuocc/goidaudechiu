@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { FiChevronLeft, FiChevronRight, FiPlus } from 'react-icons/fi';
 import { getEmployees, getEmployeeSchedules, createBulkSchedule, deleteEmployeeSchedule, getBranches } from '../api';
 import { toast } from 'react-toastify'
+import { TableSkeleton, MobileCardSkeleton } from '../components/ui/Skeleton';
 import '../styles/schedules.css';
 
 function getWeekDates(date) {
@@ -50,6 +51,7 @@ function EmployeeSchedules() {
   });
 
   const [creatingDefault, setCreatingDefault] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   // Responsive
   const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 768);
@@ -87,6 +89,7 @@ function EmployeeSchedules() {
 
   const loadData = async () => {
     try {
+      setLoading(true);
       const from = toDateStr(weekDates[0]);
       const to = toDateStr(weekDates[6]);
       const [empData, schedData] = await Promise.all([
@@ -96,6 +99,8 @@ function EmployeeSchedules() {
       setEmployees(empData.filter(e => e.is_active));
       setSchedules(schedData);
     } catch (err) {
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -234,12 +239,6 @@ function EmployeeSchedules() {
       {/* Toolbar */}
       <div className="cal-toolbar">
         <div className="cal-toolbar-left">
-          <button className="btn btn-sm btn-secondary" onClick={goToday}>Hôm nay</button>
-          <button className="btn btn-sm btn-ghost" onClick={goPrev}><FiChevronLeft /></button>
-          <button className="btn btn-sm btn-ghost" onClick={goNext}><FiChevronRight /></button>
-          <span className="cal-week-label">{weekLabel}</span>
-        </div>
-        <div className="cal-toolbar-right">
           <select className="form-select max-w-200 fs-13"
             value={filterBranch} onChange={e => setFilterBranch(e.target.value)}
             style={isMobile ? { maxWidth: '100%' } : {}}
@@ -248,15 +247,24 @@ function EmployeeSchedules() {
             {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
         </div>
+        <div className="cal-toolbar-right">
+          <button className="btn btn-sm btn-ghost" onClick={goPrev}><FiChevronLeft /></button>
+          <span className="cal-week-label">{weekLabel}</span>
+          <button className="btn btn-sm btn-ghost" onClick={goNext}><FiChevronRight /></button>
+          <button className="btn btn-sm btn-secondary" onClick={goToday}>Hôm nay</button>
+        </div>
       </div>
 
       {/* Schedule Grid — Desktop: Table, Mobile: Cards */}
       {!isMobile ? (
         <div className="card overflow-auto">
-          <table className="schedule-table">
+          {loading ? (
+            <TableSkeleton rows={5} cols={8} />
+          ) : (
+            <table className="schedule-table">
             <thead>
               <tr>
-                <th className="schedule-emp-col">Nhân viên</th>
+                <th className="schedule-emp-col"></th>
                 {weekDates.map(d => {
                   const ds = toDateStr(d);
                   const isToday = ds === todayStr;
@@ -281,7 +289,7 @@ function EmployeeSchedules() {
                   <tr key={emp.id}>
                     <td className="schedule-emp-name">
                       <div className="fw-600 fs-13">{emp.name}</div>
-                      <div className="fs-11 text-muted">{emp.branches?.name}</div>
+                      <div className="fs-12 text-muted">{emp.branches?.name}</div>
                     </td>
                     {weekDates.map(d => {
                       const ds = toDateStr(d);
@@ -297,12 +305,12 @@ function EmployeeSchedules() {
                               {sched.is_day_off ? (
                                 <span>Nghỉ</span>
                               ) : (
-                                <span>{formatTime12h(sched.start_time)} - {formatTime12h(sched.end_time)}</span>
+                                <span>Đi làm</span>
                               )}
                               {sched.note && <div className="schedule-note">{sched.note}</div>}
                             </div>
                           ) : (
-                            <div className="schedule-empty">+</div>
+                            <div className="schedule-badge day-off">Nghỉ</div>
                           )}
                         </td>
                       );
@@ -312,11 +320,16 @@ function EmployeeSchedules() {
               )}
             </tbody>
           </table>
+          )}
         </div>
       ) : (
         /* Mobile: Employee cards with compact 7-day grid */
         <div className="schedule-mobile-list">
-          {employees.length === 0 ? (
+          {loading ? (
+            Array.from({ length: 5 }).map((_, i) => (
+              <MobileCardSkeleton key={i} />
+            ))
+          ) : employees.length === 0 ? (
             <div className="empty-state">
               <h4>Chưa có nhân viên</h4>
             </div>
@@ -436,7 +449,7 @@ function EmployeeSchedules() {
                 {scheduleForm.id && (
                   <button type="button" className="btn btn-danger" onClick={() => handleDeleteSchedule(scheduleForm.id)}>Xóa lịch làm</button>
                 )}
-                <button type="submit" className="btn btn-primary">Lưu lịch</button>
+                <button type="submit" className="btn btn-primary btn-save">Lưu lịch</button>
               </div>
             </form>
           </div>

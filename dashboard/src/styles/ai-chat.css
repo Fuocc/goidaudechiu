@@ -9,9 +9,7 @@
   z-index: 109;
   width: 100vw;
   height: 100vh;
-  background-color: rgba(4, 63, 62, 0.4); /* Elegant Brand dark green tint overlay */
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  background-color: transparent;
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.35s cubic-bezier(0.16, 1, 0.3, 1);
@@ -26,18 +24,19 @@
 .ai-chat-panel-floating {
   position: fixed;
   top: 0;
-  right: 0;
+  left: 0;
   bottom: 0;
   z-index: 110;
-  width: 380px;
+  width: 300px;
   max-width: 100vw;
   background: #F4F2F0;
   border-left: 1px solid rgba(0, 0, 0, 0.05);
-  box-shadow: -8px 0 32px rgba(4, 63, 62, 0.08); /* Brand shadow tint */
+  box-shadow: -8px 0 32px rgba(4, 63, 62, 0.08);
+  /* Brand shadow tint */
   height: 100%;
   display: flex;
   flex-direction: column;
-  transform: translateX(100%);
+  transform: translateX(-100%);
   transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -73,7 +72,7 @@
 .ai-chat-header::before {
   content: "";
   position: absolute;
-  top: 100%;
+  top: 95%;
   left: 0;
   width: 100%;
   height: 100%;
@@ -319,6 +318,7 @@
 }
 
 @keyframes wave {
+
   0%,
   100% {
     transform: translateY(0);
@@ -530,12 +530,14 @@
   letter-spacing: 0.5px;
 }
 
-/* ==========================================================
-   Consolidated Responsive Media Queries & Font Optimizations
-   ========================================================== */
-@media only screen and (max-width: 768px) {
+@media only screen and (max-width: 1024px) {
   .ai-chat-panel-floating {
     width: 100%;
+  }
+}
+
+@media only screen and (max-width: 768px) {
+  .ai-chat-panel-floating {
     height: calc(100% - 64px);
     top: 0;
     right: 0;
