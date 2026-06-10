@@ -234,7 +234,7 @@ function Services() {
                   <div className="service-card-details">
                     <span className="badge badge-info">{svc.category || '—'}</span>
                     <span className="service-card-detail-item"><FiClock size={12} /> {svc.duration_minutes}p</span>
-                    <span className="service-card-detail-item fw-600">{formatPrice(svc.price)}</span>
+                    <span className="service-card-detail-item service-text-bold">{formatPrice(svc.price)}</span>
                   </div>
                   {!svc.is_active && <span className="badge badge-inactive" style={{ alignSelf: 'flex-start' }}>Ẩn</span>}
                 </div>

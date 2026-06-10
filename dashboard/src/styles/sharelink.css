@@ -1,0 +1,44 @@
+.share-link-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.share-link-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 0;
+  padding-bottom: 4px;
+}
+
+.share-link-card-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.share-link-card-body {
+  padding: 0;
+}
+
+.share-link-description {
+  margin: 0 0 12px 0;
+  font-size: 13.5px;
+}
+
+.share-link-open-link {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: #878580;
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.share-link-copy-btn {
+  transition: all 0.2s ease;
+  min-width: 120px;
+  justify-content: center;
+}

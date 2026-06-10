@@ -62,6 +62,12 @@ function getBroadcast(req) {
   return req.app.get('broadcastSSE') || (() => { });
 }
 
+function getVietnamDate() {
+  const now = new Date();
+  const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+  return new Date(utc + (3600000 * 7)); // GMT+7
+}
+
 function timeToMinutes(timeStr) {
   if (!timeStr) return 0;
   const parts = timeStr.split(':');
@@ -69,6 +75,95 @@ function timeToMinutes(timeStr) {
 }
 
 const stripDiacritics = (str) => str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+function parseReplacementCommand(commandText, dbEmployees) {
+  const normText = stripDiacritics(commandText).toLowerCase();
+  const splitPattern = /\s+(?:thế|the)\s+/i;
+  if (!splitPattern.test(normText)) return null;
+
+  const parts = commandText.split(/\s+(?:thế|the)\s+/i);
+  if (parts.length < 2) return null;
+
+  const leftText = parts[0].trim();
+  const rightText = parts[1].trim();
+
+  let staffA = null;
+  let staffB = null;
+  let customerName = null;
+
+  // Let's find staff A in leftText
+  // Tokenize leftText
+  const leftTokens = leftText.split(/\s+/);
+  // Find employee matching left tokens from right to left
+  for (let i = leftTokens.length - 1; i >= 0; i--) {
+    const token = stripDiacritics(leftTokens[i]).toLowerCase();
+    const matchedEmp = dbEmployees.find(emp => {
+      const empNorm = stripDiacritics(emp.name).toLowerCase();
+      const empParts = empNorm.split(/\s+/);
+      const firstName = empParts[empParts.length - 1];
+      return token === firstName || token === empNorm;
+    });
+    if (matchedEmp) {
+      staffA = matchedEmp;
+      // The remaining tokens on the left form the customer name if any
+      const remainingTokens = leftTokens.slice(0, i);
+      if (remainingTokens.length > 0) {
+        customerName = remainingTokens.join(' ');
+      }
+      break;
+    }
+  }
+
+  // Tokenize rightText
+  const rightTokens = rightText.split(/\s+/);
+  // Find employee matching right tokens from left to right
+  for (let i = 0; i < rightTokens.length; i++) {
+    const token = stripDiacritics(rightTokens[i]).toLowerCase();
+    const matchedEmp = dbEmployees.find(emp => {
+      const empNorm = stripDiacritics(emp.name).toLowerCase();
+      const empParts = empNorm.split(/\s+/);
+      const firstName = empParts[empParts.length - 1];
+      return token === firstName || token === empNorm;
+    });
+    if (matchedEmp) {
+      staffB = matchedEmp;
+      // If customerName wasn't found in leftText, look for it in rightText
+      if (!customerName) {
+        const remainingTokens = rightTokens.slice(i + 1);
+        if (remainingTokens.length > 0) {
+          customerName = remainingTokens.join(' ');
+        }
+      }
+      break;
+    }
+  }
+
+  if (staffA && staffB) {
+    // Format customer name if found
+    if (customerName) {
+      customerName = customerName.replace(/^(?:chị|anh|khách|bạn|em|cô|chú|c\.?|a\.?|kh\.?)\s+/i, '');
+      customerName = customerName.replace(/(?:0\d{9}|\b\d{3,4}\b)/g, '').trim();
+      customerName = customerName.split(/\s+/)
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+        .join(' ');
+      
+      const lowerOriginal = leftText.toLowerCase() + ' ' + rightText.toLowerCase();
+      if (/\b(?:chị|c\.?)\b/i.test(lowerOriginal)) {
+        customerName = 'Chị ' + customerName;
+      } else if (/\b(?:anh|a\.?)\b/i.test(lowerOriginal)) {
+        customerName = 'Anh ' + customerName;
+      }
+    }
+
+    return {
+      staffA,
+      staffB,
+      customerName
+    };
+  }
+
+  return null;
+}
 
 // ============================================================
 // FALLBACK REGEX PARSER (Order-Insensitive, Multi-Intent)
@@ -153,7 +248,7 @@ function fallbackRegexParse(command, current_branch_id, dbBranches, dbServices, 
   parsedData.is_walk_in = /\b(?:kl|khách lẻ)\b/i.test(normalizedText);
 
   // ── 4. Update action keywords (standalone scan) ──
-  const updateRegex = /(?:đổi|chỉnh|chuyển|dời)(?:\s+(?:thành|sang|qua|lịch))?/i;
+  const updateRegex = /(?:đổi|chỉnh|chuyển|dời|thế|the|hủy|huy)(?:\s+(?:thành|sang|qua|lịch))?/i;
   const updateMatch = lowerText.match(/(.*?)đổi thành(.*)/i) || normalizedText.match(/(.*?)doi thanh(.*)/i) || lowerText.match(/(.*?)(?:chuyển qua|dời sang)(.*)/i) || normalizedText.match(/(.*?)(?:chuyen qua|doi sang)(.*)/i);
   let targetServiceText = lowerText;
   if (updateMatch) {
@@ -169,7 +264,7 @@ function fallbackRegexParse(command, current_branch_id, dbBranches, dbServices, 
   if (isQuaLien) {
     hasExplicitTime = true;
     parsedData.is_walk_in = true;
-    const now = new Date();
+    const now = getVietnamDate();
     const min = Math.ceil(now.getMinutes() / 5) * 5;
     now.setMinutes(min, 0, 0);
     parsedData.start_time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -188,7 +283,7 @@ function fallbackRegexParse(command, current_branch_id, dbBranches, dbServices, 
         if (hour > 0 && hour <= 6) {
           hour += 12;
         } else if (hour > 6 && hour < 12) {
-          const d = new Date();
+          const d = getVietnamDate();
           const currentHour = d.getHours();
           const currentMinute = d.getMinutes();
           if (currentHour > hour || (currentHour === hour && currentMinute > minute)) {
@@ -207,13 +302,25 @@ function fallbackRegexParse(command, current_branch_id, dbBranches, dbServices, 
       parsedData.start_time = null;
     }
   }
-  // If no time specified → default to update action
+
+  // If no time specified
+  const hasUpdateKeyword = /(?:đổi|chỉnh|dời|chuyển|thế|hủy|doi|chinh|doi|chuyen|the|huy)/i.test(normalizedText);
   if (!hasExplicitTime) {
-    parsedData.action = 'update';
+    if (hasUpdateKeyword) {
+      parsedData.action = 'update';
+    } else {
+      parsedData.action = 'create';
+      const vnNow = getVietnamDate();
+      const currentMinutes = vnNow.getHours() * 60 + vnNow.getMinutes();
+      const roundedMinutes = Math.ceil(currentMinutes / 5) * 5;
+      const startH = String(Math.floor(roundedMinutes / 60) % 24).padStart(2, '0');
+      const startM = String(roundedMinutes % 60).padStart(2, '0');
+      parsedData.start_time = `${startH}:${startM}`;
+    }
   }
 
   // ── 6. Date (standalone scan) ──
-  let targetDate = new Date();
+  let targetDate = getVietnamDate();
   const isLateNight = targetDate.getHours() > 22 || (targetDate.getHours() === 22 && targetDate.getMinutes() >= 15);
   if (isLateNight) {
     targetDate.setDate(targetDate.getDate() + 1);
@@ -290,19 +397,27 @@ function fallbackRegexParse(command, current_branch_id, dbBranches, dbServices, 
       /(?:chị|anh|khách|bạn|em|cô|chú|c\.?|a\.?|kh\.?)\s+([A-ZÀ-ỹa-zà-ỹ\s]+?)\s+(?:đặt lịch|book|lúc|vào|ngày|ở|cn|chi nhánh|gội|massage|gói|\d{1,2}h|\d{1,2}:\d{2}|\d{1,2}\s*giờ|tới|-)/i
     ];
     let matchedName = null;
+    let detectedPrefix = '';
     for (const pattern of namePatterns) {
       const match = text.match(pattern);
       if (match && match[1]) {
         matchedName = match[1].trim();
+        const fullMatch = match[0].toLowerCase();
+        if (/\b(?:chị|c\.?)\b/i.test(fullMatch)) {
+          detectedPrefix = 'Chị ';
+        } else if (/\b(?:anh|a\.?)\b/i.test(fullMatch)) {
+          detectedPrefix = 'Anh ';
+        }
         break;
       }
     }
     if (matchedName) {
       matchedName = matchedName.replace(/^(?:chị|anh|khách|bạn|em|cô|chú|c\.?|a\.?|kh\.?)\s+/i, '');
       matchedName = matchedName.replace(/(?:0\d{9}|\b\d{3,4}\b)/g, '').trim();
-      parsedData.temporary_name = matchedName.split(/\s+/)
+      const formattedName = matchedName.split(/\s+/)
         .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
         .join(' ');
+      parsedData.temporary_name = detectedPrefix + formattedName;
     }
   }
 
@@ -402,6 +517,12 @@ function fallbackRegexParse(command, current_branch_id, dbBranches, dbServices, 
     }
   }
 
+  // Capture notes in parentheses
+  const parenMatch = text.match(/\(([^)]+)\)/);
+  if (parenMatch) {
+    parsedData.notes = parenMatch[1].trim();
+  }
+
   return {
     intent: 'BOOKING',
     bookingData: parsedData,
@@ -425,6 +546,24 @@ async function handleStaffDuty(req, res, staffDutyData, currentBranchId, dbBranc
   const { orderedStaffNames } = staffDutyData || {};
   if (!orderedStaffNames || orderedStaffNames.length === 0) {
     return res.status(400).json({ success: false, error: 'Danh sách nhân viên trống.' });
+  }
+
+  // Extract date from the command, e.g. "Tour 01/06 1.Tí 2.Yến..."
+  const commandText = req.body.command || '';
+  const dateMatch = commandText.match(/(\d{1,2})[/\-](\d{1,2})/);
+  let scheduleDate = null;
+  if (dateMatch) {
+    const day = parseInt(dateMatch[1]);
+    const month = parseInt(dateMatch[2]) - 1;
+    const year = new Date().getFullYear();
+    const d = new Date(year, month, day);
+    scheduleDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  } else {
+    // Default to today in Vietnam timezone
+    const now = new Date();
+    const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+    const vnNow = new Date(utc + (3600000 * 7));
+    scheduleDate = `${vnNow.getFullYear()}-${String(vnNow.getMonth() + 1).padStart(2, '0')}-${String(vnNow.getDate()).padStart(2, '0')}`;
   }
 
   // Step 1: Reset ALL employees of this branch to OFF_DUTY
@@ -481,6 +620,36 @@ async function handleStaffDuty(req, res, staffDutyData, currentBranchId, dbBranc
     }
   }
 
+  // Step 2.5: Upsert employee schedules for this branch for scheduleDate
+  if (scheduleDate) {
+    const d = new Date(scheduleDate + 'T00:00:00');
+    const day = d.getDay();
+    const defaultStart = (day === 0 || day === 6) ? '09:00' : '10:00';
+    const defaultEnd = '22:00';
+
+    const scheduleRecords = branchEmployees.map(emp => {
+      const isOnDuty = matchedIds.includes(emp.id);
+      return {
+        employee_id: emp.id,
+        date: scheduleDate,
+        start_time: isOnDuty ? defaultStart : null,
+        end_time: isOnDuty ? defaultEnd : null,
+        is_day_off: !isOnDuty,
+        note: isOnDuty ? 'Trực theo tour' : 'Nghỉ theo tour'
+      };
+    });
+
+    if (scheduleRecords.length > 0) {
+      const { error: schedErr } = await supabase
+        .from('employee_schedules')
+        .upsert(scheduleRecords, { onConflict: 'employee_id,date' });
+
+      if (schedErr) {
+        console.error('Error upserting employee schedules in staff duty:', schedErr);
+      }
+    }
+  }
+
   // Step 3: Update settings tour_order and save it
   let updatedSettings = null;
   try {
@@ -532,7 +701,7 @@ async function handleStaffDuty(req, res, staffDutyData, currentBranchId, dbBranc
 // ============================================================
 router.post('/', async (req, res) => {
   try {
-    const { command, current_branch_id, reply_to_booking_id } = req.body;
+    const { command, current_branch_id, reply_to_booking_ids } = req.body;
     if (!command) {
       return res.status(400).json({ error: 'Command is required' });
     }
@@ -555,15 +724,43 @@ router.post('/', async (req, res) => {
       supabase.from('employees').select('id, name, is_active, branch_id').eq('is_active', true)
     ]);
 
-    const now = new Date();
+    const now = getVietnamDate();
     const todayDateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     // Weekdays label map for prompt context
     const weekdaysVN = ['Chủ Nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
     const currentDayOfWeekStr = weekdaysVN[now.getDay()];
 
-    // Fetch reply booking details if reply_to_booking_id is provided
+    // Cancellation logic for "Hủy" command when replying to a booking
+    const normalizedCmd = command.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    if (reply_to_booking_ids && reply_to_booking_ids.length > 0 && (normalizedCmd === 'huy' || normalizedCmd === 'xoa' || normalizedCmd === 'huy lich' || normalizedCmd === 'xoa lich')) {
+      const { data: deletedBookings, error: deleteErr } = await supabase
+        .from('bookings')
+        .delete()
+        .in('id', reply_to_booking_ids)
+        .select();
+
+      if (deleteErr) throw deleteErr;
+
+      const broadcast = getBroadcast(req);
+      reply_to_booking_ids.forEach(id => {
+        broadcast('booking.deleted', { id });
+      });
+
+      const customerName = deletedBookings.length > 0 ? (deletedBookings[0].temporary_name || 'Khách') : 'Khách';
+      const numDeleted = deletedBookings.length;
+      const countLabel = numDeleted > 1 ? `${numDeleted} lịch hẹn` : `lịch hẹn`;
+
+      return res.json({
+        success: true,
+        intent: 'BOOKING_DELETE',
+        summary: `Đã hủy ${countLabel} của khách ${customerName} thành công và xóa khỏi hệ thống.`,
+        bookings: reply_to_booking_ids
+      });
+    }
+
+    // Fetch reply booking details if reply_to_booking_ids is provided
     let replyBookingContext = null;
-    if (reply_to_booking_id) {
+    if (reply_to_booking_ids && reply_to_booking_ids.length > 0) {
       try {
         const { data: replyBooking, error: replyErr } = await supabase
           .from('bookings')
@@ -574,7 +771,7 @@ router.post('/', async (req, res) => {
             branches(name),
             employees(name)
           `)
-          .eq('id', reply_to_booking_id)
+          .eq('id', reply_to_booking_ids[0])
           .single();
 
         if (!replyErr && replyBooking) {
@@ -622,7 +819,7 @@ Reply booking: ${JSON.stringify({
 
 ## Context
 - Current Server Date: ${todayDateStr} (${currentDayOfWeekStr})
-- Current Local Server Time: ${now.toLocaleTimeString('vi-VN', {timeZone: 'Asia/Ho_Chi_Minh'})} (Hour: ${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')})
+- Current Local Server Time (Vietnam GMT+7): ${now.toLocaleTimeString('vi-VN', {timeZone: 'Asia/Ho_Chi_Minh'})} (Hour: ${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')})
 - Branches: ${JSON.stringify(dbBranches || [])}
 - Services: ${JSON.stringify(dbServices || [])}
 - Active Employees: ${JSON.stringify(dbEmployees || [])}
@@ -630,8 +827,8 @@ Reply booking: ${JSON.stringify({
 
 ## BOOKING FIELD RULES
 
-1. **action**: "create" if a specific time/hour is mentioned. "update" if NO specific time, or update/check-in keywords present ("đổi thành", "chỉnh", "chuyển sang", "chuyển qua", "dời sang", "tới", "đã tới").
-   ${replyBookingContext ? `FORCED: action MUST be "update" (reply context).` : 'If the command has NO time (no "4h", "5h", "15:30", "qua liền" etc.) → default to "update".'}
+1. **action**: "create" if this is a new booking command. "update" if the command has update/check-in keywords ("đổi thành", "chỉnh", "chuyển sang", "chuyển qua", "dời sang", "thế", "tới", "đã tới").
+   ${replyBookingContext ? `FORCED: action MUST be "update" (reply context).` : 'If the command has NO update/check-in keywords → action MUST be "create".'}
 
 2. **is_walk_in**: true if "kl", "khách lẻ", "qua liền", "qua lien".
 
@@ -639,7 +836,8 @@ Reply booking: ${JSON.stringify({
 
 4. **short_phone**: 3-4 digit string (e.g., "6557", "488"). Null if not found.
 
-5. **temporary_name**: Capitalized first name. Clean prefixes ("chị", "c.", "c", "anh", "a.", "bạn", "em", "khách", "kh."). Walk-in → "Khách Lạ". Default "Khách Lạ".
+5. **temporary_name**: Capitalized first name. Clean prefixes ("chị", "c.", "c", "anh", "a.", "bạn", "em", "khách", "kh.").
+   PREFIX INJECTION: If the user types "C [Name]" or "Chị [Name]", make sure to prepend "Chị " (e.g. "C Tú" -> "Chị Tú"). If the user types "A [Name]" or "Anh [Name]", prepend "Anh " (e.g. "A Văn" -> "Anh Văn"). Walk-in → "Khách Lạ". Default "Khách Lạ".
 
 6. **service_id**: Match abbreviations to service UUIDs:
    "yvv" → "Ý vội vàng" | "ydc" → "Ý dễ chịu" | "yvn" → "Ý vỗ nhẹ"
@@ -655,12 +853,13 @@ Reply booking: ${JSON.stringify({
    LATE NIGHT: If hour > 22:15 and no explicit date → TOMORROW.
    "ngày mai" → tomorrow. "mốt"/"ngày mốt" → day after tomorrow. "t2" → next Monday. Similar for other weekdays. "dd/mm" format supported.
 
-9. **start_time**: "HH:MM" 24h or null. Apply these STRICT TIME RULES:
+9. **start_time**: "HH:MM" 24h. Apply these STRICT TIME RULES:
    - **Spa Operating Hours**: Mon-Fri: 10:00 to 22:00, Sat-Sun: 09:00 to 22:00.
    - **Smart AM/PM Deduction**: Commands specifying early hours like "7h", "8h", "9h" (on weekdays) MUST automatically resolve to PM (19:00, 20:00, 21:00) since the spa opens at 10:00.
    - **The 12 o'clock Rule**: "12h" MUST always resolve to "12:00" PM (noon), NEVER 00:00 AM (midnight).
    - **No Past Bookings (Anti-Past Logic)**: If the parsed appointment hour has ALREADY passed relative to the Current Local Server Time on TODAY, you MUST intelligently assume the appointment is for the FUTURE evening or next valid slot. For example, if it's 22:20 and the user types "10h c Mai", do NOT resolve to 10:00 AM in the past. Resolve to "22:00" TODAY (or flip to tomorrow if closing).
-   - "qua liền" → round up to nearest 5 min. NO time mentioned → null.
+   - **Immediate default when creating**: If NO time is mentioned in the command AND action is "create", you MUST set start_time to the Current Local Server Time rounded UP to the nearest 5 minutes (e.g. if current time is 12:30, set to 12:30. If current time is 16:11, set to 16:15). If action is "update", start_time should be null.
+   - "qua liền" → round up to nearest 5 min.
 
 10. **is_deadline**: true if "phải xong", "ph xong", "xong trước".
 
@@ -670,7 +869,7 @@ Reply booking: ${JSON.stringify({
 
 13. **status**: "arrived" if "tới"/"đến". Default "confirmed".
 
-14. **notes**: Short phone as "Số điện thoại XXXX" or special instructions. Null if none.`;
+14. **notes**: If there is text inside parentheses in the command (e.g., "(khách gấp vô liền)" or "(có việc bận)"), extract the text inside (e.g., "khách gấp vô liền", "có việc bận") and set it as the notes. Combine with short phone details if present. Null if none.`;
 
     // ──────────────────────────────────────────────
     // GEMINI CALL (with responseSchema for guaranteed JSON)
@@ -725,8 +924,88 @@ Reply booking: ${JSON.stringify({
       num_guests: parsedData.num_guests || 1,
       notes: parsedData.notes || '',
       status: parsedData.status || 'confirmed',
-      is_update: parsedData.action === 'update' || !!reply_to_booking_id
+      is_update: parsedData.action === 'update' || !!(reply_to_booking_ids && reply_to_booking_ids.length > 0)
     };
+
+    // Make sure prefix is added
+    if (parsed.temporary_name && parsed.temporary_name !== 'Khách Lạ') {
+      const cleanName = parsed.temporary_name.replace(/^(?:Chị|Anh|chị|anh|c\.|a\.|c|a)\s+/i, '').trim();
+      const normCmd = command.toLowerCase();
+      // Check if command has prefix for this name
+      const nameEscaped = cleanName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+      const prefixRegex = new RegExp(`(?:\\b(?:chị|c\\.?)\\s+${nameEscaped})|(?:\\b(?:chị|c\\.?)${nameEscaped})`, 'i');
+      const malePrefixRegex = new RegExp(`(?:\\b(?:anh|a\\.?)\\s+${nameEscaped})|(?:\\b(?:anh|a\\.?)${nameEscaped})`, 'i');
+      
+      if (prefixRegex.test(normCmd)) {
+        parsed.temporary_name = 'Chị ' + cleanName;
+      } else if (malePrefixRegex.test(normCmd)) {
+        parsed.temporary_name = 'Anh ' + cleanName;
+      } else {
+        parsed.temporary_name = cleanName;
+      }
+    }
+
+    // Therapist replacement command handling
+    const replacement = parseReplacementCommand(command, dbEmployees);
+    if (replacement) {
+      let { data: matchingBookings, error: findErr } = await supabase
+        .from('bookings')
+        .select('*, customers(name, phone)')
+        .eq('booking_date', parsed.booking_date)
+        .eq('employee_id', replacement.staffB.id)
+        .neq('status', 'cancelled');
+
+      if (findErr) throw findErr;
+
+      let bookingToUpdate = null;
+      if (matchingBookings && matchingBookings.length > 0) {
+        if (replacement.customerName) {
+          const searchCustName = stripDiacritics(replacement.customerName).toLowerCase();
+          bookingToUpdate = matchingBookings.find(b => {
+            const bName = stripDiacritics(b.temporary_name || b.customers?.name || '').toLowerCase();
+            return bName.includes(searchCustName);
+          });
+        }
+        if (!bookingToUpdate) {
+          bookingToUpdate = matchingBookings[0];
+        }
+      }
+
+      if (bookingToUpdate) {
+        const { data: updated, error: updErr } = await supabase
+          .from('bookings')
+          .update({ employee_id: replacement.staffA.id })
+          .eq('id', bookingToUpdate.id)
+          .select(`
+            *,
+            customers(name, phone),
+            services(name, duration_minutes),
+            employees(name),
+            beds(name),
+            branches(name)
+          `)
+          .single();
+
+        if (updErr) throw updErr;
+
+        const broadcast = getBroadcast(req);
+        broadcast('booking.updated', updated);
+
+        const custDisplayName = updated.temporary_name || updated.customers?.name || 'Khách';
+        return res.json({
+          success: true,
+          count: 1,
+          duration: updated.services?.duration_minutes || 60,
+          summary: `Đã đổi nhân viên từ ${replacement.staffB.name} sang ${replacement.staffA.name} cho lịch hẹn của ${custDisplayName}`,
+          bookings: [updated.id]
+        });
+      } else {
+        return res.status(404).json({
+          success: false,
+          error: `Không tìm thấy lịch hẹn nào của nhân viên ${replacement.staffB.name} vào ngày ${parsed.booking_date} để thay thế.`
+        });
+      }
+    }
 
     const isWalkIn = parsedData.is_walk_in || false;
 
@@ -780,7 +1059,7 @@ Reply booking: ${JSON.stringify({
     }
 
     // ========== 6.5 HANDLE UPDATE LỊCH (CHỈNH LỊCH DỰA THEO TÊN/SĐT) ==========
-    if (!isWalkIn || parsed.is_update) {
+    if (parsed.is_update) {
       // Lấy các lịch từ hôm nay + 7 ngày tới để tìm lịch cần update
       const today = new Date();
       const strFrom = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
@@ -797,25 +1076,24 @@ Reply booking: ${JSON.stringify({
         .eq('branch_id', parsed.branch_id)
         .order('created_at', { ascending: false });
 
-      let matchedBooking = null;
+      let matchedBookings = [];
 
       // If user is explicitly replying to a booking context, prioritize it
-      if (reply_to_booking_id) {
+      if (reply_to_booking_ids && reply_to_booking_ids.length > 0) {
         try {
-          const { data: directBooking, error: directErr } = await supabase
+          const { data: directBookings, error: directErr } = await supabase
             .from('bookings')
             .select('*, customers(name, phone)')
-            .eq('id', reply_to_booking_id)
-            .single();
-          if (!directErr && directBooking) {
-            matchedBooking = directBooking;
+            .in('id', reply_to_booking_ids);
+          if (!directErr && directBookings) {
+            matchedBookings = directBookings;
           }
         } catch (directLookupErr) {
           console.error('Error looking up direct reply booking:', directLookupErr);
         }
       }
 
-      if (!matchedBooking && recentBookings && recentBookings.length > 0) {
+      if (matchedBookings.length === 0 && recentBookings && recentBookings.length > 0) {
         for (const b of recentBookings) {
           const bPhone = b.customer_phone || b.customers?.phone || '';
           const bName = (b.temporary_name || b.customers?.name || '').toLowerCase();
@@ -844,19 +1122,35 @@ Reply booking: ${JSON.stringify({
 
           // If phone matches, note phone matches, or name matches
           if (phoneMatch || notePhoneMatch || nameMatch) {
-            matchedBooking = b;
+            matchedBookings = [b];
             break;
           }
         }
       }
 
       // Fallback for "đổi thành" without name or phone (update the most recent booking)
-      if (!matchedBooking && parsed.is_update && recentBookings && recentBookings.length > 0) {
-        matchedBooking = recentBookings[0];
+      if (matchedBookings.length === 0 && parsed.is_update && recentBookings && recentBookings.length > 0) {
+        matchedBookings = [recentBookings[0]];
       }
 
-      if (matchedBooking) {
-        // FOUND -> UPDATE
+      // If we matched exactly one booking (e.g. via fallback match) and it's part of a group, fetch the rest of the group so they move together
+      if (matchedBookings.length === 1 && matchedBookings[0].group_booking_id) {
+        try {
+          const { data: groupBookings } = await supabase
+            .from('bookings')
+            .select('*, customers(name, phone)')
+            .eq('group_booking_id', matchedBookings[0].group_booking_id);
+          
+          if (groupBookings && groupBookings.length > 1) {
+             matchedBookings = groupBookings;
+          }
+        } catch (err) {
+          console.error("Error fetching group bookings:", err);
+        }
+      }
+
+      if (matchedBookings.length > 0) {
+        // FOUND -> UPDATE ALL
         const updateData = {};
         if (parsed.service_id) updateData.service_id = parsed.service_id;
         if (parsed.status === 'arrived') updateData.status = 'arrived';
@@ -864,34 +1158,66 @@ Reply booking: ${JSON.stringify({
         // Update time if user specified a time (especially deadline)
         if (parsed.start_time) updateData.start_time = parsed.start_time;
         if (parsed.end_time) updateData.end_time = parsed.end_time;
+        if (parsed.booking_date) updateData.booking_date = parsed.booking_date;
         if (parsed.employee_id) updateData.employee_id = parsed.employee_id;
-        if (parsed.branch_id && parsed.branch_id !== matchedBooking.branch_id) {
+        if (parsed.branch_id) {
           updateData.branch_id = parsed.branch_id;
         }
 
-        const { data: updated, error: updErr } = await supabase
-          .from('bookings')
-          .update(updateData)
-          .eq('id', matchedBooking.id)
-          .select('*, services(name, duration_minutes)')
-          .single();
-
-        if (updErr) throw updErr;
-
+        const updatedIds = [];
         const broadcast = getBroadcast(req);
-        broadcast('booking.updated', updated);
+        
+        for (const mb of matchedBookings) {
+          // branch_id needs special care: only update if changed
+          const mbUpdateData = { ...updateData };
+          if (mbUpdateData.branch_id === mb.branch_id) {
+            delete mbUpdateData.branch_id;
+          }
+          
+          // Do not group multiple bookings into a single employee when updating a group
+          if (matchedBookings.length > 1) {
+            delete mbUpdateData.employee_id;
+          }
 
-        let sumName = parsed.temporary_name && parsed.temporary_name !== 'Khách Lạ' ? parsed.temporary_name : matchedBooking.temporary_name || matchedBooking.customers?.name || 'Khách';
-        let sumAction = 'Đã cập nhật lịch';
-        if (parsed.status === 'arrived') sumAction = 'Đã báo khách tới và cập nhật lịch';
+          const { data: updated, error: updErr } = await supabase
+            .from('bookings')
+            .update(mbUpdateData)
+            .eq('id', mb.id)
+            .select('*, services(name, duration_minutes)')
+            .single();
+
+          if (updErr) throw updErr;
+
+          updatedIds.push(updated.id);
+          broadcast('booking.updated', updated);
+        }
+
+        const firstMatched = matchedBookings[0];
+        let sumName = parsed.temporary_name && parsed.temporary_name !== 'Khách Lạ' ? parsed.temporary_name : firstMatched.temporary_name || firstMatched.customers?.name || 'Khách';
+        
+        const numUpdated = matchedBookings.length;
+        let sumAction = numUpdated > 1 ? `Đã cập nhật ${numUpdated} lịch` : `Đã cập nhật 1 lịch`;
+        if (parsed.status === 'arrived') {
+           sumAction = numUpdated > 1 ? `Đã báo khách tới và cập nhật ${numUpdated} lịch` : `Đã báo khách tới và cập nhật 1 lịch`;
+        }
+        
+        let serviceStr = '';
+        if (updateData.service_id && matched.serviceName) {
+            serviceStr = ` thành dịch vụ ${matched.serviceName}`;
+        }
+        
+        let timeStr = '';
+        if (updateData.start_time) {
+            timeStr = ` lúc ${updateData.start_time.replace(/^0/, '')}`;
+        }
 
         return res.json({
           success: true,
-          count: 1,
-          duration: matched.duration,
-          summary: `${sumAction} của ${sumName} thành dịch vụ ${matched.serviceName}`,
+          count: numUpdated,
+          duration: matched.duration || 60,
+          summary: `${sumAction} của ${sumName}${serviceStr}${timeStr}`,
           matched,
-          bookings: [updated.id]
+          bookings: updatedIds
         });
       }
     }
@@ -925,12 +1251,15 @@ Reply booking: ${JSON.stringify({
 
     // Fallback default time for auto-create if no time was specified
     if (!parsed.start_time) {
-      const d = new Date();
-      d.setHours(d.getHours() + 1);
-      parsed.start_time = `${String(d.getHours()).padStart(2, '0')}:00`;
+      const vnNow = getVietnamDate();
+      const currentMinutes = vnNow.getHours() * 60 + vnNow.getMinutes();
+      const roundedMinutes = Math.ceil(currentMinutes / 5) * 5;
+      const startH = String(Math.floor(roundedMinutes / 60) % 24).padStart(2, '0');
+      const startM = String(roundedMinutes % 60).padStart(2, '0');
+      parsed.start_time = `${startH}:${startM}`;
       
-      const totalMinutes = d.getHours() * 60 + duration;
-      const endH = String(Math.floor(totalMinutes / 60)).padStart(2, '0');
+      const totalMinutes = roundedMinutes + duration;
+      const endH = String(Math.floor(totalMinutes / 60) % 24).padStart(2, '0');
       const endM = String(totalMinutes % 60).padStart(2, '0');
       parsed.end_time = `${endH}:${endM}`;
     }
@@ -940,6 +1269,9 @@ Reply booking: ${JSON.stringify({
 
     const createdBookings = [];
     const allBookings = [...(dayBookings || [])];
+
+    const crypto = require('crypto');
+    const groupBookingId = parsed.num_guests > 1 ? crypto.randomUUID() : null;
 
     for (let g = 0; g < parsed.num_guests; g++) {
       const busyEmployeeIds = new Set();
@@ -961,13 +1293,16 @@ Reply booking: ${JSON.stringify({
       const availableEmployees = employees.filter(e => !busyEmployeeIds.has(e.id));
       if (availableEmployees.length === 0) {
         if (createdBookings.length > 0) break;
-        return res.status(409).json({ error: `Không có nhân viên trống lúc ${parsed.start_time}.` });
+        return res.status(409).json({ error: "Hiện tại lịch của anh/chị đang bị trùng lịch, vui lòng lựa chọn khung giờ khác hoặc nhân viên/chi nhánh khác." });
       }
 
       // ASSIGN EMPLOYEE (Prioritize the explicitly specified one)
       let assignedEmployee = null;
       if (parsed.employee_id) {
         assignedEmployee = availableEmployees.find(e => e.id === parsed.employee_id);
+        if (!assignedEmployee) {
+          return res.status(409).json({ error: "Hiện tại lịch của anh/chị đang bị trùng lịch, vui lòng lựa chọn khung giờ khác hoặc nhân viên/chi nhánh khác." });
+        }
       }
       if (!assignedEmployee) {
         availableEmployees.sort((a, b) => {
@@ -992,7 +1327,7 @@ Reply booking: ${JSON.stringify({
       const availableBeds = beds.filter(b => !busyBedIds.has(b.id));
       if (availableBeds.length === 0) {
         if (createdBookings.length > 0) break;
-        return res.status(409).json({ error: `Không còn giường trống lúc ${parsed.start_time}.` });
+        return res.status(409).json({ error: "Hiện tại lịch của anh/chị đang bị trùng lịch, vui lòng lựa chọn khung giờ khác hoặc nhân viên/chi nhánh khác." });
       }
 
       const bedBookingCount = {};
@@ -1010,14 +1345,15 @@ Reply booking: ${JSON.stringify({
         employee_id: assignedEmployee.id,
         bed_id: assignedBed.id,
         branch_id: parsed.branch_id,
-        num_guests: 1,
+        num_guests: parsed.num_guests,
         booking_date: parsed.booking_date,
         start_time: parsed.start_time,
         end_time: parsed.end_time,
         status: parsed.status,
         total_price: 0,
         notes: parsed.notes || null,
-        internal_note: null
+        internal_note: null,
+        group_booking_id: groupBookingId
       };
 
       const { data: booking, error: bookErr } = await supabase

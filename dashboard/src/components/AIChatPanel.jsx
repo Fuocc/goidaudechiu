@@ -48,6 +48,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
   const [undoLoadingId, setUndoLoadingId] = useState(null); // Message ID currently performing undo
 
   const branchDropdownRef = useRef(null);
+  const textareaRef = useRef(null);
 
   // Click outside listener to close custom dropdown
   useEffect(() => {
@@ -59,6 +60,15 @@ function AIChatPanel({ onClose, currentBranchId }) {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // Auto-resize textarea
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (el) {
+      el.style.height = 'auto';
+      el.style.height = `${el.scrollHeight}px`;
+    }
+  }, [inputText]);
 
   // Save chat history to localStorage
   useEffect(() => {
@@ -143,7 +153,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
     setHistoryIndex(-1);
     setUnfinishedText('');
 
-    const replyContextId = replyingTo ? replyingTo.bookingId : undefined;
+    const replyContextIds = replyingTo ? replyingTo.bookingIds : undefined;
     setReplyingTo(null); // Clear reply context immediately on send
 
     try {
@@ -152,18 +162,32 @@ function AIChatPanel({ onClose, currentBranchId }) {
         body: JSON.stringify({
           command: commandText,
           current_branch_id: selectedBranch,
-          reply_to_booking_id: replyContextId
+          reply_to_booking_ids: replyContextIds
         })
       });
 
       if (data && data.success) {
-        const { count, duration, summary, bookings } = data;
+        const { count, duration, summary, bookings, intent } = data;
         const durationLabel = duration ? ` (${duration}P)` : '';
+
+        let dynamicTitle = `Đã tạo ${count || 1} lịch${durationLabel}`;
+        if (intent === 'BOOKING_DELETE') {
+          dynamicTitle = `Đã hủy ${bookings?.length || 1} lịch`;
+        } else if (intent === 'STAFF_DUTY') {
+          dynamicTitle = `Cập nhật trực tour`;
+        } else if (summary?.includes('Đã đổi nhân viên')) {
+          dynamicTitle = `Đã đổi nhân viên${durationLabel}`;
+        } else if (summary?.includes('Đã cập nhật')) {
+          dynamicTitle = `Đã cập nhật ${count || 1} lịch${durationLabel}`;
+        } else if (summary?.includes('Đã báo khách tới')) {
+          dynamicTitle = `Đã báo khách tới${durationLabel}`;
+        }
+
         const aiMsg = {
           id: (Date.now() + 1).toString(),
           sender: 'ai',
           isSuccess: true,
-          title: `Đã tạo ${count} lịch${durationLabel}`,
+          title: dynamicTitle,
           text: summary,
           bookings: bookings || [], // Store booking IDs for undo action
           time: getNowTime()
@@ -240,43 +264,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
             <path stroke="#44403C" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="m15 18-6-6 6-6" />
           </svg> Trở về
         </button>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          {messages.length > 1 && (
-            <button
-              onClick={() => {
-                if (window.confirm('Bạn có chắc chắn muốn xóa toàn bộ lịch sử chat?')) {
-                  const welcomeMsg = [
-                    {
-                      id: 'welcome',
-                      sender: 'ai',
-                      text: 'Xin chào! Mình là ChatLGBT, trợ lý đặt lịch nhanh của bạn. 🌟',
-                      isWelcome: true
-                    }
-                  ];
-                  setMessages(welcomeMsg);
-                  setReplyingTo(null);
-                  setUndoneMessages([]);
-                  localStorage.removeItem('chatlgbt_messages');
-                }
-              }}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: '#78716C',
-                fontSize: '12px',
-                cursor: 'pointer',
-                padding: '4px 8px',
-                borderRadius: '4px',
-                transition: 'color 0.2s'
-              }}
-              onMouseEnter={(e) => e.target.style.color = '#EF4444'}
-              onMouseLeave={(e) => e.target.style.color = '#78716C'}
-            >
-              Xóa lịch sử
-            </button>
-          )}
-          <img src={geminiLogo} alt="Gemini logo" />
-        </div>
+        <img src={geminiLogo} alt="Gemini logo" onClick={onClose} style={{ cursor: 'pointer' }} />
       </div>
 
       {/* Main Area */}
@@ -326,7 +314,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
                                 className="ai-action-btn reply"
                                 onClick={() => {
                                   setReplyingTo({
-                                    bookingId: msg.bookings[0],
+                                    bookingIds: msg.bookings,
                                     label: getReplyLabel(msg.text)
                                   });
                                 }}
@@ -413,12 +401,13 @@ function AIChatPanel({ onClose, currentBranchId }) {
 
         <form onSubmit={handleSend} className="ai-chat-input-card">
           <textarea
+            ref={textareaRef}
             className="ai-chat-textarea"
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
             placeholder="Trò chuyện cùng Ý..."
             disabled={loading}
-            rows={2}
+            rows={1}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -480,7 +469,47 @@ function AIChatPanel({ onClose, currentBranchId }) {
                       </div>
                     );
                   })}
+                  {messages.length > 1 && (
+                    <>
+                      <div className='option-divider' style={{ backgroundColor: '#E7E5E4', margin: '8px auto', height: 1, width: 'calc(100% - 16px)' }}>
+                      </div>
+                      <button
+                        onClick={() => {
+                          if (window.confirm('Bạn có chắc chắn muốn xóa toàn bộ lịch sử chat?')) {
+                            const welcomeMsg = [
+                              {
+                                id: 'welcome',
+                                sender: 'ai',
+                                text: 'Xin chào! Mình là ChatLGBT, trợ lý đặt lịch nhanh của bạn. 🌟',
+                                isWelcome: true
+                              }
+                            ];
+                            setMessages(welcomeMsg);
+                            setReplyingTo(null);
+                            setUndoneMessages([]);
+                            localStorage.removeItem('chatlgbt_messages');
+                          }
+                        }}
+                        style={{
+                          backgroundColor: 'transparent',
+                          border: 'none',
+                          color: '#78716C',
+                          fontSize: '12px',
+                          cursor: 'pointer',
+                          padding: '8px',
+                          borderRadius: '5px',
+                          transition: 'all 0.2s ease-out',
+                          textAlign: 'left'
+                        }}
+                        onMouseEnter={(e) => e.target.style.backgroundColor = '#F4F2F0'}
+                        onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
+                      >
+                        Xóa lịch sử chat
+                      </button>
+                    </>
+                  )}
                 </div>
+
               )}
             </div>
 

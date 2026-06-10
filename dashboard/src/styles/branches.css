@@ -1,0 +1,270 @@
+.branch-list {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.branch-card {
+  cursor: pointer;
+  min-width: 300px;
+}
+
+.branch-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.branch-info-wrapper {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+}
+
+.branch-avatar {
+  width: 60px;
+  height: 60px;
+  border-radius: 8px;
+  background: var(--bg-gray, #f7f7f7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+  border: 1px solid var(--border-color, #eef0f2);
+}
+
+.branch-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.branch-details {
+  flex: 1;
+  min-width: 0;
+}
+
+.branch-name {
+  font-size: 16px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.branch-address {
+  font-size: 13px;
+  color: var(--text-color, #4b4b4b);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.branch-phone {
+  font-size: 13px;
+  color: var(--muted-gray, #afafaf);
+  margin-top: 4px;
+}
+
+.branch-actions {
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+
+.branch-schedule-wrapper {
+  margin-top: 16px;
+  border-top: 1px solid var(--border-color, #f0f2f5);
+  padding-top: 12px;
+}
+
+.branch-schedule-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted-gray, #9a9a9a);
+  text-transform: uppercase;
+  margin-bottom: 6px;
+  letter-spacing: 0.5px;
+}
+
+.branch-schedule-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 20px;
+  font-size: 12px;
+  color: var(--text-color, #4b4b4b);
+}
+
+.branch-schedule-day {
+  display: flex;
+  justify-content: space-between;
+}
+
+.branch-schedule-day-name {
+  color: #8c8c8c;
+}
+
+.branch-schedule-day-time {
+  font-weight: 500;
+}
+
+.branch-schedule-closed {
+  color: var(--error, #d9534f);
+  font-weight: 500;
+  margin-right: auto;
+}
+
+/* Modal specific styles */
+.branch-modal {
+  max-width: 640px;
+}
+
+.branch-modal-body {
+  max-height: 60vh;
+  overflow-y: auto;
+  padding-right: 8px;
+}
+
+.branch-image-label {
+  font-weight: 600;
+  display: block;
+  margin-bottom: 6px;
+}
+
+.branch-image-upload-wrapper {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  margin-top: 8px;
+  padding: 12px;
+  background: var(--bg-gray, #fafafa);
+  border-radius: 8px;
+  border: 1px solid var(--border-color, #f0f0f0);
+}
+
+.branch-image-preview {
+  width: 70px;
+  height: 70px;
+  border-radius: 8px;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px dashed var(--border-color, #d9d9d9);
+  flex-shrink: 0;
+}
+
+.branch-image-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.branch-image-placeholder {
+  font-size: 11px;
+  color: var(--muted-gray, #999);
+  text-align: center;
+  padding: 4px;
+}
+
+.branch-image-actions {
+  flex: 1;
+}
+
+.branch-image-btn-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.branch-image-btn {
+  font-size: 13px;
+  padding: 6px 12px;
+  background: #fff;
+}
+
+.branch-image-btn-delete {
+  font-size: 13px;
+  padding: 6px 12px;
+  color: var(--error, #ff4d4f);
+  border: 1px solid var(--error, #ff4d4f);
+  background: transparent;
+}
+
+.branch-image-hint {
+  margin: 6px 0 0 0;
+  font-size: 11px;
+  color: #8c8c8c;
+}
+
+.branch-schedule-edit-group {
+  margin-top: 16px;
+}
+
+.branch-schedule-edit-label {
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+
+.branch-schedule-edit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.branch-schedule-edit-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--bg-gray, #fafafa);
+  border-radius: 8px;
+  border: 1px solid var(--border-color, #f0f0f0);
+}
+
+.branch-schedule-edit-day {
+  font-weight: 600;
+  width: 90px;
+}
+
+.branch-schedule-edit-controls {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.branch-schedule-edit-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  user-select: none;
+}
+
+.branch-schedule-edit-times {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.branch-schedule-time-input {
+  padding: 4px 8px;
+  font-size: 13px;
+}
+
+.branch-schedule-time-separator {
+  font-size: 12px;
+  color: var(--muted-gray, #888);
+}
+
+.branch-schedule-edit-closed {
+  color: var(--error, #d9534f);
+  font-size: 13px;
+  font-weight: 600;
+  width: 220px;
+  text-align: right;
+}

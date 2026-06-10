@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { FiPlus, FiEdit2, FiTrash2, FiMapPin } from 'react-icons/fi';
 import { getBranches, createBranch, updateBranch, deleteBranch } from '../api';
 import { CardSkeleton } from '../components/ui/Skeleton';
+import '../styles/branches.css';
 
 const DEFAULT_OPENING_HOURS = {
   Monday: { isOpen: true, open: '08:00', close: '20:00' },
@@ -134,51 +135,47 @@ function Branches() {
         </button>
       </div>
 
-      <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+      <div className="branch-list">
         {loading ? (
           Array.from({ length: 2 }).map((_, i) => (
             <CardSkeleton key={i} />
           ))
         ) : (
           branches.map(branch => (
-            <div key={branch.id} className="card" style={{ cursor: 'pointer', minWidth: '300px' }} onClick={() => openEdit(branch)}>
+            <div key={branch.id} className="card branch-card" onClick={() => openEdit(branch)}>
               <div className="card-body">
-                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-                  <div style={{ display: 'flex', gap: 12, alignItems: 'center', width: '100%' }}>
-                    <div style={{
-                      width: 60, height: 60, borderRadius: 8,
-                      background: '#f7f7f7', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      overflow: 'hidden', flexShrink: 0, border: '1px solid #eef0f2'
-                    }}>
+                <div className="branch-card-header">
+                  <div className="branch-info-wrapper">
+                    <div className="branch-avatar">
                       {branch.image_url ? (
-                        <img src={branch.image_url} alt={branch.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        <img src={branch.image_url} alt={branch.name} />
                       ) : (
                         <FiMapPin size={24} color="#888" />
                       )}
                     </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 16, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{branch.name}</div>
-                      <div style={{ fontSize: 13, color: '#4b4b4b', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{branch.address || 'Chưa có địa chỉ'}</div>
-                      <div style={{ fontSize: 13, color: '#afafaf', marginTop: 4 }}>{branch.phone || ''}</div>
+                    <div className="branch-details">
+                      <div className="branch-name">{branch.name}</div>
+                      <div className="branch-address">{branch.address || 'Chưa có địa chỉ'}</div>
+                      <div className="branch-phone">{branch.phone || ''}</div>
                     </div>
                   </div>
-                  <div className="actions-cell" style={{ flexShrink: 0, marginLeft: 8 }}>
+                  <div className="actions-cell branch-actions">
                     <button className="btn-icon" onClick={(e) => { e.stopPropagation(); openEdit(branch); }}><FiEdit2 size={14} /></button>
                     <button className="btn-icon danger" onClick={(e) => { e.stopPropagation(); handleDelete(branch.id); }}><FiTrash2 size={14} /></button>
                   </div>
                 </div>
 
                 {/* Weekly schedule list directly on card */}
-                <div style={{ marginTop: 16, borderTop: '1px solid #f0f2f5', paddingTop: 12 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: '#9a9a9a', textTransform: 'uppercase', marginBottom: 6, letterSpacing: '0.5px' }}>Lịch hoạt động:</div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 20px', fontSize: 12, color: '#4b4b4b' }}>
+                <div className="branch-schedule-wrapper">
+                  <div className="branch-schedule-title">Lịch hoạt động:</div>
+                  <div className="branch-schedule-grid">
                     {Object.entries(DAYS_VN).map(([dayKey, dayLabel]) => {
                       const dayData = branch.opening_hours?.[dayKey] || { isOpen: true, open: '09:00', close: '22:00' };
                       return (
-                        <div key={dayKey} style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ color: '#8c8c8c' }}>{dayLabel}:</span>
-                          <span style={{ fontWeight: 500 }}>
-                            {dayData.isOpen ? `${formatTime12hCompact(dayData.open)} - ${formatTime12hCompact(dayData.close)}` : <span style={{ color: '#d9534f', fontWeight: 500, marginRight: 'auto' }}>Đóng cửa</span>}
+                        <div key={dayKey} className="branch-schedule-day">
+                          <span className="branch-schedule-day-name">{dayLabel}:</span>
+                          <span className="branch-schedule-day-time">
+                            {dayData.isOpen ? `${formatTime12hCompact(dayData.open)} - ${formatTime12hCompact(dayData.close)}` : <span className="branch-schedule-closed">Đóng cửa</span>}
                           </span>
                         </div>
                       );
@@ -205,7 +202,7 @@ function Branches() {
       {
         modalOpen && (
           <div className="modal-overlay" onClick={() => setModalOpen(false)}>
-            <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 640 }}>
+            <div className="modal branch-modal" onClick={e => e.stopPropagation()}>
               <div className="modal-header">
                 <h3>{editing ? 'Sửa chi nhánh' : 'Thêm chi nhánh'}</h3>
                 <button className="modal-close" onClick={() => setModalOpen(false)}>
@@ -216,7 +213,7 @@ function Branches() {
                 </button>
               </div>
               <form onSubmit={handleSubmit}>
-                <div className="modal-body" style={{ maxHeight: '60vh', overflowY: 'auto', paddingRight: 8 }}>
+                <div className="modal-body branch-modal-body">
                   <div className="form-group">
                     <label className="form-label">Tên chi nhánh</label>
                     <input type="text" className="form-input" value={form.name}
@@ -233,32 +230,28 @@ function Branches() {
                       onChange={e => setForm({ ...form, phone: e.target.value })} />
                   </div>
                   <div className="form-group">
-                    <label className="form-label" style={{ fontWeight: 600, display: 'block', marginBottom: 6 }}>Ảnh Thumbnail Chi Nhánh</label>
-                    <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginTop: 8, padding: '12px', background: '#fafafa', borderRadius: 8, border: '1px solid #f0f0f0' }}>
-                      <div style={{
-                        width: 70, height: 70, borderRadius: 8,
-                        background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        overflow: 'hidden', border: '1px dashed #d9d9d9', flexShrink: 0
-                      }}>
+                    <label className="form-label branch-image-label">Ảnh Thumbnail Chi Nhánh</label>
+                    <div className="branch-image-upload-wrapper">
+                      <div className="branch-image-preview">
                         {form.image_url ? (
-                          <img src={form.image_url} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                          <img src={form.image_url} alt="Preview" />
                         ) : (
-                          <span style={{ fontSize: 11, color: '#999', textAlign: 'center', padding: 4 }}>Chưa có ảnh</span>
+                          <span className="branch-image-placeholder">Chưa có ảnh</span>
                         )}
                       </div>
-                      <div style={{ flex: 1 }}>
+                      <div className="branch-image-actions">
                         <input type="file" accept="image/*" id="branch-img-upload" style={{ display: 'none' }} onChange={handleImageUpload} />
-                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                          <button type="button" className="btn btn-secondary" onClick={() => document.getElementById('branch-img-upload').click()} style={{ fontSize: 13, padding: '6px 12px', background: '#fff' }}>
+                        <div className="branch-image-btn-group">
+                          <button type="button" className="btn btn-secondary branch-image-btn" onClick={() => document.getElementById('branch-img-upload').click()}>
                             Tải ảnh lên
                           </button>
                           {form.image_url && (
-                            <button type="button" className="btn btn-secondary danger" onClick={() => setForm({ ...form, image_url: '' })} style={{ fontSize: 13, padding: '6px 12px', color: '#ff4d4f', border: '1px solid #ff4d4f', background: 'transparent' }}>
+                            <button type="button" className="btn btn-secondary branch-image-btn-delete" onClick={() => setForm({ ...form, image_url: '' })}>
                               Xóa ảnh
                             </button>
                           )}
                         </div>
-                        <p style={{ margin: '6px 0 0 0', fontSize: 11, color: '#8c8c8c' }}>Hỗ trợ ảnh JPG, PNG. Dung lượng tối đa 1MB.</p>
+                        <p className="branch-image-hint">Hỗ trợ ảnh JPG, PNG. Dung lượng tối đa 1MB.</p>
                       </div>
                     </div>
                   </div>
@@ -271,24 +264,16 @@ function Branches() {
                   </div>
 
                   {/* Schedule Editor */}
-                  <div className="form-group" style={{ marginTop: 16 }}>
-                    <label className="form-label" style={{ fontWeight: 700, marginBottom: 12 }}>Giờ mở cửa từng ngày trong tuần</label>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <div className="form-group branch-schedule-edit-group">
+                    <label className="form-label branch-schedule-edit-label">Giờ mở cửa từng ngày trong tuần</label>
+                    <div className="branch-schedule-edit-list">
                       {Object.entries(DAYS_VN).map(([dayKey, dayLabel]) => {
                         const dayData = form.opening_hours[dayKey] || { isOpen: true, open: '08:00', close: '20:00' };
                         return (
-                          <div key={dayKey} style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            padding: '10px 14px',
-                            background: '#fafafa',
-                            borderRadius: 8,
-                            border: '1px solid #f0f0f0'
-                          }}>
-                            <span style={{ fontWeight: 600, width: 90 }}>{dayLabel}</span>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
-                              <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 13, userSelect: 'none' }}>
+                          <div key={dayKey} className="branch-schedule-edit-item">
+                            <span className="branch-schedule-edit-day">{dayLabel}</span>
+                            <div className="branch-schedule-edit-controls">
+                              <label className="branch-schedule-edit-checkbox">
                                 <input type="checkbox" checked={dayData.isOpen} onChange={e => {
                                   const newHours = { ...form.opening_hours };
                                   newHours[dayKey] = { ...dayData, isOpen: e.target.checked };
@@ -297,21 +282,21 @@ function Branches() {
                                 <span>Mở cửa</span>
                               </label>
                               {dayData.isOpen ? (
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                  <input type="time" className="form-input" style={{ padding: '4px 8px', fontSize: 13 }} value={dayData.open || '08:00'} onChange={e => {
+                                <div className="branch-schedule-edit-times">
+                                  <input type="time" className="form-input branch-schedule-time-input" value={dayData.open || '08:00'} onChange={e => {
                                     const newHours = { ...form.opening_hours };
                                     newHours[dayKey] = { ...dayData, open: e.target.value };
                                     setForm({ ...form, opening_hours: newHours });
                                   }} />
-                                  <span style={{ fontSize: 12, color: '#888' }}>-</span>
-                                  <input type="time" className="form-input" style={{ padding: '4px 8px', fontSize: 13 }} value={dayData.close || '20:00'} onChange={e => {
+                                  <span className="branch-schedule-time-separator">-</span>
+                                  <input type="time" className="form-input branch-schedule-time-input" value={dayData.close || '20:00'} onChange={e => {
                                     const newHours = { ...form.opening_hours };
                                     newHours[dayKey] = { ...dayData, close: e.target.value };
                                     setForm({ ...form, opening_hours: newHours });
                                   }} />
                                 </div>
                               ) : (
-                                <span style={{ color: '#d9534f', fontSize: 13, fontWeight: 600, width: 220, textAlign: 'right' }}>Đóng cửa</span>
+                                <span className="branch-schedule-edit-closed">Đóng cửa</span>
                               )}
                             </div>
                           </div>

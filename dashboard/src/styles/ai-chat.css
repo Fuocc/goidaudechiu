@@ -2,23 +2,7 @@
    AI Chat Panel Base & Global Styles
    ============================================ */
 
-/* Elegant Dark Blurred Glassmorphism Overlay */
-.ai-chat-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 109;
-  width: 100vw;
-  height: 100vh;
-  background-color: transparent;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.35s cubic-bezier(0.16, 1, 0.3, 1);
-}
 
-.ai-chat-overlay.visible {
-  opacity: 1;
-  pointer-events: auto;
-}
 
 /* Floating AI Chat Panel - Anchored Right */
 .ai-chat-panel-floating {
@@ -36,12 +20,14 @@
   height: 100%;
   display: flex;
   flex-direction: column;
-  transform: translateX(-100%);
-  transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .ai-chat-panel-floating.visible {
-  transform: translateX(0);
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .ai-chat-panel {
@@ -226,10 +212,25 @@
   outline: none;
   resize: none;
   font-size: 16px;
+  line-height: 1.5;
   font-weight: 400;
   color: #57534E;
   width: 100%;
   background-color: transparent;
+  max-height: calc(1.5em * 7);
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+
+.ai-chat-textarea::-webkit-scrollbar {
+  width: 4px;
+}
+.ai-chat-textarea::-webkit-scrollbar-thumb {
+  background-color: #D6D3D1;
+  border-radius: 4px;
+}
+.ai-chat-textarea::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .ai-chat-textarea::placeholder {
@@ -268,28 +269,22 @@
 }
 
 .ai-chat-arrow-btn {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: #25836B;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background-color: #25836B;
   border: none;
   display: flex;
   align-items: center;
   justify-content: center;
   color: white;
   cursor: pointer;
-  transition: all 0.2s;
-}
-
-.ai-chat-arrow-btn:hover:not(:disabled) {
-  background: #1f6b57;
-  transform: scale(1.05);
+  opacity: 1;
+  transition: opacity 0.2s ease-out;
 }
 
 .ai-chat-arrow-btn:disabled {
-  background: #E5E7EB;
-  color: #A8A29E;
-  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 /* Loading animation wave */
@@ -341,7 +336,6 @@
   border-radius: 8px;
   padding: 6px 12px;
   font-size: 14px;
-  font-weight: 600;
   color: #78716C;
   display: flex;
   align-items: center;
@@ -541,7 +535,6 @@
     height: calc(100% - 64px);
     top: 0;
     right: 0;
-    transform: translateX(100%);
     box-shadow: none;
     border-left: none;
   }

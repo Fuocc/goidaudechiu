@@ -15,8 +15,12 @@
 }
 
 .page-content>div:not(.full-view) {
-  padding: 24px;
+  padding: 64px 8%;
   flex: 1;
+}
+
+.page-content>.user-settings-page {
+  padding: 64px 0 !important;
 }
 
 /* ---- Header ---- */
@@ -28,14 +32,13 @@
 }
 
 .page-title {
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: -0.3px;
+  font-size: 24px;
+  font-weight: 500;
 }
 
 .page-subtitle {
-  font-size: 13px;
-  color: var(--muted-gray);
+  font-size: 16px;
+  color: #57534E;
   margin-top: 2px;
 }
 
@@ -70,9 +73,5 @@
     align-items: flex-start;
     gap: 10px;
     margin-bottom: 16px;
-  }
-
-  .page-title {
-    font-size: 20px;
   }
 }

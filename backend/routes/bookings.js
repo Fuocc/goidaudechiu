@@ -60,6 +60,13 @@ setInterval(() => {
 async function notifyNewBooking(bookingData) {
   try {
     // 1) --- Deduplicate group booking push notifications ---
+    // Deduplicate synchronously by group ID to prevent async race conditions
+    if (bookingData.group_booking_id) {
+      const groupKey = `group_${bookingData.group_booking_id}`;
+      if (recentPushCache.has(groupKey)) return;
+      recentPushCache.set(groupKey, Date.now());
+    }
+
     let phone = bookingData.customers?.phone || bookingData.customer_phone || '';
     if (!phone && bookingData.customer_id) {
       const { data: cust } = await supabase.from('customers').select('phone').eq('id', bookingData.customer_id).single();
@@ -69,7 +76,8 @@ async function notifyNewBooking(bookingData) {
     const date = bookingData.booking_date || '';
     const time = bookingData.start_time || '';
 
-    if (phone && date && time) {
+    // Fallback deduplication for non-group bookings (still vulnerable to async race if same phone/date/time sent concurrently, but handled above for groups)
+    if (phone && date && time && !bookingData.group_booking_id) {
       const cacheKey = `${phone}_${date}_${time}`;
       const now = Date.now();
       const lastSent = recentPushCache.get(cacheKey);
@@ -180,11 +188,13 @@ async function notifyNewBooking(bookingData) {
 
     const relativeDate = getRelativeDateLabel(bookingData.booking_date);
     const datePhrase = relativeDate ? ` vào ${relativeDate}` : '';
+    const guestsPhrase = (bookingData.num_guests && bookingData.num_guests > 1) ? ` — ${bookingData.num_guests} người` : '';
 
     const payload = JSON.stringify({
       title: 'Ý Ơi! Có lịch mới nè 🌸',
-      body: `${customerName} vừa đặt lịch ${serviceName} tại ${branchName} lúc ${startTime.substring(0, 5)}${datePhrase}`,
-      url: '/'
+      body: `${customerName} vừa đặt lịch ${serviceName} tại ${branchName} lúc ${startTime.substring(0, 5)}${datePhrase}${guestsPhrase}`,
+      url: '/',
+      branch_id: bookingData.branch_id
     });
 
     uniqueSubs.forEach(sub => {
@@ -408,6 +418,9 @@ router.post('/hold', async (req, res) => {
     const assignedEmpIds = [];
     const assignedBedIds = [];
 
+    const crypto = require('crypto');
+    const groupBookingId = guestCount > 1 ? crypto.randomUUID() : null;
+
     for (let g = 0; g < guestCount; g++) {
       const busyEmployeeIds = new Set();
       // Combine dayBookings with already created holds in this loop to prevent double assignment of the same staff/bed
@@ -483,8 +496,10 @@ router.post('/hold', async (req, res) => {
         end_time,
         status: 'pending',
         total_price: price,
-        internal_note: `[GIỮ CHỖ TẠM THỜI] Giữ chỗ tạm thời cho khách đang đặt online. Tự động hủy lịch sau 5 phút. EXPIRES:${expiresAt}`
+        internal_note: `[GIỮ CHỖ TẠM THỜI] Giữ chỗ tạm thời cho khách đang đặt online. Tự động hủy lịch sau 5 phút. EXPIRES:${expiresAt}`,
+        group_booking_id: groupBookingId
       };
+
 
       const { data: booking, error: bookErr } = await supabase
         .from('bookings')
@@ -939,6 +954,9 @@ router.post('/', bookingRateLimiter, async (req, res) => {
     const bufferTime = parseInt(settings.buffer_time) || 15;
     const tourOrder = settings[`tour_order_${branch_id}`] || [];
 
+    const crypto = require('crypto');
+    const groupBookingId = guestCount > 1 ? crypto.randomUUID() : null;
+
     for (let g = 0; g < guestCount; g++) {
       const busyEmployeeIds = new Set();
       const allRelevantBookings = [...dayBookings, ...createdBookings.map(b => ({
@@ -1057,8 +1075,10 @@ router.post('/', bookingRateLimiter, async (req, res) => {
         status: bookingStatus,
         total_price: price,
         notes: notes || null,
-        internal_note: internalNote
+        internal_note: internalNote,
+        group_booking_id: groupBookingId
       };
+
 
       const { data: booking, error: bookErr } = await supabase
         .from('bookings')

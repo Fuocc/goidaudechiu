@@ -7,6 +7,7 @@ import {
 } from '../api';
 import { toast } from 'react-toastify';
 import '../styles/webhooks.css';
+import '../styles/settings.css';
 
 function Settings() {
   const [activeTab, setActiveTab] = useState('general'); // 'general', 'webhooks', or 'tour'
@@ -238,8 +239,8 @@ function Settings() {
 
   if (loading && activeTab === 'general') {
     return (
-      <div className="d-flex align-items-center justify-content-center" style={{ minHeight: '200px' }}>
-        <p className="text-muted">Đang tải cài đặt...</p>
+      <div className="settings-loading">
+        <p className="settings-loading-text">Đang tải cài đặt...</p>
       </div>
     );
   }
@@ -253,7 +254,7 @@ function Settings() {
         </div>
       </div>
 
-      <div className="detail-tabs mb-24">
+      <div className="settings-tabs">
         <button
           className={`detail-tab-btn tab-btn ${activeTab === 'general' ? 'active' : ''}`}
           onClick={() => setActiveTab('general')}
@@ -276,17 +277,17 @@ function Settings() {
 
       <div className="settings-content">
         {activeTab === 'general' && (
-          <div className="settings-grid max-w-800 gap-24" style={{ display: 'grid' }}>
+          <div className="settings-grid">
             <div className="card">
               <div className="card-header" style={{ display: 'flex', justifyContent: 'start', alignItems: 'center', gap: '12px' }}>
                 <FiClock size={20} color="#e67e22" />
                 <h3 className="card-title">Thời gian chờ (Buffer Time)</h3>
               </div>
               <div className="card-body">
-                <p className="fs-14 text-muted mb-16">
+                <p className="settings-desc">
                   Khoảng thời gian nghỉ giữa các ca làm việc (phút). Thời gian này sẽ được cộng thêm vào tổng thời gian dịch vụ khi tính toán lịch trống cho khách hàng đặt online.
                 </p>
-                <div className="d-flex align-items-center gap-12">
+                <div className="settings-input-group">
                   <input
                     type="number"
                     className="form-input max-w-120"
@@ -295,13 +296,13 @@ function Settings() {
                     min="0"
                     step="5"
                   />
-                  <span className="fs-14 text-muted">phút</span>
+                  <span className="settings-input-suffix">phút</span>
                   <button
-                    className="btn btn-primary ml-auto"
+                    className="btn btn-primary btn-save"
                     onClick={() => handleSaveSetting('buffer_time', settings.buffer_time)}
                     disabled={saving}
                   >
-                    <FiSave className="mr-8" />
+                    <FiSave className="btn-icon" />
                     {saving ? 'Đang lưu...' : 'Lưu cài đặt'}
                   </button>
                 </div>
@@ -314,7 +315,7 @@ function Settings() {
                 <h3 className="card-title">Cấu hình khác</h3>
               </div>
               <div className="card-body">
-                <p className="fs-14 text-muted">
+                <p className="settings-desc">
                   Các cài đặt nâng cao khác sẽ được cập nhật thêm tại đây.
                 </p>
               </div>
@@ -324,24 +325,24 @@ function Settings() {
 
         {activeTab === 'webhooks' && (
           <div className="webhooks-container">
-            <div className="d-flex justify-content-between align-items-center mb-24">
-              <div className="card-body d-flex gap-16 align-items-start p-0">
-                <div className="bg-light-warning d-flex align-items-center justify-content-center flex-shrink-0 rounded-8" style={{ width: 40, height: 40 }}>
-                  <FiZap size={20} className="text-warning" />
+            <div className="settings-section-header">
+              <div className="webhook-promo">
+                <div className="webhook-promo-icon">
+                  <FiZap size={20} className="webhook-promo-svg" />
                 </div>
                 <div>
-                  <div className="fw-600 mb-4">Tích hợp Zapier / Automation</div>
-                  <div className="fs-13 text-dark-muted" style={{ lineHeight: 1.6 }}>
+                  <div className="webhook-promo-title">Tích hợp Zapier / Automation</div>
+                  <div className="webhook-promo-desc">
                     Gửi dữ liệu lịch hẹn tự động đến các ứng dụng khác thông qua Webhook URL.
                   </div>
                 </div>
               </div>
               <button className="btn btn-primary" onClick={openCreateWebhook}>
-                <FiPlus className="mr-8" /> Thêm Webhook
+                <FiPlus className="btn-icon" /> Thêm Webhook
               </button>
             </div>
 
-            <div className="card mb-24">
+            <div className="settings-card">
               <div className="card-header">
                 <h3 className="card-title">Danh sách Webhooks</h3>
               </div>
@@ -358,7 +359,7 @@ function Settings() {
                   </thead>
                   <tbody>
                     {webhooksLoading ? (
-                      <tr><td colSpan="5" className="text-center p-24">Đang tải...</td></tr>
+                      <tr><td colSpan="5" className="settings-table-empty">Đang tải...</td></tr>
                     ) : webhooks.length === 0 ? (
                       <tr>
                         <td colSpan="5">
@@ -372,20 +373,20 @@ function Settings() {
                     ) : (
                       webhooks.map(w => (
                         <tr key={w.id}>
-                          <td className="fw-600">{w.name}</td>
+                          <td className="webhook-name">{w.name}</td>
                           <td>
-                            <code className="fs-12 bg-light-muted rounded-4" style={{ padding: '2px 6px', wordBreak: 'break-all' }}>
+                            <code className="webhook-url">
                               {w.url}
                             </code>
                           </td>
                           <td><span className="badge badge-confirmed">{w.event}</span></td>
                           <td>
-                            <label className="d-flex align-items-center gap-8 cursor-pointer">
+                            <label className="webhook-toggle">
                               <div className={`toggle-switch${w.is_active ? ' active' : ''}`}
                                 onClick={() => handleToggleWebhook(w)}>
                                 <div className="toggle-knob"></div>
                               </div>
-                              <span className={`fs-12 ${w.is_active ? 'text-success' : 'text-muted'}`}>
+                              <span className={`webhook-status ${w.is_active ? 'active' : 'inactive'}`}>
                                 {w.is_active ? 'Bật' : 'Tắt'}
                               </span>
                             </label>
@@ -403,7 +404,7 @@ function Settings() {
                               </button>
                             </div>
                             {testResult?.id === w.id && (
-                              <div className={`fs-12 mt-6 ${testResult.success ? 'text-success' : 'text-danger'}`}>
+                              <div className={`webhook-test-result ${testResult.success ? 'success' : 'error'}`}>
                                 {testResult.success ? '✅ Test thành công' : `❌ ${testResult.message}`}
                               </div>
                             )}
@@ -421,7 +422,7 @@ function Settings() {
                 <h3 className="card-title">Payload mẫu</h3>
               </div>
               <div className="card-body">
-                <pre className="fs-12 bg-light-muted p-16 rounded-8 overflow-auto" style={{ lineHeight: 1.5 }}>
+                <pre className="webhook-code-block">
                   {`{
   "event": "booking.confirmed",
   "timestamp": "2026-04-18T10:00:00.000Z",
@@ -440,12 +441,12 @@ function Settings() {
 
         {activeTab === 'tour' && (
           <div className="tour-settings-container">
-            <div className="d-flex justify-content-between align-items-center mb-24">
+            <div className="settings-section-header">
               <div>
                 <h3 className="card-title">Thứ tự ưu tiên nhân viên (Tour)</h3>
-                <p className="fs-14 text-muted mt-4">Kéo thả để sắp xếp thứ tự ưu tiên nhận khách trong ngày.</p>
+                <p className="settings-desc settings-desc-sub">Kéo thả để sắp xếp thứ tự ưu tiên nhận khách trong ngày.</p>
               </div>
-              <div className="d-flex gap-12 align-items-center">
+              <div className="settings-actions">
                 <select
                   className="form-select max-w-200"
                   value={selectedBranch}
@@ -456,11 +457,11 @@ function Settings() {
                   ))}
                 </select>
                 <button
-                  className={`btn btn-primary ${saving || !isTourModified ? 'opacity-50' : null}`}
+                  className={`btn btn-primary ${saving || !isTourModified ? 'opacity-50' : ''}`}
                   onClick={saveTourOrder}
                   disabled={saving || !isTourModified}
                 >
-                  <FiSave className="mr-8" />
+                  <FiSave className="btn-icon" />
                   {saving ? 'Đang lưu...' : 'Lưu thứ tự'}
                 </button>
               </div>
@@ -469,9 +470,9 @@ function Settings() {
             <div className="card">
               <div className="card-body p-0">
                 {tourLoading ? (
-                  <div className="text-center p-40 text-muted p-16">Đang tải danh sách nhân viên...</div>
+                  <div className="settings-list-empty">Đang tải danh sách nhân viên...</div>
                 ) : tourStaff.length === 0 ? (
-                  <div className="text-center p-40 text-muted">Không có nhân viên nào tại chi nhánh này.</div>
+                  <div className="settings-list-empty">Không có nhân viên nào tại chi nhánh này.</div>
                 ) : (
                   <div className="tour-list">
                     {tourStaff.map((s, idx) => (
@@ -488,8 +489,8 @@ function Settings() {
                           {s.name.trim().split(' ').at(-1)[0]}
                         </div>
                         <div className="tour-item-info">
-                          <div className="fw-600">{s.name}</div>
-                          <div className="fs-12 text-muted">{s.phone || 'Chưa có SĐT'}</div>
+                          <div className="staff-name">{s.name}</div>
+                          <div className="staff-phone">{s.phone || 'Chưa có SĐT'}</div>
                         </div>
                         <div className="tour-item-handle">
                           <FiList size={18} />

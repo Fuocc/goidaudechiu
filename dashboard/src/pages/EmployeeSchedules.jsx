@@ -226,7 +226,7 @@ function EmployeeSchedules() {
           <h1 className="page-title">Lịch nhân viên</h1>
           <p className="page-subtitle">Quản lý lịch làm việc, ca làm, ngày nghỉ</p>
         </div>
-        <div className="d-flex gap-8" style={isMobile ? { flexDirection: 'column', width: '100%' } : {}}>
+        <div className="schedule-filters" style={isMobile ? { flexDirection: 'column', width: '100%' } : {}}>
           <button className="btn btn-secondary" onClick={createDefaultSchedulesFor30Days} disabled={creatingDefault} style={isMobile ? { fontSize: 12 } : {}}>
             {creatingDefault ? 'Đang tạo...' : 'Tạo lịch mặc định (9:00AM - 10:00PM)'}
           </button>
@@ -239,7 +239,7 @@ function EmployeeSchedules() {
       {/* Toolbar */}
       <div className="cal-toolbar">
         <div className="cal-toolbar-left">
-          <select className="form-select max-w-200 fs-13"
+          <select className="form-select schedule-branch-select"
             value={filterBranch} onChange={e => setFilterBranch(e.target.value)}
             style={isMobile ? { maxWidth: '100%' } : {}}
           >
@@ -280,7 +280,7 @@ function EmployeeSchedules() {
             <tbody>
               {employees.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="text-center text-muted" style={{ padding: 40 }}>
+                  <td colSpan={8} className="schedule-table-empty">
                     Chưa có nhân viên
                   </td>
                 </tr>
@@ -288,8 +288,8 @@ function EmployeeSchedules() {
                 employees.map(emp => (
                   <tr key={emp.id}>
                     <td className="schedule-emp-name">
-                      <div className="fw-600 fs-13">{emp.name}</div>
-                      <div className="fs-12 text-muted">{emp.branches?.name}</div>
+                      <div className="schedule-emp-name-text">{emp.name}</div>
+                      <div className="schedule-emp-branch-text">{emp.branches?.name}</div>
                     </td>
                     {weekDates.map(d => {
                       const ds = toDateStr(d);
@@ -400,7 +400,7 @@ function EmployeeSchedules() {
 
                 <div className="form-group">
                   <label className="form-label">Chọn ngày (bấm để chọn/bỏ chọn)</label>
-                  <div className="d-flex gap-6 flex-wrap">
+                  <div className="schedule-days-grid">
                     {weekDates.map(d => {
                       const ds = toDateStr(d);
                       const selected = scheduleForm.selectedDays.includes(ds);
@@ -416,7 +416,7 @@ function EmployeeSchedules() {
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label d-flex align-items-center gap-8">
+                  <label className="form-label form-label-checkbox">
                     <input type="checkbox" checked={scheduleForm.is_day_off}
                       onChange={e => setScheduleForm({ ...scheduleForm, is_day_off: e.target.checked })} />
                     Ngày nghỉ

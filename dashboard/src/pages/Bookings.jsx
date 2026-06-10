@@ -715,6 +715,13 @@ function Bookings({ data }) {
 
   const handleColumnHover = (e, emp) => {
     if (dragInfo || cardDrag) return; // Don't show ghost while dragging
+    
+    // Hide indicator when hovering over an existing booking card
+    if (e.target.closest('.cal-booking-card')) {
+      setHoverInfo(null);
+      return;
+    }
+
     const rect = e.currentTarget.getBoundingClientRect();
     const gridRect = gridRef.current?.getBoundingClientRect();
     if (!gridRect) return;
@@ -1400,7 +1407,7 @@ function Bookings({ data }) {
             </span>
             <button className="btn-icon" onClick={goPrev} title="Ngày trước"><FiChevronLeft /></button>
             <button className="btn-icon" onClick={goNext} title="Ngày sau"><FiChevronRight /></button>
-            <button className="btn btn-sm btn-ghost fs-16 fw-500" onClick={goToday}>Hôm nay</button>
+            <button className="btn btn-sm btn-ghost btn-today" onClick={goToday}>Hôm nay</button>
           </div>
           <div className="cal-toolbar-right">
             {/* Hide view toggle on mobile — mobile always shows list */}
@@ -1436,7 +1443,7 @@ function Bookings({ data }) {
               <button className="btn-icon" onClick={goNext} title="Ngày sau"><FiChevronRight /></button>
             </div>
             <div className="cal-toolbar-actions">
-              <button className="btn btn-sm btn-ghost fs-16 fw-500" onClick={goToday}>Hôm nay</button>
+              <button className="btn btn-sm btn-ghost btn-today" onClick={goToday}>Hôm nay</button>
               <button className="btn btn-primary btn-create" onClick={() => openBookingModal()}>
                 <span className="btn-create-label">Tạo lịch</span> <FiPlus />
               </button>
@@ -1613,7 +1620,7 @@ function Bookings({ data }) {
                     return (
                       <div
                         key={emp.id}
-                        className={`cal-staff-column ${isAvailable ? 'available' : 'unavailable'}`}
+                        className={`cal-staff-column ${isAvailable ? 'available' : 'unavailable'} ${employees.indexOf(emp) === 0 ? 'is-first-staff' : ''}`}
                         data-staff-id={emp.id}
                         data-staff-name={emp.name}
                         style={{
@@ -1692,22 +1699,26 @@ function Bookings({ data }) {
                           </>
                         )}
                         {/* Now Line (rendered in each column or once for the whole grid) */}
-                        {toDateStr(currentDate) === toDateStr(now) && (
-                          <div className="cal-now-line" style={{ top: `${(timeToMinutes(`${now.getHours()}:${now.getMinutes()}`) - OPEN_HOUR * 60) / 60 * 100}px` }}>
-                            {/* We only show badge on the first column for cleaner UI */}
-                            {employees.indexOf(emp) === 0 && (
-                              <div className="cal-now-badge">
-                                {(() => {
-                                  const h = now.getHours();
-                                  const m = String(now.getMinutes()).padStart(2, '0');
-                                  const h12 = h % 12 === 0 ? 12 : h % 12;
-                                  const period = h < 12 ? 'AM' : 'PM';
-                                  return `${String(h12).padStart(2, '0')}:${m} ${period}`;
-                                })()}
-                              </div>
-                            )}
-                          </div>
-                        )}
+                        {toDateStr(currentDate) === toDateStr(now) && (() => {
+                          const nowY = (timeToMinutes(`${now.getHours()}:${now.getMinutes()}`) - OPEN_HOUR * 60) / 60 * 100;
+                          const hideTriangle = hoverInfo && Math.abs(hoverInfo.y - nowY) <= 25;
+                          return (
+                            <div className={`cal-now-line ${hideTriangle ? 'hide-triangle' : ''}`} style={{ top: `${nowY}px` }}>
+                              {/* We only show badge on the first column for cleaner UI */}
+                              {employees.indexOf(emp) === 0 && (
+                                <div className="cal-now-badge">
+                                  {(() => {
+                                    const h = now.getHours();
+                                    const m = String(now.getMinutes()).padStart(2, '0');
+                                    const h12 = h % 12 === 0 ? 12 : h % 12;
+                                    const period = h < 12 ? 'AM' : 'PM';
+                                    return `${String(h12).padStart(2, '0')}:${m} ${period}`;
+                                  })()}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
 
                         {/* Bookings for this staff */}
                         {bookings.filter(b => (b.employee_id === emp.id || b.employees?.id === emp.id)).map(b => {
@@ -1744,7 +1755,7 @@ function Bookings({ data }) {
                               >
                                 {b.notes ? <img src={noteIcon} alt='note icon' className="cal-booking-icon" /> : null}
                                 <div className="cal-booking-name" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                  {isSpamWarning && <FiAlertTriangle size={12} className="text-warning-orange" style={{ minWidth: '12px' }} />}
+                                  {isSpamWarning && <FiAlertTriangle size={12} className="cal-alert-icon" />}
                                   {b.temporary_name || b.customers?.name}
                                 </div>
                                 <div className="cal-booking-service">{b.services?.name}</div>
@@ -1864,8 +1875,8 @@ function Bookings({ data }) {
                       .map(b => (
                         <tr key={b.id} id={`booking-card-${b.id}`} onClick={() => handleOpenDetail(b)} className={`cursor-pointer${b.status === 'pending' && b.internal_note ? ' row-spam-warning' : ''}`}>
                           <td>
-                            <div className="fw-600">{b.temporary_name || b.customers?.name || '-'}</div>
-                            <div className="fs-12 text-muted">{b.customers?.phone || ''}</div>
+                            <div className="list-booking-name">{b.temporary_name || b.customers?.name || '-'}</div>
+                            <div className="list-booking-phone">{b.customers?.phone || ''}</div>
                           </td>
                           <td>{b.services?.name || '-'}</td>
                           <td>{b.branches?.name || '-'}</td>
@@ -1874,12 +1885,12 @@ function Bookings({ data }) {
                           <td>{b.employees?.name || '-'}</td>
                           <td>
                             {b.notes || '-'}
-                            {b.internal_note && <div className="fs-11 text-warning-orange mt-2">{b.internal_note}</div>}
+                            {b.internal_note && <div className="list-booking-note">{b.internal_note}</div>}
                           </td>
                           <td>
                             <span className={`badge badge-${b.status}`}>{b.status}</span>
                           </td>
-                          <td className="fw-600">{formatPrice(b.total_price)}</td>
+                          <td className="list-booking-price">{formatPrice(b.total_price)}</td>
                         </tr>
                       ))
                   )}
@@ -1939,7 +1950,7 @@ function Bookings({ data }) {
                           <span className={`badge badge-${b.status}`}>{b.status}</span>
                           <span className="booking-card-mobile-price">{formatPrice(b.total_price)}</span>
                         </div>
-                        {b.internal_note && <div className="fs-11 text-warning-orange">{b.internal_note}</div>}
+                        {b.internal_note && <div className="list-booking-note">{b.internal_note}</div>}
                       </div>
                     );
                   })
@@ -1981,8 +1992,8 @@ function Bookings({ data }) {
       {detailModal && (
         <div className="modal-overlay" onClick={() => setDetailModal(null)}>
           <div className="modal modal-viewing max-w-480" onClick={e => e.stopPropagation()}>
-            <div className="modal-header pb-0">
-              <h3 className="fs-24 fw-700">Chi tiết</h3>
+            <div className="modal-header modal-header-clean">
+              <h3 className="modal-title-lg">Chi tiết</h3>
               <button className="modal-close" onClick={() => setDetailModal(null)}>
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                   <path d="M19 5L5 19" stroke="black" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"></path>
@@ -2006,7 +2017,7 @@ function Bookings({ data }) {
               </button>
             </div>
 
-            <div className="modal-body pt-0">
+            <div className="modal-body modal-body-clean">
               {/* Anti-spam warning banner */}
               {detailEdit.internal_note && (
                 <div className="anti-spam-alert" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
@@ -2045,7 +2056,7 @@ function Bookings({ data }) {
                       <div className="pos-relative">
                         <input
                           type="text"
-                          className={`form-input border-0 fs-16 fw-500 ${!detailEdit.service_id && detailEdit.service_search ? 'error' : ''}`}
+                          className={`form-input form-input-clean ${!detailEdit.service_id && detailEdit.service_search ? 'error' : ''}`}
                           value={detailEdit.service_search}
                           onChange={e => {
                             handleGenericSearch('service', e.target.value, true);
@@ -2087,13 +2098,13 @@ function Bookings({ data }) {
 
                   <div className="booking-row no-hover">
                     <div className="booking-row-icon">
-                      <img src={clockIcon} alt="time" className="w-24" />
+                      <img src={clockIcon} alt="time" className="icon-w24" />
                     </div>
-                    <div className="booking-row-content d-flex justify-content-between align-items-center">
+                    <div className="booking-row-content row-content-between">
                       <div className="booking-date-container">
                         <input
                           type="text"
-                          className="form-input border-0 fs-16 fw-500 cursor-pointer"
+                          className="form-input form-input-clean cursor-pointer"
                           readOnly
                           value={detailEdit.booking_date ? new Date(detailEdit.booking_date).toLocaleDateString('vi-VN') : '--/--/----'}
                           onClick={() => setShowCalendar(!showCalendar)}
@@ -2146,12 +2157,12 @@ function Bookings({ data }) {
                           </div>
                         )}
                       </div>
-                      <div className="d-flex align-items-center">
+                      <div className="time-picker-group">
                         <TimePickerInput
                           value={detailEdit.start_time}
                           onChange={val => handleTimeChange('start_time', val)}
                         />
-                        <span className="fs-16 text-gray mx-4">—</span>
+                        <span className="time-separator-text">—</span>
                         <TimePickerInput
                           value={detailEdit.end_time}
                           onChange={val => handleTimeChange('end_time', val)}
@@ -2231,11 +2242,11 @@ function Bookings({ data }) {
 
                   <div className="booking-row no-hover">
                     <div className="booking-row-icon">
-                      <img src={shopIcon} alt="branch" className="w-24" />
+                      <img src={shopIcon} alt="branch" className="icon-w24" />
                     </div>
                     <div className="booking-row-content">
                       <select
-                        className="form-select border-0 fs-16 fw-500"
+                        className="form-select form-input-clean"
                         value={detailEdit.branch_id}
                         onChange={e => {
                           const newBranchId = e.target.value;
@@ -2250,13 +2261,13 @@ function Bookings({ data }) {
 
                   <div className="booking-row no-hover">
                     <div className="booking-row-icon">
-                      <div className="customer-avatar bg-gray text-muted">{detailModal.employees?.name?.trim().split(' ').at(-1)[0] || 'A'}</div>
+                      <div className="customer-avatar avatar-placeholder">{detailModal.employees?.name?.trim().split(' ').at(-1)[0] || 'A'}</div>
                     </div>
                     <div className="booking-row-content">
                       <div className="pos-relative">
                         <input
                           type="text"
-                          className="form-input border-0 fs-16 fw-500"
+                          className="form-input form-input-clean"
                           value={detailEdit.employee_search}
                           onChange={e => {
                             handleGenericSearch('employee', e.target.value, true);
@@ -2288,12 +2299,12 @@ function Bookings({ data }) {
 
                   <div className="booking-row no-hover">
                     <div className="booking-row-icon">
-                      <img src={noteIcon} alt="note" className="w-24" />
+                      <img src={noteIcon} alt="note" className="icon-w24" />
                     </div>
                     <div className="booking-row-content">
                       <input
                         type="text"
-                        className="form-input border-0 fs-16 fw-500"
+                        className="form-input form-input-clean"
                         value={detailEdit.notes}
                         onChange={e => setDetailEdit(f => ({ ...f, notes: e.target.value }))}
                         placeholder="Thêm ghi chú"
@@ -2303,12 +2314,12 @@ function Bookings({ data }) {
                 </div>
               ) : (
                 <div className="customer-view">
-                  <div className="text-center my-14">
+                  <div className="customer-profile-header">
                     <p className='customer-id'>Mã KH: {detailModal.customers?.id || 'Tạm thời'}</p>
-                    <div className="customer-avatar-lg mx-auto mb-16">
+                    <div className="customer-avatar-lg avatar-centered">
                       {detailEdit.customer_name?.trim().split(' ').at(-1)[0].toUpperCase() || 'A'}
                     </div>
-                    <h2 className="fs-24 fw-700">{detailModal.temporary_name || detailModal.customers?.name || 'Khách tạm'}</h2>
+                    <h2 className="modal-title-lg">{detailModal.temporary_name || detailModal.customers?.name || 'Khách tạm'}</h2>
                   </div>
 
                   <div className="booking-row no-hover">
@@ -2317,7 +2328,7 @@ function Bookings({ data }) {
                     </div>
                     <div className="booking-row-content">
                       <input
-                        className="form-input border-0 fs-16 fw-500"
+                        className="form-input form-input-clean"
                         value={detailEdit.customer_name}
                         onChange={e => setDetailEdit(f => ({ ...f, customer_name: e.target.value }))}
                         placeholder="Tên khách"
@@ -2331,7 +2342,7 @@ function Bookings({ data }) {
                     </div>
                     <div className="booking-row-content">
                       <input
-                        className="form-input border-0 fs-16 fw-500"
+                        className="form-input form-input-clean"
                         value={detailEdit.customer_phone}
                         onChange={e => setDetailEdit(f => ({ ...f, customer_phone: e.target.value }))}
                         placeholder="Số điện thoại"
@@ -2345,7 +2356,7 @@ function Bookings({ data }) {
                     </div>
                     <div className="booking-row-content">
                       <input
-                        className="form-input border-0 fs-16 text-gray"
+                        className="form-input form-input-clean form-input-readonly"
                         value={detailEdit.customer_email}
                         onChange={e => setDetailEdit(f => ({ ...f, customer_email: e.target.value }))}
                         placeholder="Email"
@@ -2353,13 +2364,13 @@ function Bookings({ data }) {
                     </div>
                   </div>
 
-                  <div className="booking-row no-hover align-items-start">
+                  <div className="booking-row no-hover booking-row-top">
                     <div className="booking-row-icon">
-                      <img src={noteIcon} alt="note" className="w-24 mt-32" />
+                      <img src={noteIcon} alt="note" className="icon-w24 icon-mt-32" />
                     </div>
                     <div className="booking-row-content">
                       <textarea
-                        className="form-textarea border-0 fs-16 fw-500 h-60"
+                        className="form-textarea form-textarea-clean"
                         value={detailEdit.customer_habits}
                         onChange={e => setDetailEdit(f => ({ ...f, customer_habits: e.target.value }))}
                         placeholder="Ghi chú..."
@@ -2380,7 +2391,7 @@ function Bookings({ data }) {
                     <button className="more-menu-item" onClick={handleDuplicate}>
                       Nhân bản
                     </button>
-                    <button className="more-menu-item text-danger" onClick={() => handleCancel(detailModal.id)}>
+                    <button className="more-menu-item danger-item" onClick={() => handleCancel(detailModal.id)}>
                       Hủy lịch
                     </button>
                   </div>
@@ -2543,7 +2554,7 @@ function Bookings({ data }) {
                           </div>
                         )}
                       </div>
-                      <div className="d-flex align-items-center">
+                      <div className="time-picker-group">
                         <TimePickerInput
                           value={bookForm.start_time}
                           onChange={val => {

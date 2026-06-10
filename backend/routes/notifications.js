@@ -176,11 +176,58 @@ router.get('/dashboard', async (req, res) => {
             }
         }
 
-        // Ghép nối dữ liệu trong bộ nhớ (In-memory merge)
-        const merged = notifications.map(n => ({
-            ...n,
-            bookings: bookingsMap[n.booking_id] || null
-        }));
+        // Fetch group counts for any bookings that have a group_booking_id
+        const groupBookingIds = Object.values(bookingsMap)
+            .map(b => b.group_booking_id)
+            .filter(id => !!id);
+
+        let groupCounts = {};
+        if (groupBookingIds.length > 0) {
+            const { data: groupBookings, error: grpError } = await supabase
+                .from('bookings')
+                .select('id, group_booking_id')
+                .in('group_booking_id', groupBookingIds);
+
+            if (!grpError && groupBookings) {
+                groupBookings.forEach(b => {
+                    if (b.group_booking_id) {
+                        groupCounts[b.group_booking_id] = (groupCounts[b.group_booking_id] || 0) + 1;
+                    }
+                });
+            }
+        }
+
+        // Ghép nối dữ liệu và gộp nhóm theo group_booking_id
+        const merged = [];
+        const seenGroups = new Set();
+
+        for (const n of notifications) {
+            const booking = bookingsMap[n.booking_id] || null;
+            const groupBookingId = booking?.group_booking_id || null;
+
+            if (groupBookingId) {
+                if (seenGroups.has(groupBookingId)) {
+                    continue; // Bỏ qua nếu đã có thông báo mới hơn trong nhóm
+                }
+                seenGroups.add(groupBookingId);
+
+                const totalGuests = groupCounts[groupBookingId] || booking.num_guests || 1;
+                const updatedBooking = {
+                    ...booking,
+                    num_guests: totalGuests
+                };
+
+                merged.push({
+                    ...n,
+                    bookings: updatedBooking
+                });
+            } else {
+                merged.push({
+                    ...n,
+                    bookings: booking
+                });
+            }
+        }
 
         res.json(merged);
     } catch (err) {

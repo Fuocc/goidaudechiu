@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { toast } from 'react-toastify';
 import { FiCopy, FiCheck, FiInfo, FiExternalLink } from 'react-icons/fi';
+import '../styles/sharelink.css';
 
 const shareLinks = [
   {
@@ -141,9 +142,9 @@ function ShareLink() {
 
       <div className="share-link-grid">
         {shareLinks.map((item) => (
-          <div className="share-link-card" key={item.key} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <div className="share-link-card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: 0, paddingBottom: '4px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div className="share-link-card" key={item.key}>
+            <div className="share-link-card-header">
+              <div className="share-link-card-header-left">
                 <div className="share-link-icon-wrap" style={{ background: item.theme.bg, color: item.theme.color }}>
                   {getLinkIcon(item.type)}
                 </div>
@@ -153,15 +154,7 @@ function ShareLink() {
                 href={item.url}
                 target="_blank"
                 rel="noreferrer"
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px',
-                  fontSize: '13px',
-                  color: '#878580',
-                  textDecoration: 'none',
-                  transition: 'color 0.2s'
-                }}
+                className="share-link-open-link"
                 onMouseOver={(e) => e.currentTarget.style.color = item.theme.color}
                 onMouseOut={(e) => e.currentTarget.style.color = '#878580'}
               >
@@ -169,8 +162,8 @@ function ShareLink() {
               </a>
             </div>
 
-            <div className="card-body" style={{ padding: 0 }}>
-              <p className="share-link-description" style={{ margin: '0 0 12px 0', fontSize: '13.5px' }}>
+            <div className="card-body share-link-card-body">
+              <p className="share-link-description">
                 {item.description}
               </p>
 
@@ -185,10 +178,7 @@ function ShareLink() {
                   className="share-link-copy-btn"
                   onClick={() => copyToClipboard(item.url, item.key)}
                   style={{
-                    backgroundColor: copiedKey === item.key ? '#25836B' : item.theme.color,
-                    transition: 'all 0.2s ease',
-                    minWidth: '120px',
-                    justifyContent: 'center'
+                    backgroundColor: copiedKey === item.key ? '#25836B' : item.theme.color
                   }}
                 >
                   {copiedKey === item.key ? <FiCheck size={16} /> : <FiCopy size={16} />}

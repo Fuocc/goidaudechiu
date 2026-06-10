@@ -3,6 +3,7 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { FiX } from 'react-icons/fi';
 import { supabase } from '../supabaseClient';
 import { useWebPush } from '../hooks/useWebPush';
+import { savePreferenceToDB } from '../idbHelper';
 import '../styles/sidebar.css';
 import logo from '../assets/logo.svg';
 import geminiLogo from '../assets/gemini-logo.svg';
@@ -58,6 +59,13 @@ const UsersIcon = () => (
     <circle cx="9" cy="7" r="4"></circle>
     <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
     <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+  </svg>
+);
+
+const UserIcon = () => (
+  <svg className="sidebar-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+    <circle cx="12" cy="7" r="4"></circle>
   </svg>
 );
 
@@ -122,12 +130,16 @@ function Sidebar({ user, onLogout }) {
   }, []);
 
   const profileRef = useRef(null);
+  const popoverRef = useRef(null);
   const role = user?.publicMetadata?.role || 'admin';
 
   // ---- Click Outside Handler for Floating Logout Popover ----
   useEffect(() => {
     function handleClickOutside(event) {
       if (profileRef.current && !profileRef.current.contains(event.target)) {
+        if (popoverRef.current && popoverRef.current.contains(event.target)) {
+          return;
+        }
         setLogoutMenuOpen(false);
       }
     }
@@ -193,52 +205,107 @@ function Sidebar({ user, onLogout }) {
   const [panelOpen, setPanelOpen] = useState(false);
   const [loadingNotifs, setLoadingNotifs] = useState(true);
   const [activeFilter, setActiveFilter] = useState('all'); // 'all' | 'unread' | 'CN 1' | 'CN 2'
+  const [shouldRenderPanel, setShouldRenderPanel] = useState(false);
+  const [isClosing, setIsClosing] = useState(false);
+  const panelRef = useRef(null);
+
+  const closePanel = useCallback(() => {
+    setIsClosing(true);
+    setPanelOpen(false);
+    setTimeout(() => {
+      setShouldRenderPanel(false);
+      setIsClosing(false);
+    }, 150);
+  }, []);
+
+  const togglePanel = useCallback((e) => {
+    if (e) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+    if (panelOpen) {
+      closePanel();
+    } else {
+      setShouldRenderPanel(true);
+      setTimeout(() => {
+        setPanelOpen(true);
+      }, 10);
+    }
+  }, [panelOpen, closePanel]);
+
+  // Click outside handler
+  useEffect(() => {
+    if (!panelOpen) return;
+
+    function handleClickOutside(event) {
+      if (panelRef.current && !panelRef.current.contains(event.target)) {
+        closePanel();
+      }
+    }
+
+    document.addEventListener('click', handleClickOutside);
+    return () => {
+      document.removeEventListener('click', handleClickOutside);
+    };
+  }, [panelOpen, closePanel]);
 
   // Sync to localStorage as offline/instant-load cache
   useEffect(() => {
     localStorage.setItem('yoi_notifications', JSON.stringify(notifications));
   }, [notifications]);
 
+  // Sync user metadata preferences to IndexedDB for Service Worker
+  useEffect(() => {
+    if (user?.unsafeMetadata?.notifications) {
+      savePreferenceToDB(user.unsafeMetadata.notifications);
+    }
+  }, [user?.unsafeMetadata?.notifications]);
+
   const fetchNotifications = useCallback(async () => {
     setLoadingNotifs(true);
     try {
       const data = await getDashboardNotifications();
       if (data) {
-        const mapped = data.map(n => {
-          const bk = n.bookings || {};
-          const customerName = bk.temporary_name || bk.customers?.name || n.customer_name || 'Khách Lạ';
-          const serviceName = bk.services?.name || n.service_name || 'Dịch vụ';
-          const branchName = bk.branches?.name || n.branch_name || 'Chi nhánh';
-          const employeeName = bk.employees?.name || '';
-          const numGuests = bk.num_guests || 1;
-          const startTime = bk.start_time || n.start_time || '';
-          const notes = bk.notes || '';
-          return {
-            id: n.id,
-            bookingId: n.booking_id,
-            bookingDate: bk.booking_date || n.booking_date,
-            branchId: bk.branch_id || null,
-            title: n.title,
-            customerName,
-            serviceName,
-            branchName,
-            employeeName,
-            numGuests,
-            startTime,
-            notes,
-            time: new Date(n.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
-            createdAt: n.created_at,
-            read: n.read
-          };
-        });
-        setNotifications(mapped);
+          const mapped = data.map(n => {
+            const bk = n.bookings || {};
+            const customerName = bk.temporary_name || bk.customers?.name || n.customer_name || 'Khách Lạ';
+            const serviceName = bk.services?.name || n.service_name || 'Dịch vụ';
+            const branchName = bk.branches?.name || n.branch_name || 'Chi nhánh';
+            const employeeName = bk.employees?.name || '';
+            const numGuests = bk.num_guests || 1;
+            const startTime = bk.start_time || n.start_time || '';
+            const notes = bk.notes || '';
+            return {
+              id: n.id,
+              bookingId: n.booking_id,
+              bookingDate: bk.booking_date || n.booking_date,
+              branchId: bk.branch_id || n.branch_id || null,
+              title: n.title,
+              customerName,
+              serviceName,
+              branchName,
+              employeeName,
+              numGuests,
+              startTime,
+              notes,
+              time: new Date(n.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+              createdAt: n.created_at,
+              read: n.read
+            };
+          }).filter(n => {
+            const prefs = user?.unsafeMetadata?.notifications || { branch1: true, branch2: true };
+            if (n.branchId === 1 && !prefs.branch1) return false;
+            if (n.branchId === 2 && !prefs.branch2) return false;
+            return true;
+          });
+          setNotifications(mapped);
+        }
+      } catch (err) {
+        console.error('Error fetching notifications:', err);
+      } finally {
+        setLoadingNotifs(false);
       }
-    } catch (err) {
-      console.error('Error fetching notifications:', err);
-    } finally {
-      setLoadingNotifs(false);
-    }
-  }, []);
+    }, [user?.unsafeMetadata?.notifications]);
 
   useEffect(() => {
     fetchNotifications();
@@ -462,6 +529,15 @@ function Sidebar({ user, onLogout }) {
     const isHold = booking.status === 'pending' && booking.internal_note?.includes('GIỮ CHỖ TẠM THỜI');
     if (isHold) return;
 
+    // ----- Notification Preference Check -----
+    const prefs = user?.unsafeMetadata?.notifications || { branch1: true, branch2: true };
+
+    // Branch 1 is typically ID 1 or the first branch, Branch 2 is ID 2.
+    // Ensure we respect the switch settings:
+    if (booking.branch_id === 1 && !prefs.branch1) return;
+    if (booking.branch_id === 2 && !prefs.branch2) return;
+    // ------------------------------------------
+
     // Dedup: skip if this booking was already processed recently
     const bookingId = booking.id;
     if (bookingId && processedBookingsRef.current.has(bookingId)) {
@@ -501,7 +577,7 @@ function Sidebar({ user, onLogout }) {
 
   const handleNotifClick = (n) => {
     markAsRead(n.id);
-    setPanelOpen(false);
+    closePanel();
 
     if (n.bookingId && n.bookingDate) {
       sessionStorage.setItem('goto_booking', JSON.stringify({
@@ -596,7 +672,7 @@ function Sidebar({ user, onLogout }) {
         {
           label: 'Thông báo',
           icon: BellIcon,
-          onClick: (e) => { e.preventDefault(); setPanelOpen(prev => !prev); }
+          onClick: (e) => { togglePanel(e); }
         }
       ]
     },
@@ -626,7 +702,7 @@ function Sidebar({ user, onLogout }) {
         {
           label: 'Thông báo',
           icon: BellIcon,
-          onClick: (e) => { e.preventDefault(); setPanelOpen(prev => !prev); }
+          onClick: (e) => { togglePanel(e); }
         }
       ]
     },
@@ -658,12 +734,13 @@ function Sidebar({ user, onLogout }) {
   // Close sidebar and notif panel on route change (mobile and desktop)
   useEffect(() => {
     setMobileOpen(false);
-    setPanelOpen(false);
-  }, [location.pathname]);
+    closePanel();
+  }, [location.pathname, closePanel]);
 
-  // Lock body scroll when mobile sidebar or AI Chat is open
+  // Lock body scroll when mobile sidebar is open, or AI Chat is open on mobile
   useEffect(() => {
-    if (mobileOpen || aiChatOpen) {
+    const isMobile = window.innerWidth <= 768;
+    if (mobileOpen || (aiChatOpen && isMobile)) {
       document.body.style.overflow = 'hidden';
     } else {
       document.body.style.overflow = '';
@@ -673,8 +750,8 @@ function Sidebar({ user, onLogout }) {
 
   const toggleMobile = useCallback(() => {
     setMobileOpen(prev => !prev);
-    setPanelOpen(false);
-  }, []);
+    closePanel();
+  }, [closePanel]);
 
   const closeMobile = useCallback(() => {
     setMobileOpen(false);
@@ -699,15 +776,17 @@ function Sidebar({ user, onLogout }) {
             <img src={logo} alt="Logo" />
           </div>
           <button
-            className="sidebar-header-gemini"
+            className={`sidebar-header-gemini tooltip-trigger${aiChatOpen ? ' active' : ''}`}
             onClick={(e) => {
               e.preventDefault();
-              setPanelOpen(false);
+              closePanel();
               window.dispatchEvent(new CustomEvent('toggle-ai-chat'));
             }}
-            title="Trò chuyện AI (ChatLGBT)"
           >
-            <img src={geminiLogo} alt="" />
+            <img src={geminiLogo} alt="AI" className="sparkle-icon" />
+            <span className="tooltip-text tooltip-bottom">
+              {aiChatOpen ? "Tắt trợ lí AI" : "Mở trợ lí AI"}
+            </span>
           </button>
         </div>
 
@@ -759,11 +838,51 @@ function Sidebar({ user, onLogout }) {
 
           {/* Floating Absolute Logout Popover above profile card */}
           {logoutMenuOpen && (
-            <div className="logout-popover">
-              <button className="logout-popover-btn" onClick={onLogout}>
-                <LogOutIcon />
-                <span>Đăng xuất</span>
-              </button>
+            <div className="logout-popover" ref={popoverRef}>
+              {/* User Info Header */}
+              <div className="logout-popover-header">
+                {user?.imageUrl ? (
+                  <img src={user.imageUrl} alt="Avatar" className="sidebar-user-avatar avatar-lg" style={{ objectFit: 'cover' }} />
+                ) : (
+                  <div className="sidebar-user-avatar avatar-lg">
+                    {firstLetter}
+                  </div>
+                )}
+                <div className="logout-popover-header-info">
+                  <div className="logout-popover-header-name">{userDisplayName}</div>
+                  <div className="logout-popover-header-role">{roleLabel}</div>
+                </div>
+              </div>
+
+              {/* Menu Actions */}
+              <div className="logout-popover-menu">
+                <NavLink
+                  to="/user-settings"
+                  className="logout-popover-btn"
+                  style={{ textDecoration: 'none' }}
+                  onClick={() => setLogoutMenuOpen(false)}
+                >
+                  <UserIcon />
+                  <span>Thông tin</span>
+                </NavLink>
+                <NavLink
+                  to="/user-settings"
+                  className="logout-popover-btn"
+                  style={{ textDecoration: 'none' }}
+                  onClick={() => setLogoutMenuOpen(false)}
+                >
+                  <BellIcon />
+                  <span>Thông báo</span>
+                </NavLink>
+              </div>
+
+              <div className="logout-popover-bottom">
+                <button className="logout-popover-btn" onClick={onLogout}>
+                  <LogOutIcon />
+                  <span>Đăng xuất</span>
+                </button>
+              </div>
+
             </div>
           )}
 
@@ -773,14 +892,15 @@ function Sidebar({ user, onLogout }) {
             onClick={() => setLogoutMenuOpen(prev => !prev)}
             ref={profileRef}
           >
-            <div className="sidebar-user-avatar">
-              {firstLetter}
-            </div>
-            <div className="sidebar-user-info">
-              <div className="sidebar-user-name">
-                {userDisplayName}
+            {user?.imageUrl ? (
+              <img src={user.imageUrl} alt="Avatar" className="sidebar-user-avatar avatar-sm" style={{ objectFit: 'cover' }} />
+            ) : (
+              <div className="sidebar-user-avatar avatar-sm">
+                {firstLetter}
               </div>
-              <div className="sidebar-user-role">{roleLabel}</div>
+            )}
+            <div className="sidebar-user-name">
+              {userDisplayName}
             </div>
           </div>
 
@@ -815,7 +935,7 @@ function Sidebar({ user, onLogout }) {
           {/* Thông báo */}
           <button
             className={`mobile-nav-item${panelOpen ? ' active' : ''}`}
-            onClick={() => setPanelOpen(prev => !prev)}
+            onClick={(e) => togglePanel(e)}
             style={{ position: 'relative' }}
           >
             <div style={{ position: 'relative', display: 'inline-flex' }}>
@@ -851,15 +971,10 @@ function Sidebar({ user, onLogout }) {
         </div>
       </nav>
 
-      {/* Notifications Slide-over Sheet overlay */}
-      {panelOpen && (
-        <div className="notif-panel-overlay" onClick={() => setPanelOpen(false)}></div>
-      )}
-
       {/* Notifications Slide-over Sheet */}
-      {panelOpen && (
-        <div className="notif-panel-container">
-          <div className="notif-panel" onClick={e => e.stopPropagation()}>
+      {shouldRenderPanel && (
+        <div className={`notif-panel-container ${panelOpen ? 'open' : isClosing ? 'closing' : ''}`}>
+          <div className="notif-panel" ref={panelRef} onClick={e => e.stopPropagation()}>
             <div className="notif-panel-header">
               <div className="notif-header-top">
                 <span className="notif-title">Hoạt động</span>
@@ -869,7 +984,7 @@ function Sidebar({ user, onLogout }) {
                   </svg> Đã đọc hết
 
                 </button>
-                <button className="btn-close-notif-top" onClick={() => setPanelOpen(false)}>
+                <button className="btn-close-notif-top" onClick={closePanel}>
                   <FiX size={18} />
                 </button>
               </div>
@@ -942,7 +1057,7 @@ function Sidebar({ user, onLogout }) {
                 Object.entries(getGroupedNotifications()).map(([dateGroup, items]) => (
                   <div key={dateGroup} className="notif-day-group">
                     {/* Day Divider Capsule */}
-                    <div className="notif-day-divider">
+                    <div className={`notif-day-divider${dateGroup === 'Hôm nay' ? ' today' : ''}`}>
                       <span className="notif-day-label">{dateGroup}</span>
                     </div>
 
@@ -1084,10 +1199,6 @@ function Sidebar({ user, onLogout }) {
 
       {/* AI Chat Slide-over Sheet (Floating like Notifications) */}
       <div
-        className={`ai-chat-overlay${aiChatOpen ? ' visible' : ''}`}
-        onClick={() => setAiChatOpen(false)}
-      />
-      <div
         className={`ai-chat-panel-floating${aiChatOpen ? ' visible' : ''}`}
         onClick={e => e.stopPropagation()}
       >
@@ -1101,7 +1212,7 @@ function Sidebar({ user, onLogout }) {
         className="float-gemini-btn"
         onClick={(e) => {
           e.preventDefault();
-          setPanelOpen(false);
+          closePanel();
           window.dispatchEvent(new CustomEvent('toggle-ai-chat'));
         }}
         title="Trò chuyện AI (ChatLGBT)"

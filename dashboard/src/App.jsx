@@ -14,6 +14,7 @@ import EmployeeSchedules from './pages/EmployeeSchedules';
 import Settings from './pages/Settings';
 import ShareLink from './pages/ShareLink';
 import Sidebar from './components/Sidebar';
+import UserSettings from './pages/UserSettings';
 
 function App() {
   const { isLoaded, userId, getToken, signOut } = useAuth();
@@ -70,6 +71,7 @@ function App() {
           <Routes>
             <Route path="/" element={<Bookings />} />
             <Route path="/customers" element={<Customers />} />
+            <Route path="/user-settings" element={<UserSettings />} />
 
             {userRole === 'admin' && (
               <>

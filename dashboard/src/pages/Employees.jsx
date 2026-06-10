@@ -3,6 +3,7 @@ import { FiPlus, FiEdit2, FiTrash2 } from 'react-icons/fi';
 import { getEmployees, createEmployee, updateEmployee, deleteEmployee, getBranches } from '../api';
 import { toast } from 'react-toastify';
 import { TableSkeleton, MobileCardSkeleton } from '../components/ui/Skeleton';
+import '../styles/employees.css';
 
 
 function Employees() {
@@ -110,7 +111,7 @@ function Employees() {
       <div className="card">
         <div className="card-header">
           <select
-            className="form-input max-w-240 p-8-12 fs-13"
+            className="form-input emp-branch-select"
             value={filterBranch}
             onChange={e => setFilterBranch(e.target.value)}
             style={isMobile ? { maxWidth: '100%' } : {}}
@@ -157,7 +158,7 @@ function Employees() {
                 ) : (
                   employees.map(emp => (
                     <tr key={emp.id}>
-                      <td className="fw-600">{emp.name}</td>
+                      <td className="emp-name">{emp.name}</td>
                       <td>{emp.phone || '—'}</td>
                       <td>{emp.branches?.name || '—'}</td>
                       <td>
@@ -240,7 +241,7 @@ function Employees() {
                 </div>
                 {editing && (
                   <div className="form-group">
-                    <label className="form-label d-flex align-items-center gap-8">
+                    <label className="form-label form-label-checkbox">
                       <input type="checkbox" checked={form.is_active}
                         onChange={e => setForm({ ...form, is_active: e.target.checked })} />
                       Đang hoạt động
