@@ -559,6 +559,7 @@ function renderServices(params) {
     services.forEach(s => {
       const isSelected = params.service_id === s.id;
       const isExpanded = cache.expandedServiceIds.has(s.id);
+      const hasDesc = !!s.description && s.description.trim() !== '';
 
       const item = document.createElement('div');
       item.className = `service-item ${isSelected ? 'selected' : ''}`;
@@ -568,7 +569,7 @@ function renderServices(params) {
           <div class="tag-group">
             <span class="tag">${formatPriceShort(s.price)}</span>
             <span class="tag">${s.duration_minutes}p</span>
-            <button type="button" class="tag btn-toggle-desc" style="cursor: pointer; border: none;">${isExpanded ? 'Rút gọn' : 'Xem thêm'}</button>
+            <button type="button" class="tag btn-toggle-desc ${hasDesc ? '' : 'hidden'}" style="cursor: pointer; border: none;">${isExpanded ? 'Rút gọn' : 'Xem thêm'}</button>
           </div>
           <div class="service-desc-container ${isExpanded ? 'expanded' : ''}">
              <p class="service-desc">${s.description || ''}</p>

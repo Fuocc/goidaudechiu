@@ -367,6 +367,8 @@ body {
   margin-bottom: 8px;
 }
 
+
+
 .tag-group {
   display: flex;
   gap: 8px;
@@ -381,6 +383,11 @@ body {
   font-size: 16px;
   font-weight: 600;
   font-family: var(--font-heading);
+}
+
+.btn-toggle-desc.hidden {
+  display: none;
+  pointer-events: none;
 }
 
 .service-desc-container {
