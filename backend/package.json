@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@clerk/express": "^2.1.19",
+    "@google/genai": "^2.8.0",
     "@google/generative-ai": "^0.24.1",
     "@supabase/supabase-js": "^2.49.0",
     "cors": "^2.8.5",

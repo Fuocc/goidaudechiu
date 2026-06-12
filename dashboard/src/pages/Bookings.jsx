@@ -715,7 +715,7 @@ function Bookings({ data }) {
 
   const handleColumnHover = (e, emp) => {
     if (dragInfo || cardDrag) return; // Don't show ghost while dragging
-    
+
     // Hide indicator when hovering over an existing booking card
     if (e.target.closest('.cal-booking-card')) {
       setHoverInfo(null);
@@ -1474,13 +1474,36 @@ function Bookings({ data }) {
             </div>
           </div>
         </div>
+        <div className="cal-staff-header-wrap">
+          {/* Header row */}
+          <div className="cal-staff-header"></div>
+          {loading ? (
+            Array.from({ length: 3 }).map((_, idx) => (
+              <div key={`skeleton-hdr-${idx}`} className="cal-staff-header available">
+                <div className="skeleton-shimmer-light" style={{ width: '80px', height: '16px', borderRadius: '4px' }} />
+              </div>
+            ))
+          ) : (
+            employees.map(emp => {
+              const empSched = employeeSchedules.find(s => s.employee_id === emp.id);
+              const isAvailable = empSched && !empSched.is_day_off;
+              return (
+                <div
+                  key={emp.id}
+                  className={`cal-staff-header ${isAvailable ? 'available' : 'unavailable'}`}
+                >
+                  {emp.name}
+                </div>
+              );
+            })
+          )}
+        </div>
       </div>
 
       {/* Calendar View */}
       {effectiveViewMode === 'calendar' ? (
         <div className="cal-scroll-wrapper">
-          <div className="cal-staff-header-wrap">
-            {/* Header row */}
+          {/* <div className="cal-staff-header-wrap">
             <div className="cal-staff-header"></div>
             {loading ? (
               Array.from({ length: 3 }).map((_, idx) => (
@@ -1502,7 +1525,7 @@ function Bookings({ data }) {
                 );
               })
             )}
-          </div>
+          </div> */}
 
           <div className="cal-container">
 

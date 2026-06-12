@@ -618,7 +618,7 @@
 }
 
 .cal-booking-card-wrapper:hover {
-  transform: scale(1.02);
+  transform: scaleX(1.02) scaleY(1.03);
   z-index: 20;
 }
 
