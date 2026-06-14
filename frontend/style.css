@@ -621,8 +621,8 @@ body {
 }
 
 .btn-primary:hover {
-  color: var(--_colours---cta);
-  background-color: var(--_colours---cta-text);
+  color: var(--_colours---cta) !important;
+  background-color: var(--_colours---cta-text) !important;
 }
 
 .btn-secondary {
@@ -638,11 +638,9 @@ body {
               color 0.2s cubic-bezier(0.25, 1, 0.5, 1);
 }
 
-.btn-secondary {
+.btn-secondary:hover {
   background: var(--_colours---accent-text);
   color: var(--_colours---white-bg);
-  transition: background-color 0.2s cubic-bezier(0.25, 1, 0.5, 1), 
-              color 0.2s cubic-bezier(0.25, 1, 0.5, 1);
 }
 
 #skip-btn-container {
@@ -1096,10 +1094,10 @@ body {
   left: 0;
   margin-top: 8px;
   background: #ffffff;
-  border: 1px solid var(--_colours---border);
   border-radius: 22px;
   padding: 8px;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 5px 9px 1px rgb(0 0 0 / 10%);
+  width: 100%
   min-width: 230px;
   z-index: 50;
   overflow: hidden;
@@ -1149,7 +1147,8 @@ body {
 }
 
 #calendarDropdownBtn.active {
-  opacity: .85;
+  color: var(--_colours---cta) !important;
+  background-color: var(--_colours---cta-text) !important;
 }
 
 #calendarDropdownBtn.active svg {
