@@ -1717,6 +1717,27 @@ function populateConfirmation(params, customerData) {
   // Add to Calendar Toggle
   const dropdownBtn = document.getElementById('calendarDropdownBtn');
   const calendarMenu = document.getElementById('calendarMenu');
+
+  // 1. Generate the calendar URLs using our new helper
+  const calendarUrls = generateCalendarLinks(params, service, branch);
+
+  // 2. Map the URLs to your menu's anchor links
+  const calendarLinks = calendarMenu.querySelectorAll('.dropdown-item');
+  calendarLinks.forEach(link => {
+    const type = link.getAttribute('data-calendar'); // Matches: google, apple, outlook, ics
+    if (calendarUrls[type]) {
+      link.href = calendarUrls[type];
+      
+      // Open web-based calendars in a new tab safely
+      if (type === 'google' || type === 'outlook') {
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+      } else {
+        // Force file download behavior for Apple/ICS files
+        link.setAttribute('download', 'Hen_Y_Oi_Spa.ics');
+      }
+    }
+  });
   
   dropdownBtn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -1955,6 +1976,53 @@ function getSavedCustomerData() {
   } catch (_) {
     return { name: 'Khách', phone: '', email: '', notes: '' };
   }
+}
+
+function generateCalendarLinks(params, service, branch) {
+  const title = encodeURIComponent(`Ý hẹn bạn: ${service?.name || 'thư giãn dễ chịu'}`);
+  
+  // Reuse your existing formatPrice helper for clear pricing inside the description
+  const priceDisplay = service ? formatPrice(service.price) : 'Chọn sau tại spa';
+  
+  const rawDesc = `Cảm ơn bạn đã đặt hẹn! Chi tiết:\n` +
+                  `- Dịch vụ: ${service?.name || 'Chọn sau tại spa'} (${priceDisplay})\n` +
+                  `- Chi nhánh: ${branch?.name || 'Tại Spa'}\n` +
+                  `- Số lượng: ${params.guests} người\n` +
+                  `- Ghi chú: ${params.notes || 'Không có'}`;
+                  
+  const description = encodeURIComponent(rawDesc);
+  const location = encodeURIComponent(branch?.address || branch?.name || 'Tại Spa');
+
+  // Strip dashes: "2026-06-15" -> "20260615"
+  const dateClean = params.date.replace(/-/g, '');
+  
+  // Strip colons and append seconds: "14:30" -> "143000"
+  const startClean = params.time.replace(/:/g, '') + '00';
+  const endClean = params.time_end.replace(/:/g, '') + '00';
+  
+  const googleTimeBlock = `${dateClean}T${startClean}/${dateClean}T${endClean}`;
+
+  const googleUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${googleTimeBlock}&details=${description}&location=${location}`;
+
+  const outlookUrl = `https://outlook.live.com/calendar/0/deeplink/compose?path=/calendar/action/compose&rru=addevent&subject=${title}&startdt=${dateClean}T${startClean}&enddt=${dateClean}T${endClean}&body=${description}&location=${location}`;
+
+  const icsData = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Spa Booking System//VN',
+    'BEGIN:VEVENT',
+    `DTSTART:${dateClean}T${startClean}`,
+    `DTEND:${dateClean}T${endClean}`,
+    `SUMMARY:${service?.name || 'Hẹn Spa'}`,
+    `DESCRIPTION:${rawDesc.replace(/\n/g, '\\n')}`,
+    `LOCATION:${branch?.address || branch?.name || 'Tại Spa'}`,
+    'END:VEVENT',
+    'END:VCALENDAR'
+  ].join('\r\n');
+
+  const icsBlobUrl = `data:text/calendar;charset=utf-8,${encodeURIComponent(icsData)}`;
+
+  return { google: googleUrl, outlook: outlookUrl, apple: icsBlobUrl, ics: icsBlobUrl };
 }
 
 let blockCheckInterval = null;

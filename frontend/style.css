@@ -1142,8 +1142,8 @@ body {
   padding: 2px 3px;
 }
 
-#calendarDropdownBtn, #calendarDropdownBtn svg {
-  transition: transform 0.2s ease-in-out;
+#calendarDropdownBtn svg {
+  transition: transform 0.15s ease-in-out;
 }
 
 #calendarDropdownBtn.active {
