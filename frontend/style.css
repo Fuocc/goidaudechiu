@@ -1097,7 +1097,7 @@ body {
   border-radius: 22px;
   padding: 8px;
   box-shadow: 0 5px 9px 1px rgb(0 0 0 / 10%);
-  width: 100%
+  width: 100%;
   min-width: 230px;
   z-index: 50;
   overflow: hidden;
