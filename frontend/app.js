@@ -1714,7 +1714,7 @@ function populateConfirmation(params, customerData) {
     notesRow.classList.add('hidden');
   }
 
-  // Add to Calendar Toggle
+  // Add to Calendar
   const dropdownBtn = document.getElementById('calendarDropdownBtn');
   const calendarMenu = document.getElementById('calendarMenu');
 
@@ -1736,20 +1736,6 @@ function populateConfirmation(params, customerData) {
         // Force file download behavior for Apple/ICS files
         link.setAttribute('download', 'Hen_Y_Oi_Spa.ics');
       }
-    }
-  });
-  
-  dropdownBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    calendarMenu.classList.toggle('hidden');
-    dropdownBtn.classList.toggle('active');
-  });
-
-  // Close dropdown if the user clicks outside
-  window.addEventListener('click', (e) => {
-    if (!dropdownBtn.contains(e.target) && !calendarMenu.contains(e.target)) {
-      calendarMenu.classList.add('hidden');
-      dropdownBtn.classList.remove('active');
     }
   });
 
@@ -1786,6 +1772,32 @@ function populateConfirmation(params, customerData) {
       }
     }
   }
+
+  //Calendar Toggle
+  // Add to Calendar Toggle
+  setTimeout(() => {
+    const dropdownBtn = document.getElementById('calendarDropdownBtn');
+    const calendarMenu = document.getElementById('calendarMenu');
+    
+    if (!dropdownBtn || !calendarMenu) return; // Safety guard
+
+    // Remove old listeners if this function runs multiple times
+    const newBtn = dropdownBtn.cloneNode(true);
+    dropdownBtn.parentNode.replaceChild(newBtn, dropdownBtn);
+
+    newBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      calendarMenu.classList.toggle('hidden');
+      newBtn.classList.toggle('active');
+    });
+
+    window.addEventListener('click', (e) => {
+      if (!newBtn.contains(e.target) && !calendarMenu.contains(e.target)) {
+        calendarMenu.classList.add('hidden');
+        newBtn.classList.remove('active');
+      }
+    });
+  }, 0);
 }
 
 // ---- Submission ----
