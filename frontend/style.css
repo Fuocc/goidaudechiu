@@ -1071,8 +1071,55 @@ body {
 .conf-btn-wrap {
   display: flex;
   gap: 16px;
-  justify-content: center;
+  justify-content: flex-start;
 }
+
+/* Container positioning */
+  .dropdown-container {
+    position: relative;
+    display: inline-block;
+  }
+
+  /* Dropdown Menu Card */
+  .calendar-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    margin-top: 8px;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    min-width: 180px;
+    z-index: 50;
+    overflow: hidden;
+  }
+
+  /* Dropdown Links */
+  .calendar-dropdown .dropdown-item {
+    display: block;
+    padding: 10px 16px;
+    color: #334155;
+    text-decoration: none;
+    font-size: 14px;
+    transition: background-color 0.2s ease;
+  }
+
+  .calendar-dropdown .dropdown-item:hover {
+    background-color: #f1f5f9;
+  }
+
+  .calendar-icon {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    object-fit: contain;
+  }
+
+  .calendar-icon--outlook {
+    width: 18px; 
+    height: 18px;
+  }
 
 .conf-btn-primary {
   display: flex;
@@ -1517,46 +1564,10 @@ body {
     margin-top: 24px;
   }
 
-  /* Container positioning */
-  .dropdown-container {
-    position: relative;
-    display: inline-block;
-  }
-
-  /* Dropdown Menu Card */
-  .calendar-dropdown {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    margin-top: 8px;
-    background: #ffffff;
-    border: 1px solid #e2e8f0;
-    border-radius: 8px;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-    min-width: 180px;
-    z-index: 50;
-    overflow: hidden;
-  }
-
-  /* Dropdown Links */
-  .calendar-dropdown .dropdown-item {
-    display: block;
-    padding: 10px 16px;
-    color: #334155;
-    text-decoration: none;
-    font-size: 14px;
-    transition: background-color 0.2s ease;
-  }
-
-  .calendar-dropdown .dropdown-item:hover {
-    background-color: #f1f5f9;
-  }
-
   .conf-btn-primary,
   #btn-new-booking {
     max-width: 100% !important;
-    width: 100% !important;
-    padding: 14px !important;
+    padding: 14px 24px !important;
     font-size: 16px !important;
     border-radius: var(--radius-pill) !important;
   }
