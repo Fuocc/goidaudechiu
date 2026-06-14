@@ -1991,11 +1991,9 @@ function getSavedCustomerData() {
 }
 
 function generateCalendarLinks(params, service, branch) {
-  const title = encodeURIComponent(`Ý hẹn bạn: ${service?.name || 'thư giãn dễ chịu'}`);
+  const title = encodeURIComponent(`Hẹn Spa: ${service?.name || 'Chăm sóc da'}`);
   
-  // Reuse your existing formatPrice helper for clear pricing inside the description
   const priceDisplay = service ? formatPrice(service.price) : 'Chọn sau tại spa';
-  
   const rawDesc = `Cảm ơn bạn đã đặt hẹn! Chi tiết:\n` +
                   `- Dịch vụ: ${service?.name || 'Chọn sau tại spa'} (${priceDisplay})\n` +
                   `- Chi nhánh: ${branch?.name || 'Tại Spa'}\n` +
@@ -2005,18 +2003,20 @@ function generateCalendarLinks(params, service, branch) {
   const description = encodeURIComponent(rawDesc);
   const location = encodeURIComponent(branch?.address || branch?.name || 'Tại Spa');
 
-  // Strip dashes: "2026-06-15" -> "20260615"
+  // 1. Format for GOOGLE & ICS (Flat format: "20260615T143000")
   const dateClean = params.date.replace(/-/g, '');
-  
-  // Strip colons and append seconds: "14:30" -> "143000"
   const startClean = params.time.replace(/:/g, '') + '00';
   const endClean = params.time_end.replace(/:/g, '') + '00';
-  
   const googleTimeBlock = `${dateClean}T${startClean}/${dateClean}T${endClean}`;
 
+  // 2. Format for OUTLOOK (Standard ISO format: "2026-06-15T14:30:00")
+  const outlookStart = `${params.date}T${params.time}:00`;
+  const outlookEnd = `${params.date}T${params.time_end}:00`;
+
+  // Updated Outlook URL query keys using the standard ISO strings
   const googleUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${googleTimeBlock}&details=${description}&location=${location}`;
 
-  const outlookUrl = `https://outlook.live.com/calendar/0/deeplink/compose?path=/calendar/action/compose&rru=addevent&subject=${title}&startdt=${dateClean}T${startClean}&enddt=${dateClean}T${endClean}&body=${description}&location=${location}`;
+  const outlookUrl = `https://outlook.live.com/calendar/0/deeplink/compose?path=/calendar/action/compose&rru=addevent&subject=${title}&startdt=${outlookStart}&enddt=${outlookEnd}&body=${description}&location=${location}`;
 
   const icsData = [
     'BEGIN:VCALENDAR',
