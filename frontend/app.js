@@ -1991,29 +1991,52 @@ function getSavedCustomerData() {
 }
 
 function generateCalendarLinks(params, service, branch) {
-  const title = encodeURIComponent(`Hẹn Spa: ${service?.name || 'Chăm sóc da'}`);
+  const dateObj = new Date(params.date + 'T00:00:00');
   
-  const priceDisplay = service ? formatPrice(service.price) : 'Chọn sau tại spa';
-  const rawDesc = `Cảm ơn bạn đã đặt hẹn! Chi tiết:\n` +
-                  `- Dịch vụ: ${service?.name || 'Chọn sau tại spa'} (${priceDisplay})\n` +
-                  `- Chi nhánh: ${branch?.name || 'Tại Spa'}\n` +
-                  `- Số lượng: ${params.guests} người\n` +
-                  `- Ghi chú: ${params.notes || 'Không có'}`;
+  // 1. Reuse your exact day arrays logic for consistency
+  const days = ['Chủ nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
+  const dayName = days[dateObj.getDay()];
+  const dateNum = dateObj.getDate();
+  const monthNum = dateObj.getMonth() + 1;
+
+  // 2. Direct reuse of your formatTime12hSimple helper -> returns "02:30 PM"
+  const time12hClean = formatTime12hSimple(params.time); 
+
+  // --- TITLE ---
+  // Format: Ghé Ý Ơi Spa: 02:30 PM, Thứ 2, ngày 15
+  const rawTitle = `Ghé Ý Ơi Spa: ${time12hClean}, ${dayName}, ${dateNum} tháng ${monthNum}`;
+  const title = encodeURIComponent(rawTitle);
+
+  // --- DESCRIPTION ---
+  const serviceName = service?.name || 'Chọn sau tại spa';
+  const timeDisplay = `${params.time}, ${dayName}, ngày ${dateNum} tháng ${monthNum}`;
+  const addressDisplay = branch?.address || branch?.name || 'Tại Spa';
+  const googleMapUrl = branch?.google_map_url || 'Chưa cấu hình';
+  const branchPhone = branch?.phone || 'Chưa cấu hình';
+
+  const rawDesc = `Thông tin lịch hẹn:\n` +
+                  `- Dịch vụ: ${serviceName}\n` +
+                  `- Số người: ${params.guests} người\n` +
+                  `- Lúc: ${timeDisplay}\n` +
+                  `- Ghi chú: ${params.notes || 'Không có'}\n\n` +
+                  `Thông tin trợ giúp:\n` +
+                  `- Địa chỉ: ${addressDisplay}\n` +
+                  `- Chỉ đường Google map: ${googleMapUrl}\n` +
+                  `- SĐT: ${branchPhone}`;
                   
   const description = encodeURIComponent(rawDesc);
-  const location = encodeURIComponent(branch?.address || branch?.name || 'Tại Spa');
+  const location = encodeURIComponent(addressDisplay);
 
-  // 1. Format for GOOGLE & ICS (Flat format: "20260615T143000")
+  // --- MACHINE DATE FORMATTING (Required for Calendar Engines) ---
   const dateClean = params.date.replace(/-/g, '');
   const startClean = params.time.replace(/:/g, '') + '00';
   const endClean = params.time_end.replace(/:/g, '') + '00';
   const googleTimeBlock = `${dateClean}T${startClean}/${dateClean}T${endClean}`;
 
-  // 2. Format for OUTLOOK (Standard ISO format: "2026-06-15T14:30:00")
   const outlookStart = `${params.date}T${params.time}:00`;
   const outlookEnd = `${params.date}T${params.time_end}:00`;
 
-  // Updated Outlook URL query keys using the standard ISO strings
+  // --- ENGINE SETUP ---
   const googleUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${googleTimeBlock}&details=${description}&location=${location}`;
 
   const outlookUrl = `https://outlook.live.com/calendar/0/deeplink/compose?path=/calendar/action/compose&rru=addevent&subject=${title}&startdt=${outlookStart}&enddt=${outlookEnd}&body=${description}&location=${location}`;
@@ -2025,9 +2048,9 @@ function generateCalendarLinks(params, service, branch) {
     'BEGIN:VEVENT',
     `DTSTART:${dateClean}T${startClean}`,
     `DTEND:${dateClean}T${endClean}`,
-    `SUMMARY:${service?.name || 'Hẹn Spa'}`,
+    `SUMMARY:${rawTitle}`,
     `DESCRIPTION:${rawDesc.replace(/\n/g, '\\n')}`,
-    `LOCATION:${branch?.address || branch?.name || 'Tại Spa'}`,
+    `LOCATION:${addressDisplay}`,
     'END:VEVENT',
     'END:VCALENDAR'
   ].join('\r\n');
