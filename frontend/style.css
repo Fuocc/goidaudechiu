@@ -608,7 +608,7 @@ body {
 
 /* ---- Buttons ---- */
 .btn-primary {
-  background: var(--_colours---cta);
+  background-color: var(--_colours---cta);
   color: var(--_colours---cta-text);
   border: none;
   padding: 16px 32px;
@@ -616,24 +616,33 @@ body {
   font-size: 16px;
   font-weight: 700;
   cursor: pointer;
-  transition: transform 0.2s, opacity 0.2s;
+  transition: transform 0.2s, opacity 0.2s, background-color 0.2s cubic-bezier(0.25, 1, 0.5, 1), color 0.2s cubic-bezier(0.25, 1, 0.5, 1);
   width: 100%;
 }
 
 .btn-primary:hover {
-  opacity: 0.9;
-  transform: translateY(-1px);
+  color: var(--_colours---cta);
+  background-color: var(--_colours---cta-text);
 }
 
 .btn-secondary {
   background: transparent;
-  color: var(--_colours---cta-text);
-  border: 1px solid var(--_colours---cta-text);
+  color: var(--_colours---accent-text);
+  border: 1px solid var(--_colours---accent-text);
   padding: 14px 32px;
   border-radius: var(--radius-pill);
   font-size: 15px;
   font-weight: 600;
   cursor: pointer;
+  transition: background-color 0.2s cubic-bezier(0.25, 1, 0.5, 1), 
+              color 0.2s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.btn-secondary {
+  background: var(--_colours---accent-text);
+  color: var(--_colours---white-bg);
+  transition: background-color 0.2s cubic-bezier(0.25, 1, 0.5, 1), 
+              color 0.2s cubic-bezier(0.25, 1, 0.5, 1);
 }
 
 #skip-btn-container {
@@ -1075,72 +1084,79 @@ body {
 }
 
 /* Container positioning */
-  .dropdown-container {
-    position: relative;
-    display: inline-block;
-  }
+.dropdown-container {
+  position: relative;
+  display: inline-block;
+}
 
-  /* Dropdown Menu Card */
-  .calendar-dropdown {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    margin-top: 8px;
-    background: #ffffff;
-    border: 1px solid var(--_colours---border);
-    border-radius: 22px;
-    padding: 8px;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-    min-width: 230px;
-    z-index: 50;
-    overflow: hidden;
-  }
+/* Dropdown Menu Card */
+.calendar-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 8px;
+  background: #ffffff;
+  border: 1px solid var(--_colours---border);
+  border-radius: 22px;
+  padding: 8px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  min-width: 230px;
+  z-index: 50;
+  overflow: hidden;
+}
 
-  /* Dropdown Links */
-  .dropdown-item {
-    display: flex;
-    gap: 8px;
-    padding: 10px 16px;
-    color: #301E0D;
-    text-decoration: none;
-    font-size: 16px;
-    transition: background-color 0.2s ease;
-    justify-content: flex-start;
-    align-items: center;
-    border-radius: 16px;
-  }
+.calendar-dropdown:not(.hidden) {
+  animation: staggerFadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
 
-  .dropdown-item:hover {
-    background-color: var(--_colours---white-bg);
-  }
+/* Dropdown Links */
+.dropdown-item {
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px;
+  color: #301E0D;
+  text-decoration: none;
+  font-size: 16px;
+  transition: background-color 0.2s ease;
+  justify-content: flex-start;
+  align-items: center;
+  border-radius: 16px;
+}
 
-  .calendar-icon {
-    width: 22px;
-    height: 22px;
-    flex-shrink: 0;
-    object-fit: contain;
-    padding: 1px
-  }
+.dropdown-item:hover {
+  background-color: var(--_colours---white-bg);
+}
 
-  .calendar-icon--large {
-    padding: 0;
-  }
+.calendar-icon {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  object-fit: contain;
+  padding: 1px 2px;
+  overflow: visible;
+}
 
-  .calendar-icon--small {
-    padding: 2px;
-  }
+.calendar-icon--large {
+  padding: 0;
+}
 
-  #calendarDropdownBtn, #calendarDropdownBtn .chevron-icon {
-    transition: transform 0.2s ease-in-out;
-  }
+.calendar-icon--small {
+  padding: 2px 3px;
+}
 
-  #calendarDropdownBtn.active {
-    opacity: .85;
-  }
+#calendarDropdownBtn, #calendarDropdownBtn svg {
+  transition: transform 0.2s ease-in-out;
+}
 
-  #calendarDropdownBtn.active .chevron-icon {
-    transform: rotate(180deg);
-  }
+#calendarDropdownBtn.active {
+  opacity: .85;
+}
+
+#calendarDropdownBtn.active svg {
+  transform: rotate(180deg);
+}
+
+
 
 .conf-btn-primary {
   display: flex;
@@ -1600,9 +1616,9 @@ body {
   }
 
   #btn-new-booking {
-    background: transparent !important;
-    color: #301E0D !important;
-    border: 1px solid #301E0D !important;
+    background: transparent;
+    color: var(--_colours---accent-text);
+    border: 1px solid var(--_colours---accent-text) ;
   }
 
   .conf-footer-note {

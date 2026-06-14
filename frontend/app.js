@@ -1721,6 +1721,7 @@ function populateConfirmation(params, customerData) {
   dropdownBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     calendarMenu.classList.toggle('hidden');
+    calendarMenu.classList.toggle('active');
   });
 
   // Close dropdown if the user clicks outside
