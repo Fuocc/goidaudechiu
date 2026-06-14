@@ -1087,38 +1087,59 @@ body {
     left: 0;
     margin-top: 8px;
     background: #ffffff;
-    border: 1px solid #e2e8f0;
-    border-radius: 8px;
+    border: 1px solid var(--_colours---border);
+    border-radius: 22px;
+    padding: 8px;
     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-    min-width: 180px;
+    min-width: 230px;
     z-index: 50;
     overflow: hidden;
   }
 
   /* Dropdown Links */
-  .calendar-dropdown .dropdown-item {
-    display: block;
+  .dropdown-item {
+    display: flex;
+    gap: 8px;
     padding: 10px 16px;
-    color: #334155;
+    color: #301E0D;
     text-decoration: none;
-    font-size: 14px;
+    font-size: 16px;
     transition: background-color 0.2s ease;
+    justify-content: flex-start;
+    align-items: center;
+    border-radius: 16px;
   }
 
-  .calendar-dropdown .dropdown-item:hover {
-    background-color: #f1f5f9;
+  .dropdown-item:hover {
+    background-color: var(--_colours---white-bg);
   }
 
   .calendar-icon {
-    width: 20px;
-    height: 20px;
+    width: 22px;
+    height: 22px;
     flex-shrink: 0;
     object-fit: contain;
+    padding: 1px
   }
 
-  .calendar-icon--outlook {
-    width: 18px; 
-    height: 18px;
+  .calendar-icon--large {
+    padding: 0;
+  }
+
+  .calendar-icon--small {
+    padding: 2px;
+  }
+
+  #calendarDropdownBtn, #calendarDropdownBtn .chevron-icon {
+    transition: transform 0.2s ease-in-out;
+  }
+
+  #calendarDropdownBtn.active {
+    opacity: .85;
+  }
+
+  #calendarDropdownBtn.active .chevron-icon {
+    transform: rotate(180deg);
   }
 
 .conf-btn-primary {
@@ -1159,7 +1180,6 @@ body {
 }
 
 #btn-new-booking {
-  flex: 1;
   font-family: var(--font-heading);
   font-size: clamp(1rem, 0.97rem + 0.13vw, 1.125rem);
   max-width: 240px;
@@ -1567,7 +1587,6 @@ body {
   .conf-btn-primary,
   #btn-new-booking {
     max-width: 100% !important;
-    padding: 14px 24px !important;
     font-size: 16px !important;
     border-radius: var(--radius-pill) !important;
   }

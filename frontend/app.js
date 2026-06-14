@@ -1714,6 +1714,23 @@ function populateConfirmation(params, customerData) {
     notesRow.classList.add('hidden');
   }
 
+  // Add to Calendar Toggle
+  const dropdownBtn = document.getElementById('calendarDropdownBtn');
+  const calendarMenu = document.getElementById('calendarMenu');
+  
+  dropdownBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    calendarMenu.classList.toggle('hidden');
+  });
+
+  // Close dropdown if the user clicks outside
+  window.addEventListener('click', (e) => {
+    if (!dropdownBtn.contains(e.target) && !calendarMenu.contains(e.target)) {
+      calendarMenu.classList.add('hidden');
+      dropdownBtn.classList.remove('active');
+    }
+  });
+
   if (branch) {
     document.getElementById('conf-branch-name').textContent = branch.address || branch.name;
 
