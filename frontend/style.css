@@ -417,6 +417,12 @@ body {
   font-size: 1.125rem;
 }
 
+  /* Hide drawer submit buttons by default*/
+  #btn-drawer-submit-peek,
+  #btn-drawer-submit-bottom {
+    display: none !important;
+  }
+
 /* ---- Sidebar Details ---- */
 .sidebar-inner {
   display: flex;
@@ -590,7 +596,8 @@ body {
   margin-bottom: 6px;
 }
 
-#btn-drawer-submit {
+#btn-drawer-submit-peek,
+#btn-drawer-submit-bottom {
   display: none !important;
 }
 
@@ -1461,7 +1468,7 @@ body {
   }
 
   .success-content {
-    padding: 32px 16px;
+    padding: 32px;
     border-radius: 0 0 12px 12px;
   }
 
@@ -1510,6 +1517,41 @@ body {
     margin-top: 24px;
   }
 
+  /* Container positioning */
+  .dropdown-container {
+    position: relative;
+    display: inline-block;
+  }
+
+  /* Dropdown Menu Card */
+  .calendar-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    margin-top: 8px;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    min-width: 180px;
+    z-index: 50;
+    overflow: hidden;
+  }
+
+  /* Dropdown Links */
+  .calendar-dropdown .dropdown-item {
+    display: block;
+    padding: 10px 16px;
+    color: #334155;
+    text-decoration: none;
+    font-size: 14px;
+    transition: background-color 0.2s ease;
+  }
+
+  .calendar-dropdown .dropdown-item:hover {
+    background-color: #f1f5f9;
+  }
+
   .conf-btn-primary,
   #btn-new-booking {
     max-width: 100% !important;
@@ -1534,7 +1576,7 @@ body {
   }
 
   .conf-footer-note {
-    padding: 24px 20px;
+    padding: 32px;
     margin-top: 16px;
     background-color: var(--_colours---white-bg);
     border-radius: 12px;
@@ -1714,11 +1756,7 @@ body {
     transform: translateY(calc(100% - 156px));
   }
 
-  /* Hide drawer submit buttons by default on mobile */
-  #btn-drawer-submit-peek,
-  #btn-drawer-submit-bottom {
-    display: none !important;
-  }
+
 
   /* Collapsed Peek Submit Button: visible ONLY during customerinfo step when collapsed */
   .summary-sidebar.step-customerinfo #btn-drawer-submit-peek {
