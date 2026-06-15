@@ -1993,41 +1993,37 @@ function getSavedCustomerData() {
 function generateCalendarLinks(params, service, branch) {
   const dateObj = new Date(params.date + 'T00:00:00');
   
-  // 1. Reuse your exact day arrays logic for consistency
   const days = ['Chủ nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
   const dayName = days[dateObj.getDay()];
   const dateNum = dateObj.getDate();
   const monthNum = dateObj.getMonth() + 1;
 
-  // 2. Direct reuse of your formatTime12hSimple helper -> returns "02:30 PM"
   const time12hClean = formatTime12hSimple(params.time); 
 
-  // --- TITLE ---
-  // Format: Ghé Ý Ơi Spa: 02:30 PM, Thứ 2, ngày 15
+  // --- 1. TITLE ---
   const rawTitle = `Ghé Ý Ơi Spa: ${time12hClean}, ${dayName}, ${dateNum} tháng ${monthNum}`;
   const title = encodeURIComponent(rawTitle);
 
-  // --- DESCRIPTION ---
+  // --- 2. DATA EXTRACTIONS ---
   const serviceName = service?.name || 'Chọn sau tại spa';
   const timeDisplay = `${params.time}, ${dayName}, ngày ${dateNum} tháng ${monthNum}`;
   const addressDisplay = branch?.address || branch?.name || 'Tại Spa';
-  const googleMapUrl = branch?.google_map_url || 'Chưa cấu hình';
-  const branchPhone = branch?.phone || 'Chưa cấu hình';
+  const branchPhone = branch?.phone || '0968241808';
 
-  const rawDesc = `Thông tin lịch hẹn:\n` +
+  // --- 3. DESCRIPTION BUILDERS ---
+  const rawDesc = `Ý đợi cục dàng nghen:\n` +
                   `- Dịch vụ: ${serviceName}\n` +
                   `- Số người: ${params.guests} người\n` +
                   `- Lúc: ${timeDisplay}\n` +
                   `- Ghi chú: ${params.notes || 'Không có'}\n\n` +
-                  `Thông tin trợ giúp:\n` +
+                  `Ý Ơi Spa:\n` +
                   `- Địa chỉ: ${addressDisplay}\n` +
-                  `- Chỉ đường Google map: ${googleMapUrl}\n` +
                   `- SĐT: ${branchPhone}`;
-                  
-  const description = encodeURIComponent(rawDesc);
-  const location = encodeURIComponent(addressDisplay);
 
-  // --- MACHINE DATE FORMATTING (Required for Calendar Engines) ---
+  const encodedDescription = encodeURIComponent(rawDesc);
+  const encodedLocation = encodeURIComponent(addressDisplay);
+
+  // --- 4. MACHINE TIME STRINGS ---
   const dateClean = params.date.replace(/-/g, '');
   const startClean = params.time.replace(/:/g, '') + '00';
   const endClean = params.time_end.replace(/:/g, '') + '00';
@@ -2036,11 +2032,12 @@ function generateCalendarLinks(params, service, branch) {
   const outlookStart = `${params.date}T${params.time}:00`;
   const outlookEnd = `${params.date}T${params.time_end}:00`;
 
-  // --- ENGINE SETUP ---
-  const googleUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${googleTimeBlock}&details=${description}&location=${location}`;
+  // --- 5. ENGINE STRINGS LINK GENERATION ---
+  const googleUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${googleTimeBlock}&details=${encodedDescription}&location=${encodedLocation}`;
 
-  const outlookUrl = `https://outlook.live.com/calendar/0/deeplink/compose?path=/calendar/action/compose&rru=addevent&subject=${title}&startdt=${outlookStart}&enddt=${outlookEnd}&body=${description}&location=${location}`;
+  const outlookUrl = `https://outlook.live.com/calendar/0/deeplink/compose?path=/calendar/action/compose&rru=addevent&subject=${title}&startdt=${outlookStart}&enddt=${outlookEnd}&body=${encodedDescription}&location=${encodedLocation}&reminderMinutes=60`;
 
+  // Injected standard 1-hour VALARM component block for native Apple file downloads (.ics)
   const icsData = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
@@ -2051,6 +2048,11 @@ function generateCalendarLinks(params, service, branch) {
     `SUMMARY:${rawTitle}`,
     `DESCRIPTION:${rawDesc.replace(/\n/g, '\\n')}`,
     `LOCATION:${addressDisplay}`,
+    'BEGIN:VALARM',
+    'TRIGGER:-PT1H',
+    'ACTION:DISPLAY',
+    'DESCRIPTION:Reminder',
+    'END:VALARM',
     'END:VEVENT',
     'END:VCALENDAR'
   ].join('\r\n');
