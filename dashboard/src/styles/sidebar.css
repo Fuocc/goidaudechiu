@@ -74,22 +74,6 @@
   height: 28px;
 }
 
-.sparkle-icon {
-  animation: float-sparkle 3s ease-in-out infinite;
-}
-
-@keyframes float-sparkle {
-
-  0%,
-  100% {
-    transform: translateY(0) rotate(0deg);
-  }
-
-  50% {
-    transform: translateY(-2px) rotate(5deg);
-  }
-}
-
 .sidebar-nav {
   flex: 1;
   display: flex;
@@ -518,7 +502,8 @@
 
 /* Custom Thin Elegant Scrollbars */
 .notif-panel-body::-webkit-scrollbar {
-  width: 5px;
+  width: 9px;
+  border-radius: 8px;
 }
 
 .notif-panel-body::-webkit-scrollbar-track {
@@ -526,13 +511,16 @@
 }
 
 .notif-panel-body::-webkit-scrollbar-thumb {
-  background: rgba(56, 102, 101, 0.15);
-  border-radius: 4px;
+  background: #D6D3D1;
+  border-radius: 8px;
+  border: 3px solid #f4f2f0;
 }
 
 .notif-panel-body::-webkit-scrollbar-thumb:hover {
-  background: rgba(56, 102, 101, 0.3);
+  background: #A8A29E;
+  border: 0px;
 }
+
 
 /* Premium Panel Header */
 .notif-panel-header {
@@ -584,7 +572,7 @@
   color: #707070;
   width: 42px;
   height: 42px;
-  border-radius: 50%;
+  border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -595,7 +583,6 @@
 .btn-close-notif-top:hover {
   background-color: #1C1A17;
   color: #F4F2F0;
-  transform: rotate(90deg);
 }
 
 /* Active/Inactive Filter Tags styling */

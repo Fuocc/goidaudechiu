@@ -70,6 +70,21 @@ function AIChatPanel({ onClose, currentBranchId }) {
     }
   }, [inputText]);
 
+  // Focus textarea when clicking anywhere on the card
+  useEffect(() => {
+    const card = textareaRef.current?.closest('.ai-chat-input-card');
+    if (!card) return;
+
+    const handleCardClick = (e) => {
+      if (!e.target.closest('button, select, .custom-branch-select-container')) {
+        textareaRef.current?.focus();
+      }
+    };
+
+    card.addEventListener('click', handleCardClick);
+    return () => card.removeEventListener('click', handleCardClick);
+  }, []);
+
   // Save chat history to localStorage
   useEffect(() => {
     try {
@@ -405,7 +420,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
             className="ai-chat-textarea"
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
-            placeholder="Trò chuyện cùng Ý..."
+            placeholder="Hãy nói Ý nghe..."
             disabled={loading}
             rows={1}
             onKeyDown={(e) => {
