@@ -2009,6 +2009,7 @@ function generateCalendarLinks(params, service, branch) {
   const timeDisplay = `${params.time}, ${dayName}, ngày ${dateNum} tháng ${monthNum}`;
   const addressDisplay = branch?.address || branch?.name || 'Tại Spa';
   const branchPhone = branch?.phone || '0968241808';
+  const googleMapUrl = branch?.google_map_url || '';
 
   // --- 3. DESCRIPTION BUILDERS ---
   const rawDesc = `Ý đợi cục dàng nghen:\n` +
@@ -2018,10 +2019,15 @@ function generateCalendarLinks(params, service, branch) {
                   `- Ghi chú: ${params.notes || 'Không có'}\n\n` +
                   `Ý Ơi Spa:\n` +
                   `- Địa chỉ: ${addressDisplay}\n` +
-                  `- SĐT: ${branchPhone}`;
+                  `- SĐT: ${branchPhone}\n` +
+                  `- Chỉ đường: ${googleMapUrl}`;
 
+  // Google and standard deep-links expect this regular URI encoding
   const encodedDescription = encodeURIComponent(rawDesc);
   const encodedLocation = encodeURIComponent(addressDisplay);
+
+  // CRITICAL FIX FOR OUTLOOK: Replace encoded newlines (%0A) with encoded HTML <br> tags (%3Cbr%3E)
+  const outlookDescription = encodedDescription.replace(/%0A/g, '%3Cbr%3E');
 
   // --- 4. MACHINE TIME STRINGS ---
   const dateClean = params.date.replace(/-/g, '');
@@ -2033,11 +2039,10 @@ function generateCalendarLinks(params, service, branch) {
   const outlookEnd = `${params.date}T${params.time_end}:00`;
 
   // --- 5. ENGINE STRINGS LINK GENERATION ---
-  const googleUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${googleTimeBlock}&details=${encodedDescription}&location=${encodedLocation}`;
+  const googleUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${googleTimeBlock}&details=${encodedDescription}&location=${encodedLocation}&remind1stHour=1`;
 
-  const outlookUrl = `https://outlook.live.com/calendar/0/deeplink/compose?path=/calendar/action/compose&rru=addevent&subject=${title}&startdt=${outlookStart}&enddt=${outlookEnd}&body=${encodedDescription}&location=${encodedLocation}&reminderMinutes=60`;
+  const outlookUrl = `https://outlook.live.com/calendar/0/deeplink/compose?path=/calendar/action/compose&rru=addevent&subject=${title}&startdt=${outlookStart}&enddt=${outlookEnd}&body=${outlookDescription}&location=${encodedLocation}&reminderMinutes=60`;
 
-  // Injected standard 1-hour VALARM component block for native Apple file downloads (.ics)
   const icsData = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
