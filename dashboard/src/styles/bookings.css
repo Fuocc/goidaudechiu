@@ -173,7 +173,7 @@
 
 .cal-view-toggle {
   display: flex;
-  gap: 12px;
+  gap: 8px;
   padding: 12px;
 }
 
@@ -316,6 +316,17 @@
 .btn-today {
   font-size: 16px;
   font-weight: 500;
+  position: relative;
+}
+
+.btn-today:not(.active)::after {
+    background-color: #e6a02a;
+    content: '';
+    display: inline-block;
+    width: 5px;
+    height: 5px;
+    border-radius: 5px;
+    vertical-align: middle;
 }
 
 .cal-header {
@@ -511,6 +522,7 @@
 .cal-staff-header {
   height: 48px;
   border-right: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e5e7eb;
   padding: 6px 16px;
   font-size: 14px;
   color: #57534E;
@@ -540,7 +552,7 @@
   color: #78716C;
   border-bottom: none;
   border-right: 1px solid var(--chip-gray);
-  border-top: 1px solid var(--chip-gray);
+  border-top: none;
 
 }
 
@@ -815,7 +827,7 @@
   z-index: 100;
   background: white;
   border: 1px solid #efefef;
-  borderRadius: 12px;
+  border-radius: 12px;
   padding: 8px;
   box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
 }

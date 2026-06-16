@@ -3,6 +3,7 @@ import { FiCheckCircle, FiChevronDown, FiChevronUp, FiCornerUpLeft, FiRotateCcw,
 import { request } from '../api';
 import '../styles/ai-chat.css';
 import geminiLogo from '../assets/gemini-logo.svg';
+import { Tooltip } from '../components/ui/tooltip';
 
 function AIChatPanel({ onClose, currentBranchId }) {
   const [messages, setMessages] = useState(() => {
@@ -279,7 +280,9 @@ function AIChatPanel({ onClose, currentBranchId }) {
             <path stroke="#44403C" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="m15 18-6-6 6-6" />
           </svg> Trở về
         </button>
-        <img src={geminiLogo} alt="Gemini logo" onClick={onClose} style={{ cursor: 'pointer' }} />
+        <Tooltip content="Tắt trợ lí AI">
+          <img src={geminiLogo} alt="Gemini logo" onClick={onClose} style={{ cursor: 'pointer' }} />
+        </Tooltip>
       </div>
 
       {/* Main Area */}
