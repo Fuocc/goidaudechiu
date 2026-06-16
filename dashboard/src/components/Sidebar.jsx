@@ -977,7 +977,7 @@ function Sidebar({ user, onLogout }) {
           <div className="notif-panel" ref={panelRef} onClick={e => e.stopPropagation()}>
             <div className="notif-panel-header">
               <div className="notif-header-top">
-                <span className="notif-title">Hoạt động</span>
+                <span className="notif-title">Thông báo</span>
                 <button className="btn-mark-all-read-top" onClick={markAllAsRead}>
                   <svg width="18" height="17" viewBox="0 0 18 17" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path d="M5.75 7.41667L8.25 9.91667L16.5833 1.58333M11.5833 0.75H4.75C3.34987 0.75 2.6498 0.75 2.11502 1.02248C1.64462 1.26217 1.26217 1.64462 1.02248 2.11502C0.75 2.6498 0.75 3.34987 0.75 4.75V11.75C0.75 13.1501 0.75 13.8502 1.02248 14.385C1.26217 14.8554 1.64462 15.2378 2.11502 15.4775C2.6498 15.75 3.34987 15.75 4.75 15.75H11.75C13.1501 15.75 13.8502 15.75 14.385 15.4775C14.8554 15.2378 15.2378 14.8554 15.4775 14.385C15.75 13.8502 15.75 13.1501 15.75 11.75V8.25" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
@@ -1049,8 +1049,8 @@ function Sidebar({ user, onLogout }) {
                       <path d="M35 35c0 .3.2.5.5.5s.5-.2.5-.5" stroke="#5C5A54" strokeWidth="1.5" strokeLinecap="round" />
                     </svg>
                   </div>
-                  <h4 className="notif-empty-title">Dỏi nghen...</h4>
-                  <p className="notif-empty-subtitle">Bạn đã xem hết hoạt động rồi!</p>
+                  <h4 className="notif-empty-title">Dễ chịu...</h4>
+                  <p className="notif-empty-subtitle">Bạn đã xem hết thông báo rồi!</p>
                 </div>
               ) : (
                 // Grouped Notification Activity Cards
