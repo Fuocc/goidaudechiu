@@ -684,7 +684,11 @@ router.put('/:id', async (req, res) => {
     const broadcast = getBroadcast(req);
     broadcast('booking.updated', updated);
 
-    res.json(updated);
+    res.json({
+      ...updated,
+      oldBooking: booking 
+    });
+
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1127,6 +1131,16 @@ router.put('/:id/status', async (req, res) => {
     if (!validStatuses.includes(status)) {
       return res.status(400).json({ error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` });
     }
+    // Get a snapshot of the booking before modifying its status
+    const { data: oldBooking, error: snapErr } = await supabase
+      .from('bookings')
+      .select('*')
+      .eq('id', req.params.id)
+      .single();
+
+    if (snapErr || !oldBooking) {
+      return res.status(404).json({ error: 'Booking not found' });
+    }
 
     const { data, error } = await supabase
       .from('bookings')
@@ -1173,7 +1187,12 @@ router.put('/:id/status', async (req, res) => {
     const broadcast = getBroadcast(req);
     broadcast('booking.updated', data);
 
-    res.json(data);
+    // Send the updated data along with the status snapshot
+    res.json({
+      ...data,
+      oldBooking
+    });
+    
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

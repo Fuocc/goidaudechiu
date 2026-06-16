@@ -205,7 +205,8 @@ function AIChatPanel({ onClose, currentBranchId }) {
           isSuccess: true,
           title: dynamicTitle,
           text: summary,
-          bookings: bookings || [], // Store booking IDs for undo action
+          bookings: bookings || [], // Id of booking
+          snapshot: data.oldBookings || null,
           time: getNowTime()
         };
         setMessages(prev => [...prev, aiMsg].slice(-50));
@@ -229,37 +230,54 @@ function AIChatPanel({ onClose, currentBranchId }) {
     }
   };
 
-  const handleUndo = async (messageId, bookingIds) => {
+  const handleUndo = async (messageId, bookingIds, snapshot) => {
     if (!bookingIds || bookingIds.length === 0) return;
-    if (window.confirm('Bạn có chắc chắn muốn hoàn tác đặt lịch này?')) {
-      setUndoLoadingId(messageId);
-      try {
-        // Delete bookings in parallel
+    setUndoLoadingId(messageId);
+    try {
+      // Check if we have an array of old history snapshots
+      if (snapshot && Array.isArray(snapshot) && snapshot.length > 0) {
+        // Scenario A1: Group Edit/Update Restore (Multiple appointments)
+        await Promise.all(
+          snapshot.map(oldRow => 
+            request(`/bookings/${oldRow.id}`, {
+              method: 'PUT',
+              body: JSON.stringify(oldRow)
+            })
+          )
+        );
+      } else if (snapshot && snapshot.id) {
+        // Scenario A2: Single Edit/Update Restore fallback
+        await request(`/bookings/${snapshot.id}`, {
+          method: 'PUT',
+          body: JSON.stringify(snapshot)
+        });
+      } else {
+        // Scenario B: No snapshot exists (Brand new booking creation wipeout)
         await Promise.all(
           bookingIds.map(id => request(`/bookings/${id}`, { method: 'DELETE' }))
         );
-
-        // Track as undone
-        setUndoneMessages(prev => [...prev, messageId]);
-
-        // Append a system message confirming the undo
-        const aiMsg = {
-          id: (Date.now() + 2).toString(),
-          sender: 'ai',
-          text: 'Hoàn tác đặt lịch thành công!',
-          isUndoSuccess: true,
-          time: getNowTime()
-        };
-        setMessages(prev => [...prev, aiMsg].slice(-50));
-
-        // Dispatch global refresh-bookings event
-        window.dispatchEvent(new CustomEvent('refresh-bookings'));
-      } catch (err) {
-        console.error('Undo booking error:', err);
-        alert(`Không thể hoàn tác đặt lịch: ${err.message}`);
-      } finally {
-        setUndoLoadingId(null);
       }
+
+      // Track as undone
+      setUndoneMessages(prev => [...prev, messageId]);
+
+      // Append a system message confirming the undo
+      const aiMsg = {
+        id: (Date.now() + 2).toString(),
+        sender: 'ai',
+        text: 'Hoàn tác đặt lịch thành công!',
+        isUndoSuccess: true,
+        time: getNowTime()
+      };
+      setMessages(prev => [...prev, aiMsg].slice(-50));
+
+      // Dispatch global refresh-bookings event
+      window.dispatchEvent(new CustomEvent('refresh-bookings'));
+    } catch (err) {
+      console.error('Undo booking error:', err);
+      alert(`Không thể hoàn tác đặt lịch: ${err.message}`);
+    } finally {
+      setUndoLoadingId(null);
     }
   };
 
@@ -343,7 +361,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
                               <button
                                 type="button"
                                 className="ai-action-btn undo"
-                                onClick={() => handleUndo(msg.id, msg.bookings)}
+                                onClick={() => handleUndo(msg.id, msg.bookings, msg.snapshot)}
                                 disabled={loading || undoLoadingId === msg.id}
                               >
                                 <FiRotateCcw size={12} className={undoLoadingId === msg.id ? 'spin' : ''} />
