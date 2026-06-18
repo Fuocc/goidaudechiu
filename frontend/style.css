@@ -367,6 +367,8 @@ body {
   margin-bottom: 8px;
 }
 
+
+
 .tag-group {
   display: flex;
   gap: 8px;
@@ -381,6 +383,11 @@ body {
   font-size: 16px;
   font-weight: 600;
   font-family: var(--font-heading);
+}
+
+.btn-toggle-desc.hidden {
+  display: none;
+  pointer-events: none;
 }
 
 .service-desc-container {
@@ -409,6 +416,12 @@ body {
   font-weight: 700;
   font-size: 1.125rem;
 }
+
+  /* Hide drawer submit buttons by default*/
+  #btn-drawer-submit-peek,
+  #btn-drawer-submit-bottom {
+    display: none !important;
+  }
 
 /* ---- Sidebar Details ---- */
 .sidebar-inner {
@@ -583,7 +596,8 @@ body {
   margin-bottom: 6px;
 }
 
-#btn-drawer-submit {
+#btn-drawer-submit-peek,
+#btn-drawer-submit-bottom {
   display: none !important;
 }
 
@@ -594,7 +608,7 @@ body {
 
 /* ---- Buttons ---- */
 .btn-primary {
-  background: var(--_colours---cta);
+  background-color: var(--_colours---cta);
   color: var(--_colours---cta-text);
   border: none;
   padding: 16px 32px;
@@ -602,24 +616,31 @@ body {
   font-size: 16px;
   font-weight: 700;
   cursor: pointer;
-  transition: transform 0.2s, opacity 0.2s;
+  transition: transform 0.2s, opacity 0.2s, background-color 0.2s cubic-bezier(0.25, 1, 0.5, 1), color 0.2s cubic-bezier(0.25, 1, 0.5, 1);
   width: 100%;
 }
 
 .btn-primary:hover {
-  opacity: 0.9;
-  transform: translateY(-1px);
+  color: var(--_colours---cta) !important;
+  background-color: var(--_colours---cta-text) !important;
 }
 
 .btn-secondary {
   background: transparent;
-  color: var(--_colours---cta-text);
-  border: 1px solid var(--_colours---cta-text);
+  color: var(--_colours---accent-text);
+  border: 1px solid var(--_colours---accent-text);
   padding: 14px 32px;
   border-radius: var(--radius-pill);
   font-size: 15px;
   font-weight: 600;
   cursor: pointer;
+  transition: background-color 0.2s cubic-bezier(0.25, 1, 0.5, 1), 
+              color 0.2s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.btn-secondary:hover {
+  background: var(--_colours---accent-text);
+  color: var(--_colours---white-bg);
 }
 
 #skip-btn-container {
@@ -1057,8 +1078,84 @@ body {
 .conf-btn-wrap {
   display: flex;
   gap: 16px;
-  justify-content: center;
+  justify-content: flex-start;
 }
+
+/* Container positioning */
+.dropdown-container {
+  position: relative;
+  display: inline-block;
+}
+
+/* Dropdown Menu Card */
+.calendar-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 8px;
+  background: #ffffff;
+  border-radius: 22px;
+  padding: 8px;
+  box-shadow: 0 5px 9px 1px rgb(0 0 0 / 10%);
+  width: 100%;
+  min-width: 230px;
+  z-index: 50;
+  overflow: hidden;
+}
+
+.calendar-dropdown:not(.hidden) {
+  animation: staggerFadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Dropdown Links */
+.dropdown-item {
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px;
+  color: #301E0D;
+  text-decoration: none;
+  font-size: 16px;
+  transition: background-color 0.2s ease;
+  justify-content: flex-start;
+  align-items: center;
+  border-radius: 16px;
+}
+
+.dropdown-item:hover {
+  background-color: var(--_colours---white-bg);
+}
+
+.calendar-icon {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  object-fit: contain;
+  padding: 1px 2px;
+  overflow: visible;
+}
+
+.calendar-icon--large {
+  padding: 0;
+}
+
+.calendar-icon--small {
+  padding: 2px 3px;
+}
+
+#calendarDropdownBtn svg {
+  transition: transform 0.15s ease-in-out;
+}
+
+#calendarDropdownBtn.active {
+  color: var(--_colours---cta) !important;
+  background-color: var(--_colours---cta-text) !important;
+}
+
+#calendarDropdownBtn.active svg {
+  transform: rotate(180deg);
+}
+
+
 
 .conf-btn-primary {
   display: flex;
@@ -1098,7 +1195,6 @@ body {
 }
 
 #btn-new-booking {
-  flex: 1;
   font-family: var(--font-heading);
   font-size: clamp(1rem, 0.97rem + 0.13vw, 1.125rem);
   max-width: 240px;
@@ -1454,7 +1550,7 @@ body {
   }
 
   .success-content {
-    padding: 32px 16px;
+    padding: 32px;
     border-radius: 0 0 12px 12px;
   }
 
@@ -1506,8 +1602,6 @@ body {
   .conf-btn-primary,
   #btn-new-booking {
     max-width: 100% !important;
-    width: 100% !important;
-    padding: 14px !important;
     font-size: 16px !important;
     border-radius: var(--radius-pill) !important;
   }
@@ -1521,13 +1615,13 @@ body {
   }
 
   #btn-new-booking {
-    background: transparent !important;
-    color: #301E0D !important;
-    border: 1px solid #301E0D !important;
+    background: transparent;
+    color: var(--_colours---accent-text);
+    border: 1px solid var(--_colours---accent-text) ;
   }
 
   .conf-footer-note {
-    padding: 24px 20px;
+    padding: 32px;
     margin-top: 16px;
     background-color: var(--_colours---white-bg);
     border-radius: 12px;
@@ -1707,11 +1801,7 @@ body {
     transform: translateY(calc(100% - 156px));
   }
 
-  /* Hide drawer submit buttons by default on mobile */
-  #btn-drawer-submit-peek,
-  #btn-drawer-submit-bottom {
-    display: none !important;
-  }
+
 
   /* Collapsed Peek Submit Button: visible ONLY during customerinfo step when collapsed */
   .summary-sidebar.step-customerinfo #btn-drawer-submit-peek {

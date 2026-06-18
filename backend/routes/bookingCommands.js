@@ -1420,7 +1420,8 @@ Nếu không khớp → null.
           duration: matched.duration || 60,
           summary: `${sumAction} của ${sumName}${serviceStr}${timeStr}`,
           matched,
-          bookings: updatedIds
+          bookings: updatedIds,
+          oldBookings: matchedBookings || [],
         });
       }
     }

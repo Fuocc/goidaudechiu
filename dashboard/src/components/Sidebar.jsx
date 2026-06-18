@@ -6,6 +6,7 @@ import { useWebPush } from '../hooks/useWebPush';
 import { savePreferenceToDB } from '../idbHelper';
 import '../styles/sidebar.css';
 import logo from '../assets/logo.svg';
+import { Tooltip } from '../components/ui/tooltip';
 import geminiLogo from '../assets/gemini-logo.svg';
 import AIChatPanel from './AIChatPanel';
 import { getDashboardNotifications, markNotificationRead, markAllNotificationsRead, deleteNotification } from '../api';
@@ -775,19 +776,18 @@ function Sidebar({ user, onLogout }) {
           <div className="sidebar-logo">
             <img src={logo} alt="Logo" />
           </div>
-          <button
-            className={`sidebar-header-gemini tooltip-trigger${aiChatOpen ? ' active' : ''}`}
-            onClick={(e) => {
-              e.preventDefault();
-              closePanel();
-              window.dispatchEvent(new CustomEvent('toggle-ai-chat'));
-            }}
-          >
-            <img src={geminiLogo} alt="AI" className="sparkle-icon" />
-            <span className="tooltip-text tooltip-bottom">
-              {aiChatOpen ? "Tắt trợ lí AI" : "Mở trợ lí AI"}
-            </span>
-          </button>
+          <Tooltip content={aiChatOpen ? "Tắt trợ lí AI" : "Mở trợ lí AI"}>
+            <button
+              className={`sidebar-header-gemini${aiChatOpen ? ' active' : ''}`}
+              onClick={(e) => {
+                e.preventDefault();
+                closePanel();
+                window.dispatchEvent(new CustomEvent('toggle-ai-chat'));
+              }}
+            >
+              <img src={geminiLogo} alt="AI"/>
+            </button>
+          </Tooltip>
         </div>
 
         {/* Dynamic Categorized Sidebar Links */}
@@ -977,7 +977,7 @@ function Sidebar({ user, onLogout }) {
           <div className="notif-panel" ref={panelRef} onClick={e => e.stopPropagation()}>
             <div className="notif-panel-header">
               <div className="notif-header-top">
-                <span className="notif-title">Hoạt động</span>
+                <span className="notif-title">Thông báo</span>
                 <button className="btn-mark-all-read-top" onClick={markAllAsRead}>
                   <svg width="18" height="17" viewBox="0 0 18 17" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path d="M5.75 7.41667L8.25 9.91667L16.5833 1.58333M11.5833 0.75H4.75C3.34987 0.75 2.6498 0.75 2.11502 1.02248C1.64462 1.26217 1.26217 1.64462 1.02248 2.11502C0.75 2.6498 0.75 3.34987 0.75 4.75V11.75C0.75 13.1501 0.75 13.8502 1.02248 14.385C1.26217 14.8554 1.64462 15.2378 2.11502 15.4775C2.6498 15.75 3.34987 15.75 4.75 15.75H11.75C13.1501 15.75 13.8502 15.75 14.385 15.4775C14.8554 15.2378 15.2378 14.8554 15.4775 14.385C15.75 13.8502 15.75 13.1501 15.75 11.75V8.25" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
@@ -1049,8 +1049,8 @@ function Sidebar({ user, onLogout }) {
                       <path d="M35 35c0 .3.2.5.5.5s.5-.2.5-.5" stroke="#5C5A54" strokeWidth="1.5" strokeLinecap="round" />
                     </svg>
                   </div>
-                  <h4 className="notif-empty-title">Dỏi nghen...</h4>
-                  <p className="notif-empty-subtitle">Bạn đã xem hết hoạt động rồi!</p>
+                  <h4 className="notif-empty-title">Dễ chịu...</h4>
+                  <p className="notif-empty-subtitle">Bạn đã xem hết thông báo rồi!</p>
                 </div>
               ) : (
                 // Grouped Notification Activity Cards
@@ -1137,32 +1137,41 @@ function Sidebar({ user, onLogout }) {
                                 <div className="notif-header-right">
                                   {/* Quick action buttons aligned exactly to the right of the header on hover */}
                                   <div className="notif-card-actions">
-                                    <button
-                                      className="btn-card-action tooltip-trigger"
-                                      onClick={(e) => { e.stopPropagation(); toggleReadStatus(n.id, n.read); }}
-                                    >
-                                      <span className="tooltip-text">
-                                        {n.read ? 'Đánh dấu chưa đọc' : 'Đánh dấu đã đọc'}
-                                      </span>
-                                    </button>
 
-                                    <button
-                                      className="btn-card-action tooltip-trigger"
-                                      onClick={(e) => { e.stopPropagation(); deleteNotif(n.id); }}
-                                    >
-                                      <svg width="16" height="16" viewBox="0 0 17 17" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                        <path d="M5.75 0.75H10.75M0.75 3.25H15.75M14.0833 3.25L13.4989 12.0161C13.4112 13.3313 13.3674 13.9889 13.0833 14.4875C12.8333 14.9265 12.456 15.2794 12.0014 15.4997C11.485 15.75 10.8259 15.75 9.50779 15.75H6.99221C5.67409 15.75 5.01503 15.75 4.49861 15.4997C4.04396 15.2794 3.66674 14.9265 3.41665 14.4875C3.13259 13.9889 3.08875 13.3313 3.00107 12.0161L2.41667 3.25" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-                                      </svg>
-
-                                      <span className="tooltip-text">Xóa</span>
-                                    </button>
+                                    <Tooltip content={n.read ? 'Đánh dấu chưa đọc' : 'Đánh dấu đã đọc'}>
+                                      <button
+                                        className="btn-card-action"
+                                        onClick={(e) => { e.stopPropagation(); toggleReadStatus(n.id, n.read); }}
+                                      >
+                                        {n.read ? (
+                                          <svg width="16" height="16" viewBox="0 0 18 17" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                            <path d="M8.63114 0.73913C9.03964 0.73913 9.37079 1.07005 9.37079 1.47826C9.37079 1.88647 9.03964 2.21739 8.63114 2.21739H4.68443C3.98183 2.21739 3.49922 2.21765 3.1252 2.24819C2.75989 2.27802 2.56323 2.33274 2.42119 2.40506C2.09663 2.57038 1.83253 2.83429 1.6671 3.15863C1.59473 3.30056 1.53997 3.49709 1.51011 3.86215C1.47956 4.23591 1.4793 4.71817 1.4793 5.42029V12.3188C1.4793 13.021 1.47956 13.5032 1.51011 13.877C1.53997 14.242 1.59473 14.4386 1.6671 14.5805C1.83253 14.9048 2.09663 15.1687 2.42119 15.3341C2.56323 15.4064 2.75989 15.4611 3.1252 15.4909C3.49922 15.5215 3.98183 15.5217 4.68443 15.5217H11.5878C12.2904 15.5217 12.773 15.5215 13.147 15.4909C13.5123 15.4611 13.709 15.4064 13.851 15.3341C14.1756 15.1688 14.4397 14.9048 14.6051 14.5805C14.6775 14.4386 14.7323 14.242 14.7621 13.877C14.7927 13.5032 14.7929 13.021 14.7929 12.3188L14.7968 9.85411C14.7974 9.44596 15.129 9.11541 15.5374 9.11594C15.9458 9.11658 16.2766 9.44791 16.2761 9.85603L16.2722 12.3198C16.2722 12.9971 16.2732 13.5496 16.2366 13.9973C16.1993 14.4538 16.119 14.8662 15.9226 15.2513C15.6154 15.8538 15.1252 16.3436 14.5223 16.6506C14.137 16.8468 13.7243 16.9271 13.2674 16.9644C12.8192 17.001 12.266 17 11.5878 17H4.68443C4.00624 17 3.45305 17.001 3.00482 16.9644C2.54796 16.9271 2.13526 16.8468 1.74992 16.6506C1.14699 16.3436 0.656861 15.8538 0.349601 15.2513C0.153261 14.8662 0.0729647 14.4538 0.0356366 13.9973C-0.000985338 13.5494 2.58887e-06 12.9966 2.58887e-06 12.3188V5.42029C2.58887e-06 4.74257 -0.000985338 4.18977 0.0356366 3.74185C0.0729647 3.28531 0.153261 2.8729 0.349601 2.48783C0.656861 1.88532 1.14699 1.39553 1.74992 1.08848C2.13526 0.892282 2.54796 0.812042 3.00482 0.77474C3.45305 0.738143 4.00624 0.73913 4.68443 0.73913H8.63114Z" fill="currentColor" />
+                                            <path fillRule="evenodd" clipRule="evenodd" d="M14.0552 0C16.2339 0 18 1.76491 18 3.94203C18 6.11915 16.2339 7.88406 14.0552 7.88406C11.8766 7.88406 10.1104 6.11915 10.1104 3.94203C10.1104 1.76491 11.8766 1.52383e-06 14.0552 0ZM14.0552 1.47826C12.6936 1.47826 11.5897 2.58133 11.5897 3.94203C11.5897 5.30273 12.6936 6.40579 14.0552 6.4058C15.4169 6.4058 16.5207 5.30273 16.5207 3.94203C16.5207 2.58133 15.4169 1.47826 14.0552 1.47826Z" fill="currentColor" />
+                                          </svg>
+                                        ) : (
+                                          <svg width="16" height="16" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 18 17"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m5.75 7.42 2.5 2.5 8.33-8.34m-5-.83H4.75c-1.4 0-2.1 0-2.63.27a2.5 2.5 0 0 0-1.1 1.1C.75 2.65.75 3.35.75 4.75v7c0 1.4 0 2.1.27 2.64q.37.72 1.1 1.09c.53.27 1.23.27 2.63.27h7c1.4 0 2.1 0 2.64-.27a2.5 2.5 0 0 0 1.09-1.1c.27-.53.27-1.23.27-2.63v-3.5"/></svg>
+                                        )}
+                                      </button>
+                                    </Tooltip>
+                                    <Tooltip content="Xóa">
+                                      <button
+                                        className="btn-card-action"
+                                        onClick={(e) => { e.stopPropagation(); deleteNotif(n.id); }}
+                                      >
+                                        <svg width="16" height="16" viewBox="0 0 17 17" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                          <path d="M5.75 0.75H10.75M0.75 3.25H15.75M14.0833 3.25L13.4989 12.0161C13.4112 13.3313 13.3674 13.9889 13.0833 14.4875C12.8333 14.9265 12.456 15.2794 12.0014 15.4997C11.485 15.75 10.8259 15.75 9.50779 15.75H6.99221C5.67409 15.75 5.01503 15.75 4.49861 15.4997C4.04396 15.2794 3.66674 14.9265 3.41665 14.4875C3.13259 13.9889 3.08875 13.3313 3.00107 12.0161L2.41667 3.25" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                                        </svg>
+                                      </button>
+                                    </Tooltip>
                                   </div>
                                   <span className="notif-card-time">
                                     {formatRelativeTime(n.createdAt)}
                                   </span>
-                                  <span className="notif-guests-badge-top">
-                                    {guestsCount}
-                                  </span>
+                                  <Tooltip content={`${guestsCount} người`} disabled={n.read}>
+                                    <span className="notif-guests-badge-top">
+                                      {guestsCount}
+                                    </span>
+                                  </Tooltip>                                 
                                 </div>
                               </div>
                             </div>

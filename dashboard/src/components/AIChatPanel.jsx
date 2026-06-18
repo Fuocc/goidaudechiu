@@ -3,6 +3,7 @@ import { FiCheckCircle, FiChevronDown, FiChevronUp, FiCornerUpLeft, FiRotateCcw,
 import { request } from '../api';
 import '../styles/ai-chat.css';
 import geminiLogo from '../assets/gemini-logo.svg';
+import { Tooltip } from '../components/ui/tooltip';
 
 function AIChatPanel({ onClose, currentBranchId }) {
   const [messages, setMessages] = useState(() => {
@@ -69,6 +70,21 @@ function AIChatPanel({ onClose, currentBranchId }) {
       el.style.height = `${el.scrollHeight}px`;
     }
   }, [inputText]);
+
+  // Focus textarea when clicking anywhere on the card
+  useEffect(() => {
+    const card = textareaRef.current?.closest('.ai-chat-input-card');
+    if (!card) return;
+
+    const handleCardClick = (e) => {
+      if (!e.target.closest('button, select, .custom-branch-select-container')) {
+        textareaRef.current?.focus();
+      }
+    };
+
+    card.addEventListener('click', handleCardClick);
+    return () => card.removeEventListener('click', handleCardClick);
+  }, []);
 
   // Save chat history to localStorage
   useEffect(() => {
@@ -189,7 +205,8 @@ function AIChatPanel({ onClose, currentBranchId }) {
           isSuccess: true,
           title: dynamicTitle,
           text: summary,
-          bookings: bookings || [], // Store booking IDs for undo action
+          bookings: bookings || [], // Id of booking
+          snapshot: data.oldBookings || null,
           time: getNowTime()
         };
         setMessages(prev => [...prev, aiMsg].slice(-50));
@@ -213,37 +230,54 @@ function AIChatPanel({ onClose, currentBranchId }) {
     }
   };
 
-  const handleUndo = async (messageId, bookingIds) => {
+  const handleUndo = async (messageId, bookingIds, snapshot) => {
     if (!bookingIds || bookingIds.length === 0) return;
-    if (window.confirm('Bạn có chắc chắn muốn hoàn tác đặt lịch này?')) {
-      setUndoLoadingId(messageId);
-      try {
-        // Delete bookings in parallel
+    setUndoLoadingId(messageId);
+    try {
+      // Check if we have an array of old history snapshots
+      if (snapshot && Array.isArray(snapshot) && snapshot.length > 0) {
+        // Scenario A1: Group Edit/Update Restore (Multiple appointments)
+        await Promise.all(
+          snapshot.map(oldRow => 
+            request(`/bookings/${oldRow.id}`, {
+              method: 'PUT',
+              body: JSON.stringify(oldRow)
+            })
+          )
+        );
+      } else if (snapshot && snapshot.id) {
+        // Scenario A2: Single Edit/Update Restore fallback
+        await request(`/bookings/${snapshot.id}`, {
+          method: 'PUT',
+          body: JSON.stringify(snapshot)
+        });
+      } else {
+        // Scenario B: No snapshot exists (Brand new booking creation wipeout)
         await Promise.all(
           bookingIds.map(id => request(`/bookings/${id}`, { method: 'DELETE' }))
         );
-
-        // Track as undone
-        setUndoneMessages(prev => [...prev, messageId]);
-
-        // Append a system message confirming the undo
-        const aiMsg = {
-          id: (Date.now() + 2).toString(),
-          sender: 'ai',
-          text: 'Hoàn tác đặt lịch thành công!',
-          isUndoSuccess: true,
-          time: getNowTime()
-        };
-        setMessages(prev => [...prev, aiMsg].slice(-50));
-
-        // Dispatch global refresh-bookings event
-        window.dispatchEvent(new CustomEvent('refresh-bookings'));
-      } catch (err) {
-        console.error('Undo booking error:', err);
-        alert(`Không thể hoàn tác đặt lịch: ${err.message}`);
-      } finally {
-        setUndoLoadingId(null);
       }
+
+      // Track as undone
+      setUndoneMessages(prev => [...prev, messageId]);
+
+      // Append a system message confirming the undo
+      const aiMsg = {
+        id: (Date.now() + 2).toString(),
+        sender: 'ai',
+        text: 'Hoàn tác đặt lịch thành công!',
+        isUndoSuccess: true,
+        time: getNowTime()
+      };
+      setMessages(prev => [...prev, aiMsg].slice(-50));
+
+      // Dispatch global refresh-bookings event
+      window.dispatchEvent(new CustomEvent('refresh-bookings'));
+    } catch (err) {
+      console.error('Undo booking error:', err);
+      alert(`Không thể hoàn tác đặt lịch: ${err.message}`);
+    } finally {
+      setUndoLoadingId(null);
     }
   };
 
@@ -264,7 +298,9 @@ function AIChatPanel({ onClose, currentBranchId }) {
             <path stroke="#44403C" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="m15 18-6-6 6-6" />
           </svg> Trở về
         </button>
-        <img src={geminiLogo} alt="Gemini logo" onClick={onClose} style={{ cursor: 'pointer' }} />
+        <Tooltip content="Tắt trợ lí AI">
+          <img src={geminiLogo} alt="Gemini logo" onClick={onClose} style={{ cursor: 'pointer' }} />
+        </Tooltip>
       </div>
 
       {/* Main Area */}
@@ -325,7 +361,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
                               <button
                                 type="button"
                                 className="ai-action-btn undo"
-                                onClick={() => handleUndo(msg.id, msg.bookings)}
+                                onClick={() => handleUndo(msg.id, msg.bookings, msg.snapshot)}
                                 disabled={loading || undoLoadingId === msg.id}
                               >
                                 <FiRotateCcw size={12} className={undoLoadingId === msg.id ? 'spin' : ''} />
@@ -405,7 +441,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
             className="ai-chat-textarea"
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
-            placeholder="Trò chuyện cùng Ý..."
+            placeholder="Hãy nói Ý nghe..."
             disabled={loading}
             rows={1}
             onKeyDown={(e) => {

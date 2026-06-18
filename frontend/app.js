@@ -559,6 +559,7 @@ function renderServices(params) {
     services.forEach(s => {
       const isSelected = params.service_id === s.id;
       const isExpanded = cache.expandedServiceIds.has(s.id);
+      const hasDesc = !!s.description && s.description.trim() !== '';
 
       const item = document.createElement('div');
       item.className = `service-item ${isSelected ? 'selected' : ''}`;
@@ -568,7 +569,7 @@ function renderServices(params) {
           <div class="tag-group">
             <span class="tag">${formatPriceShort(s.price)}</span>
             <span class="tag">${s.duration_minutes}p</span>
-            <button type="button" class="tag btn-toggle-desc" style="cursor: pointer; border: none;">${isExpanded ? 'Rút gọn' : 'Xem thêm'}</button>
+            <button type="button" class="tag btn-toggle-desc ${hasDesc ? '' : 'hidden'}" style="cursor: pointer; border: none;">${isExpanded ? 'Rút gọn' : 'Xem thêm'}</button>
           </div>
           <div class="service-desc-container ${isExpanded ? 'expanded' : ''}">
              <p class="service-desc">${s.description || ''}</p>
@@ -1713,6 +1714,31 @@ function populateConfirmation(params, customerData) {
     notesRow.classList.add('hidden');
   }
 
+  // Add to Calendar
+  const dropdownBtn = document.getElementById('calendarDropdownBtn');
+  const calendarMenu = document.getElementById('calendarMenu');
+
+  // 1. Generate the calendar URLs using our new helper
+  const calendarUrls = generateCalendarLinks(params, service, branch);
+
+  // 2. Map the URLs to your menu's anchor links
+  const calendarLinks = calendarMenu.querySelectorAll('.dropdown-item');
+  calendarLinks.forEach(link => {
+    const type = link.getAttribute('data-calendar'); // Matches: google, apple, outlook, ics
+    if (calendarUrls[type]) {
+      link.href = calendarUrls[type];
+      
+      // Open web-based calendars in a new tab safely
+      if (type === 'google' || type === 'outlook') {
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+      } else {
+        // Force file download behavior for Apple/ICS files
+        link.setAttribute('download', 'Hen_Y_Oi_Spa.ics');
+      }
+    }
+  });
+
   if (branch) {
     document.getElementById('conf-branch-name').textContent = branch.address || branch.name;
 
@@ -1746,6 +1772,32 @@ function populateConfirmation(params, customerData) {
       }
     }
   }
+
+  //Calendar Toggle
+  // Add to Calendar Toggle
+  setTimeout(() => {
+    const dropdownBtn = document.getElementById('calendarDropdownBtn');
+    const calendarMenu = document.getElementById('calendarMenu');
+    
+    if (!dropdownBtn || !calendarMenu) return; // Safety guard
+
+    // Remove old listeners if this function runs multiple times
+    const newBtn = dropdownBtn.cloneNode(true);
+    dropdownBtn.parentNode.replaceChild(newBtn, dropdownBtn);
+
+    newBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      calendarMenu.classList.toggle('hidden');
+      newBtn.classList.toggle('active');
+    });
+
+    window.addEventListener('click', (e) => {
+      if (!newBtn.contains(e.target) && !calendarMenu.contains(e.target)) {
+        calendarMenu.classList.add('hidden');
+        newBtn.classList.remove('active');
+      }
+    });
+  }, 0);
 }
 
 // ---- Submission ----
@@ -1936,6 +1988,83 @@ function getSavedCustomerData() {
   } catch (_) {
     return { name: 'Khách', phone: '', email: '', notes: '' };
   }
+}
+
+function generateCalendarLinks(params, service, branch) {
+  const dateObj = new Date(params.date + 'T00:00:00');
+  
+  const days = ['Chủ nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
+  const dayName = days[dateObj.getDay()];
+  const dateNum = dateObj.getDate();
+  const monthNum = dateObj.getMonth() + 1;
+
+  const time12hClean = formatTime12hSimple(params.time); 
+
+  // --- 1. TITLE ---
+  const rawTitle = `Ghé Ý Ơi Spa: ${time12hClean}, ${dayName}, ${dateNum} tháng ${monthNum}`;
+  const title = encodeURIComponent(rawTitle);
+
+  // --- 2. DATA EXTRACTIONS ---
+  const serviceName = service?.name || 'Chọn sau tại spa';
+  const timeDisplay = `${params.time}, ${dayName}, ngày ${dateNum} tháng ${monthNum}`;
+  const addressDisplay = branch?.address || branch?.name || 'Tại Spa';
+  const branchPhone = branch?.phone || '0968241808';
+  const googleMapUrl = branch?.google_map_url || '';
+
+  // --- 3. DESCRIPTION BUILDERS ---
+  const rawDesc = `Ý đợi cục dàng nghen:\n` +
+                  `- Dịch vụ: ${serviceName}\n` +
+                  `- Số người: ${params.guests} người\n` +
+                  `- Lúc: ${timeDisplay}\n` +
+                  `- Ghi chú: ${params.notes || 'Không có'}\n\n` +
+                  `Ý Ơi Spa:\n` +
+                  `- Địa chỉ: ${addressDisplay}\n` +
+                  `- SĐT: ${branchPhone}\n` +
+                  `- Chỉ đường: ${googleMapUrl}`;
+
+  // Google and standard deep-links expect this regular URI encoding
+  const encodedDescription = encodeURIComponent(rawDesc);
+  const encodedLocation = encodeURIComponent(addressDisplay);
+
+  // CRITICAL FIX FOR OUTLOOK: Replace encoded newlines (%0A) with encoded HTML <br> tags (%3Cbr%3E)
+  const outlookDescription = encodedDescription.replace(/%0A/g, '%3Cbr%3E');
+
+  // --- 4. MACHINE TIME STRINGS ---
+  const dateClean = params.date.replace(/-/g, '');
+  const startClean = params.time.replace(/:/g, '') + '00';
+  const endClean = params.time_end.replace(/:/g, '') + '00';
+  const googleTimeBlock = `${dateClean}T${startClean}/${dateClean}T${endClean}`;
+
+  const outlookStart = `${params.date}T${params.time}:00`;
+  const outlookEnd = `${params.date}T${params.time_end}:00`;
+
+  // --- 5. ENGINE STRINGS LINK GENERATION ---
+  const googleUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${googleTimeBlock}&details=${encodedDescription}&location=${encodedLocation}&remind1stHour=1`;
+
+  const outlookUrl = `https://outlook.live.com/calendar/0/deeplink/compose?path=/calendar/action/compose&rru=addevent&subject=${title}&startdt=${outlookStart}&enddt=${outlookEnd}&body=${outlookDescription}&location=${encodedLocation}&reminderMinutes=60`;
+
+  const icsData = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Spa Booking System//VN',
+    'BEGIN:VEVENT',
+    `DTSTART:${dateClean}T${startClean}`,
+    `DTEND:${dateClean}T${endClean}`,
+    `SUMMARY:${rawTitle}`,
+    `DESCRIPTION:${rawDesc.replace(/\n/g, '\\n')}`,
+    `LOCATION:${addressDisplay}`,
+    'BEGIN:VALARM',
+    'TRIGGER:-PT1H',
+    'ACTION:DISPLAY',
+    'DESCRIPTION:Reminder',
+    'END:VALARM',
+    'END:VEVENT',
+    'END:VCALENDAR'
+  ].join('\r\n');
+
+  const icsBlobUrl = `data:text/calendar;charset=utf-8,${encodeURIComponent(icsData)}`;
+
+  return { google: googleUrl, outlook: outlookUrl, apple: icsBlobUrl, ics: icsBlobUrl };
 }
 
 let blockCheckInterval = null;
