@@ -435,16 +435,16 @@
   justify-content: space-between;
   align-items: center;
   gap: 16px;
-  padding: 0 6px;
+  margin: 8px 6px;
   margin-bottom: 8px;
   background-color: transparent;
-  animation: slideDown 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  animation: slideUp 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-@keyframes slideDown {
+@keyframes slideUp {
   0% {
-    opacity: 0;
-    transform: translateY(-4px);
+    opacity: 0.5;
+    transform: translateY(4px);
   }
 
   100% {
