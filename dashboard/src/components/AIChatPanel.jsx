@@ -180,7 +180,14 @@ function AIChatPanel({ onClose, currentBranchId }) {
         command: commandText,
         current_branch_id: selectedBranch,
         reply_to_booking_ids: replyContextIds,
-        apiVersion: isV2 ? 'v2' : 'v1' // Pass version to unified endpoint
+        apiVersion: isV2 ? 'v2' : 'v1',
+        conversation_history: isV2 ? messages
+          .filter(m => m.id !== 'welcome' && m.sender !== 'system')
+          .slice(-10) // last 10 messages for context
+          .map(m => ({
+            role: m.sender === 'user' ? 'user' : 'model',
+            text: m.text
+          })) : undefined
       })
     });
 

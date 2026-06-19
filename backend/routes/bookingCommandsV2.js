@@ -5,7 +5,7 @@ const { GoogleGenAI } = require('@google/genai');
 
 // Initialize Gemini SDK
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-const GEMINI_MODEL = 'gemini-2.5-flash';
+const GEMINI_MODEL = 'gemini-2.5-flash'; //250 requests/day
 
 /*1. AI Tools*/
 const spaTools = [
@@ -17,6 +17,7 @@ const spaTools = [
       properties: {
         name: { type: "string", description: "Tên khách hàng cần tìm (ví dụ: 'Vy', 'Thảo')." },
         date: { type: "string", description: "Ngày hẹn định dạng YYYY-MM-DD. Mặc định là hôm nay nếu không nói rõ." },
+        time: { type: "string", description: "Giờ hẹn HH:MM để lọc theo giờ." },
         branch_id: { type: "string" }
       }
     }
@@ -31,9 +32,11 @@ const spaTools = [
         booking_date: { type: "string", description: "Ngày đặt lịch dạng YYYY-MM-DD." },
         start_time: { type: "string", description: "Giờ bắt đầu dạng HH:MM (24h format)." },
         num_guests: { type: "integer", default: 1 },
-        service_id: { type: "string", description: "UUID của dịch vụ (VD: yvv, ydc, ynmg)." },
+        service_id: { type: "string", description: "UUID của dịch vụ." },
         employee_id: { type: "string", description: "UUID của nhân viên được chỉ định (nếu có)." },
-        notes: { type: "string", description: "Ghi chú bổ sung hoặc thời lượng tùy chỉnh." }
+        duration_minutes: { type: "integer", description: "Thời lượng tùy chỉnh tính bằng phút." },
+        is_walk_in: { type: "boolean", description: "True nếu khách đến trực tiếp không đặt trước." },
+        notes: { type: "string", description: "Ghi chú bổ sung." }
       },
       required: ["temporary_name", "booking_date", "start_time", "service_id"]
     }
@@ -47,72 +50,352 @@ const spaTools = [
         booking_id: { type: "string", description: "UUID của lịch hẹn cần sửa." },
         start_time: { type: "string", description: "Giờ mới HH:MM nếu có thay đổi." },
         status: { type: "string", enum: ["confirmed", "arrived", "pending", "cancelled"] },
-        employee_id: { type: "string", description: "UUID nhân viên mới nếu đổi thợ." }
+        employee_id: { type: "string", description: "UUID nhân viên mới nếu đổi thợ." },
+        num_guests: { type: "integer", description: "Số khách mới nếu thay đổi." },
+        notes: { type: "string", description: "Ghi chú cập nhật." }
       },
       required: ["booking_id"]
     }
   },
   {
+    name: "delete_booking",
+    description: "Hủy hoặc xóa một lịch hẹn theo ID.",
+    parameters: {
+      type: "object",
+      properties: {
+        booking_id: { type: "string", description: "UUID của lịch hẹn cần hủy." },
+        cancel_group: { type: "boolean", description: "True nếu muốn hủy toàn bộ nhóm." }
+      },
+      required: ["booking_id"]
+    }
+  },
+  {
+    name: "get_available_staff",
+    description: "Lấy danh sách nhân viên rảnh tại một thời điểm cụ thể. Dùng trước khi tạo hoặc cập nhật lịch để tránh đặt trùng.",
+    parameters: {
+      type: "object",
+      properties: {
+        date: { type: "string", description: "Ngày YYYY-MM-DD." },
+        start_time: { type: "string", description: "Giờ bắt đầu HH:MM." },
+        end_time: { type: "string", description: "Giờ kết thúc HH:MM." },
+        branch_id: { type: "string" }
+      },
+      required: ["date", "start_time"]
+    }
+  },
+  {
     name: "get_spa_context",
-    description: "Lấy danh sách ID/Tên của tất cả dịch vụ (yvv, ydc, ynmg) và nhân viên đang hoạt động.",
+    description: "Lấy danh sách tất cả dịch vụ và nhân viên đang hoạt động tại chi nhánh. Gọi tool này ĐẦU TIÊN nếu lệnh đề cập đến tên dịch vụ hoặc nhân viên cụ thể.",
     parameters: { type: "object", properties: {} }
   }
 ];
 
-
-
-
-
-
-/*2. Tool Config*/
+/*2. Tool Execution */
 async function executeTool(toolName, params, context) {
-  const { supabase, branch_id } = context;
+  const { supabase, branch_id, todayDateStr } = context;
 
   switch (toolName) {
-    case 'get_spa_context':
-      // Fetch fresh lists so Gemini matches keywords (yvv -> UUID) correctly
-      const [services, employees] = await Promise.all([
-        supabase.from('services').select('id, name, duration_minutes'),
-        supabase.from('employees').select('id, name').eq('branch_id', branch_id).eq('is_active', true)
+    case 'get_spa_context': {
+      const [services, employees, branches] = await Promise.all([
+        supabase.from('services').select('id, name, duration_minutes').eq('is_active', true),
+        supabase.from('employees').select('id, name, branch_id').eq('is_active', true),
+        supabase.from('branches').select('id, name, opening_hours')
       ]);
-      return { services: services.data, employees: employees.data };
+      return {
+        services: services.data,
+        employees: employees.data,
+        branches: branches.data
+      };
+    }
 
-    case 'search_bookings':
-      let query = supabase.from('bookings').select('id, temporary_name, start_time, status').eq('branch_id', branch_id);
-      if (params.date) query = query.eq('booking_date', params.date);
-      if (params.name) query = query.ilike('temporary_name', `%${params.name}%`);
-      const searchResult = await query;
-      return searchResult.data;
+    case 'search_bookings': {
+      const targetDate = params.date || todayDateStr;
+      const targetBranch = params.branch_id || branch_id;
 
-    case 'create_booking':
-      const insertResult = await supabase.from('bookings').insert([{
-        ...params,
-        branch_id: branch_id
-      }]).select();
-      // Trigger SSE update here via context.broadcast if needed
-      return { success: true, booking: insertResult.data };
+      let query = supabase
+        .from('bookings')
+        .select(`
+          id,
+          temporary_name,
+          booking_date,
+          start_time,
+          end_time,
+          status,
+          num_guests,
+          group_booking_id,
+          notes,
+          customers(name, phone),
+          employees(id, name),
+          services(id, name, duration_minutes),
+          branches(id, name)
+        `)
+        .eq('booking_date', targetDate)
+        .eq('branch_id', targetBranch)
+        .neq('status', 'cancelled')
+        .order('start_time', { ascending: true });
 
-    // Add update_booking, delete_booking details here...
+      const { data: allBookings, error } = await query;
+      if (error) return { error: error.message };
+      if (!allBookings || allBookings.length === 0) return { found: 0, bookings: [] };
+
+      // Filter by time if provided
+      let filtered = allBookings;
+      if (params.time) {
+        filtered = allBookings.filter(b => b.start_time && b.start_time.startsWith(params.time));
+      }
+
+      // Filter by name if provided
+      if (params.name) {
+        const stripPrefix = (str) => str
+          .toLowerCase()
+          .replace(/^(chị|anh|c\.|a\.)\s+/i, '')
+          .trim();
+
+        const searchNorm = stripPrefix(params.name);
+
+        const exactMatches = filtered.filter(b => {
+          const bName = stripPrefix(b.temporary_name || b.customers?.name || '');
+          return bName === searchNorm;
+        });
+
+        const partialMatches = exactMatches.length === 0
+          ? filtered.filter(b => {
+              const bName = stripPrefix(b.temporary_name || b.customers?.name || '');
+              return bName.includes(searchNorm);
+            })
+          : [];
+
+        filtered = exactMatches.length > 0 ? exactMatches : partialMatches;
+      }
+
+      // Fetch group siblings
+      const groupIds = [...new Set(filtered
+        .filter(b => b.group_booking_id)
+        .map(b => b.group_booking_id))];
+
+      let siblings = [];
+      if (groupIds.length > 0) {
+        const { data: groupBookings } = await supabase
+          .from('bookings')
+          .select('id, temporary_name, start_time, status, group_booking_id, employees(id, name)')
+          .in('group_booking_id', groupIds)
+          .neq('status', 'cancelled');
+        siblings = groupBookings || [];
+      }
+
+      return {
+        found: filtered.length,
+        exact: params.name ? filtered.some(b => {
+          const stripPrefix = (str) => str.toLowerCase().replace(/^(chị|anh|c\.|a\.)\s+/i, '').trim();
+          return stripPrefix(b.temporary_name || '') === stripPrefix(params.name);
+        }) : true,
+        bookings: filtered,
+        group_siblings: siblings
+      };
+    }
+
+    case 'create_booking': {
+      const { num_guests = 1, ...bookingParams } = params;
+      const broadcast = context.req.app.get('broadcastSSE') || (() => {});
+
+      // Walk-in: round to nearest 5 minutes
+      if (params.is_walk_in && params.start_time) {
+        const [h, m] = params.start_time.split(':').map(Number);
+        const totalMinutes = h * 60 + m;
+        const rounded = Math.ceil(totalMinutes / 5) * 5;
+        bookingParams.start_time = `${String(Math.floor(rounded / 60)).padStart(2, '0')}:${String(rounded % 60).padStart(2, '0')}`;
+      }
+
+      // Compute end_time
+      const duration = params.duration_minutes || 60;
+      if (bookingParams.start_time) {
+        const [h, m] = bookingParams.start_time.split(':').map(Number);
+        const endMinutes = h * 60 + m + duration;
+        bookingParams.end_time = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
+      }
+
+      // Generate group_booking_id if multiple guests
+      const group_booking_id = num_guests > 1 ? crypto.randomUUID() : null;
+
+      const rows = Array.from({ length: num_guests }, () => ({
+        ...bookingParams,
+        branch_id,
+        group_booking_id
+      }));
+
+      const { data: inserted, error } = await supabase
+        .from('bookings')
+        .insert(rows)
+        .select('*, employees(name), services(name), branches(name)');
+
+      if (error) return { error: error.message };
+
+      inserted.forEach(b => broadcast('booking.created', b));
+
+      return {
+        success: true,
+        count: inserted.length,
+        bookings: inserted
+      };
+    }
+
+    case 'update_booking': {
+      const { booking_id, ...updateParams } = params;
+      const broadcast = context.req.app.get('broadcastSSE') || (() => {});
+
+      // Snapshot for undo
+      const { data: oldBooking } = await supabase
+        .from('bookings')
+        .select('*')
+        .eq('id', booking_id)
+        .single();
+
+      const { data: updated, error } = await supabase
+        .from('bookings')
+        .update(updateParams)
+        .eq('id', booking_id)
+        .select('*, employees(name), services(name), branches(name)')
+        .single();
+
+      if (error) return { error: error.message };
+
+      broadcast('booking.updated', updated);
+
+      return {
+        success: true,
+        booking: updated,
+        snapshot: oldBooking // for undo
+      };
+    }
+
+    case 'delete_booking': {
+      const broadcast = context.req.app.get('broadcastSSE') || (() => {});
+
+      // Snapshot for undo
+      const { data: oldBooking } = await supabase
+        .from('bookings')
+        .select('*')
+        .eq('id', params.booking_id)
+        .single();
+
+      let bookingIds = [params.booking_id];
+
+      // Cancel whole group if requested
+      if (params.cancel_group && oldBooking?.group_booking_id) {
+        const { data: groupBookings } = await supabase
+          .from('bookings')
+          .select('id')
+          .eq('group_booking_id', oldBooking.group_booking_id);
+        bookingIds = groupBookings.map(b => b.id);
+      }
+
+      const { error } = await supabase
+        .from('bookings')
+        .update({ status: 'cancelled' })
+        .in('id', bookingIds);
+
+      if (error) return { error: error.message };
+
+      bookingIds.forEach(id => broadcast('booking.updated', { id, status: 'cancelled' }));
+
+      return { success: true, cancelled: bookingIds, snapshot: oldBooking };
+    }
+
+    case 'get_available_staff': {
+      const targetDate = params.date || todayDateStr;
+      const targetBranch = params.branch_id || branch_id;
+
+      // Get all staff on duty for this branch
+      const { data: onDutyStaff } = await supabase
+        .from('employee_schedules')
+        .select('employee_id, employees(id, name)')
+        .eq('date', targetDate)
+        .eq('branch_id', targetBranch)
+        .eq('status', 'on_duty');
+
+      if (!onDutyStaff || onDutyStaff.length === 0) {
+        return { available: [], message: 'Không có nhân viên nào trực hôm nay.' };
+      }
+
+      // Get bookings that overlap with the requested time
+      const { data: overlapping } = await supabase
+        .from('bookings')
+        .select('employee_id')
+        .eq('booking_date', targetDate)
+        .eq('branch_id', targetBranch)
+        .neq('status', 'cancelled')
+        .lt('start_time', params.end_time || '23:59')
+        .gt('end_time', params.start_time);
+
+      const busyStaffIds = new Set(overlapping?.map(b => b.employee_id) || []);
+
+      const available = onDutyStaff
+        .filter(s => !busyStaffIds.has(s.employee_id))
+        .map(s => s.employees);
+
+      return { available, busy_count: busyStaffIds.size };
+    }
+
     default:
       return { error: `Không tìm thấy tool: ${toolName}` };
   }
 }
 
-
-/*3. AI Execution  */
+/*3. AI Execution */
 router.post('/', async (req, res) => {
-  const { command, current_branch_id } = req.body;
-  
+  const { command, current_branch_id, conversation_history = [] } = req.body;
+
   const now = new Date();
-  const todayDateStr = now.toISOString().split('T')[0];
+  const vnOffset = 7 * 60 * 60 * 1000;
+  const vnNow = new Date(now.getTime() + vnOffset + now.getTimezoneOffset() * 60000);
+  const todayDateStr = vnNow.toISOString().split('T')[0];
 
-  const systemPrompt = `Bạn là trợ lý AI cho Ý Ơi Spa...`;
+  const { data: dbBranches } = await supabase
+  .from('branches')
+  .select('id, name, opening_hours');
 
-  // >>> 1. FIXED INITIAL MESSAGES STRUCTURE <<<
+  // Fetch and send operating hours to prompt so no need for many API calls
+  const todayKey = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][vnNow.getDay()];
+
+  const branchHoursStr = dbBranches?.map(b => {
+    const hours = b.opening_hours?.[todayKey];
+    return `${b.name}: ${hours?.open || '09:00'} - ${hours?.close || '22:00'}`;
+  }).join(', ') || '';
+
+  const systemPrompt = `Bạn là trợ lý AI đặt lịch cho Ý Ơi Spa. Hôm nay: ${todayDateStr}. Chi nhánh: ${current_branch_id}. Giờ mở cửa: ${branchHoursStr}.
+
+  TOOLS — BẮT BUỘC gọi tool, KHÔNG tự trả lời:
+  - Tìm lịch → search_bookings
+  - Tạo lịch → get_spa_context → get_available_staff → create_booking
+  - Sửa lịch → search_bookings → update_booking
+  - Hủy lịch → search_bookings → delete_booking
+  - Cần thông tin nhân viên/dịch vụ → get_spa_context
+
+  GIÁ TRỊ MẶC ĐỊNH — KHÔNG hỏi lại:
+  - Tên khách: "Khách Lạ" nếu có từ "kl/khách lẻ/khách lạ/ko lịch/k lịch"; "Khách Tây" nếu có "tây/nước ngoài/nc ngoài"
+  - Nhân viên: gọi get_available_staff và chọn người đầu tiên rảnh; nếu không ai rảnh → báo lại
+
+  QUY TẮC GIỜ:
+  - Giờ không có AM/PM mà nhỏ hơn giờ mở cửa → tự động +12h (PM). Ví dụ: "8h" → 20:00
+  - Chỉ dùng AM nếu có từ "sáng" hoặc "AM"
+  - KHÔNG tạo lịch ngoài giờ mở cửa
+
+  XỬ LÝ KẾT QUẢ:
+  - Nhiều lịch trùng tên → hỏi lại để xác nhận
+  - Chỉ hỏi khi THỰC SỰ thiếu thông tin không thể suy luận`;
+
+  const enrichedCommand = `${command}
+[Mặc định đã xác định: dịch vụ="Giữ chỗ", số khách=1, ngày=${todayDateStr}. Đây là thông tin ĐÃ CÓ, KHÔNG cần hỏi thêm. Hãy gọi tool ngay.]`;
+
+
   let messages = [
-    { 
-      role: 'user', 
-      parts: [{ text: command }] 
+    ...conversation_history.map(m => ({
+      role: m.role,
+      parts: [{ text: m.text }]
+    })),
+    {
+      role: 'user',
+      parts: [{ text: enrichedCommand }]
     }
   ];
 
@@ -121,60 +404,69 @@ router.post('/', async (req, res) => {
 
   while (loopCount < maxLoops) {
     loopCount++;
-    
-    // Call Gemini API using the tools parameter
-    const response = await ai.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: messages, // Now perfectly structured for all loop iterations
-      config: {
-        systemInstruction: systemPrompt,
-        tools: [{ functionDeclarations: spaTools }]
-      }
-    });
 
-    const candidate = response.candidates[0];
-    
-    // Check if Gemini wants to talk back to the user
-    if (candidate.content && !candidate.functionCalls) {
-      const textReply = candidate.content.parts?.[0]?.text || "Em chưa hiểu ý anh/chị lắm, anh/chị nói rõ hơn được không?";
-      return res.json({ success: true, reply: textReply });
-    }
-
-    // Check if Gemini wants to call a tool
-    if (candidate.functionCalls) {
-      const toolCall = candidate.functionCalls[0];
-      
-      // Execute the database function securely on your backend
-      const toolResult = await executeTool(toolCall.name, toolCall.args, {
-        supabase,
-        branch_id: current_branch_id,
-        req
+    try {
+      const response = await ai.models.generateContent({
+        model: GEMINI_MODEL,
+        contents: messages,
+        config: {
+          systemInstruction: systemPrompt,
+          tools: [{ functionDeclarations: spaTools }]
+        }
       });
 
-      // Append Gemini's tool call intent as an assistant turn
-      messages.push({ 
-        role: 'assistant', 
-        parts: candidate.content.parts 
-      });
-      
-      // Append the database result using the official SDK format for function responses
-      messages.push({
-        role: 'user',
-        parts: [
-          {
+      const candidate = response.candidates[0];
+      const parts = candidate.content?.parts || [];
+      const functionCallPart = parts.find(p => p.functionCall);
+
+      if (functionCallPart) {
+        const toolCall = functionCallPart.functionCall;
+
+        const toolResult = await executeTool(toolCall.name, toolCall.args, {
+          supabase,
+          branch_id: current_branch_id,
+          todayDateStr,
+          req
+        });
+
+        messages.push({
+          role: 'model',
+          parts: parts
+        });
+
+        messages.push({
+          role: 'user',
+          parts: [{
             functionResponse: {
               name: toolCall.name,
               response: { result: toolResult }
             }
-          }
-        ]
-      });
+          }]
+        });
+
+      } else {
+        const textReply = parts.find(p => p.text)?.text || "Em chưa hiểu ý anh/chị lắm, anh/chị nói rõ hơn được không?";
+        return res.json({ success: true, reply: textReply });
+      }
+
+    } catch (err) {
+      if (err.status === 503) {
+        return res.status(503).json({
+          success: false,
+          error: 'AI đang bận, vui lòng thử lại sau.'
+        });
+      }if (err.status === 429) {
+        return res.status(429).json({
+          success: false,
+          error: 'AI đang quá tải, vui lòng thử lại sau 1-2 phút.'
+        });
+      }
+      throw err;
+      throw err;
     }
   }
 
   return res.status(500).json({ error: "Vượt quá giới hạn vòng lặp xử lý" });
 });
-
-
 
 module.exports = router;

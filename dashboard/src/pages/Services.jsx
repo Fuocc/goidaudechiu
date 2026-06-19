@@ -105,7 +105,7 @@ function Services() {
 
   const handleSubmit = async (e) => {
     if (e) e.preventDefault();
-    if (!form.name || !form.price || !form.duration_minutes) return;
+    if (!form.name || form.price < 0 || !form.duration_minutes < 0) return;
 
     try {
       const payload = {
@@ -137,7 +137,7 @@ function Services() {
     }
   };
 
-  const isFormValid = form.name && form.price > 0 && form.duration_minutes > 0;
+  const isFormValid = form.name && form.price >= 0 && form.duration_minutes >= 0;
 
   return (
     <div>
