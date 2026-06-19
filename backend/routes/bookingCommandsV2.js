@@ -63,7 +63,6 @@ const spaTools = [
 
 
 
-
 /*2. Tool Config*/
 async function executeTool(toolName, params, context) {
   const { supabase, branch_id } = context;
