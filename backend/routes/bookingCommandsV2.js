@@ -5,7 +5,7 @@ const { GoogleGenAI } = require('@google/genai');
 
 // Initialize Gemini SDK
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-const GEMINI_MODEL = 'gemini-2.5-flash'; //250 requests/day
+const GEMINI_MODEL = 'gemini-3.1-flash-lite'; //250 requests/day
 
 /*1. AI Tools*/
 const spaTools = [
@@ -304,37 +304,47 @@ async function executeTool(toolName, params, context) {
     case 'get_available_staff': {
       const targetDate = params.date || todayDateStr;
       const targetBranch = params.branch_id || branch_id;
+      const bookingStart = params.start_time;
+      const bookingEnd = params.end_time || params.start_time;
 
-      // Get all staff on duty for this branch
-      const { data: onDutyStaff } = await supabase
+      // Step 1: Get active staff who are working today and their shift covers the booking time
+      const { data: onDutyStaff, error: scheduleError } = await supabase
         .from('employee_schedules')
-        .select('employee_id, employees(id, name)')
+        .select('employee_id, start_time, end_time, employees!inner(id, name, branch_id)')  // add branch_id to select
         .eq('date', targetDate)
-        .eq('branch_id', targetBranch)
-        .eq('status', 'on_duty');
+        .eq('is_day_off', false)
+        .eq('employees.branch_id', targetBranch)
+        .eq('employees.is_active', true);
+
+      // Temporary logging
+      console.log('[get_available_staff] params:', { targetDate, targetBranch, bookingStart, bookingEnd });
+      console.log('[get_available_staff] onDutyStaff:', JSON.stringify(onDutyStaff));
+      console.log('[get_available_staff] scheduleError:', scheduleError);
+
 
       if (!onDutyStaff || onDutyStaff.length === 0) {
-        return { available: [], message: 'Không có nhân viên nào trực hôm nay.' };
+        return { available: [], message: 'Không có nhân viên nào trực trong khung giờ này.' };
       }
 
-      // Get bookings that overlap with the requested time
+      // Step 2: Find who's already booked during that time
       const { data: overlapping } = await supabase
         .from('bookings')
         .select('employee_id')
         .eq('booking_date', targetDate)
-        .eq('branch_id', targetBranch)
         .neq('status', 'cancelled')
-        .lt('start_time', params.end_time || '23:59')
-        .gt('end_time', params.start_time);
+        .lt('start_time', bookingEnd)
+        .gt('end_time', bookingStart);
 
-      const busyStaffIds = new Set(overlapping?.map(b => b.employee_id) || []);
+      const busyIds = new Set(overlapping?.map(b => b.employee_id) || []);
 
+      // Step 3: Filter out busy staff
       const available = onDutyStaff
-        .filter(s => !busyStaffIds.has(s.employee_id))
-        .map(s => s.employees);
+        .filter(s => !busyIds.has(s.employee_id))
+        .map(s => ({ id: s.employee_id, name: s.employees.name }));
 
-      return { available, busy_count: busyStaffIds.size };
+      return { available, busy_count: busyIds.size };
     }
+
 
     default:
       return { error: `Không tìm thấy tool: ${toolName}` };
@@ -362,7 +372,12 @@ router.post('/', async (req, res) => {
     return `${b.name}: ${hours?.open || '09:00'} - ${hours?.close || '22:00'}`;
   }).join(', ') || '';
 
-  const systemPrompt = `Bạn là trợ lý AI đặt lịch cho Ý Ơi Spa. Hôm nay: ${todayDateStr}. Chi nhánh: ${current_branch_id}. Giờ mở cửa: ${branchHoursStr}.
+  // Get current time for AI
+  const currentTimeStr = `${String(vnNow.getHours()).padStart(2, '0')}:${String(vnNow.getMinutes()).padStart(2, '0')}`;
+
+  
+
+  const systemPrompt = `Bạn là trợ lý AI đặt lịch cho Ý Ơi Spa. Hôm nay: ${todayDateStr}.  Giờ hiện tại: ${currentTimeStr}. Chi nhánh: ${current_branch_id}. Giờ mở cửa: ${branchHoursStr}.
 
   TOOLS — BẮT BUỘC gọi tool, KHÔNG tự trả lời:
   - Tìm lịch → search_bookings
@@ -376,9 +391,9 @@ router.post('/', async (req, res) => {
   - Nhân viên: gọi get_available_staff và chọn người đầu tiên rảnh; nếu không ai rảnh → báo lại
 
   QUY TẮC GIỜ:
-  - Giờ không có AM/PM mà nhỏ hơn giờ mở cửa → tự động +12h (PM). Ví dụ: "8h" → 20:00
-  - Chỉ dùng AM nếu có từ "sáng" hoặc "AM"
-  - KHÔNG tạo lịch ngoài giờ mở cửa
+  - Có "sáng" hoặc "AM" → dùng AM
+  - Có "tối", "chiều", "đêm" hoặc "PM" → dùng PM
+  - Không tạo lịch ngoài giờ mở cửa
 
   XỬ LÝ KẾT QUẢ:
   - Nhiều lịch trùng tên → hỏi lại để xác nhận
@@ -461,7 +476,6 @@ router.post('/', async (req, res) => {
           error: 'AI đang quá tải, vui lòng thử lại sau 1-2 phút.'
         });
       }
-      throw err;
       throw err;
     }
   }
