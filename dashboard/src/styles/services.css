@@ -261,3 +261,69 @@
 .service-text-value {
   color: var(--black, #333);
 }
+
+
+.shortcodes-input-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  min-height: 44px;
+  width: 100%;
+  cursor: text;
+  transition: all 0.2s ease-out;
+}
+
+.shortcodes-input-container:hover {
+  background-color: #FAFAF8;
+}
+
+.shortcodes-input-container:focus-within {
+  border: 1px solid var(--black);
+  background-color: transparent;
+}
+
+.shortcode-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #F1F1EF;
+  color: var(--black, #1C1A17);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.shortcode-tag-remove {
+  background: none;
+  border: none;
+  color: var(--muted-gray);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0;
+  line-height: 1;
+  transition: color 0.15s;
+}
+
+.shortcode-tag-remove:hover {
+  color: var(--black);
+}
+
+.shortcode-input {
+  border: none;
+  outline: none;
+  font-size: 14px;
+  font-weight: 500;
+  min-width: 120px;
+  background: transparent;
+  color: var(--black);
+}
+
+.shortcode-input::placeholder {
+  color: var(--muted-gray);
+  font-weight: normal;
+}

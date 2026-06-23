@@ -29,7 +29,8 @@ function Services() {
     price: 0,
     is_active: true,
     category: '',
-    color: COLORS[0]
+    color: COLORS[0],
+    shortcodes: []
   });
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
@@ -84,7 +85,8 @@ function Services() {
       price: 0,
       is_active: true,
       category: '',
-      color: COLORS[0]
+      color: COLORS[0],
+      shortcodes: svc.shortcodes || []
     });
     setModalOpen(true);
   };
@@ -98,7 +100,8 @@ function Services() {
       price: svc.price,
       is_active: svc.is_active,
       category: svc.category || CATEGORIES[0],
-      color: svc.color || COLORS[0]
+      color: svc.color || COLORS[0],
+      shortcodes: svc.shortcodes || []
     });
     setModalOpen(true);
   };
@@ -367,6 +370,43 @@ function Services() {
                         ))}
                       </div>
                     )}
+                  </div>
+                </div>
+
+                {/* Shortcodes */}
+                <div className="service-form-group">
+                  <FiEdit3 className="service-icon" size={20} />
+                  <div className="service-input-wrapper">
+                    <div className="shortcodes-input-container">
+                      {form.shortcodes.map((code, i) => (
+                        <span key={i} className="shortcode-tag">
+                          {code}
+                          <button
+                            type="button"
+                            className="shortcode-tag-remove"
+                            onClick={() => setForm({
+                              ...form,
+                              shortcodes: form.shortcodes.filter((_, idx) => idx !== i)
+                            })}
+                          >×</button>
+                        </span>
+                      ))}
+                      <input
+                        type="text"
+                        className="shortcode-input"
+                        placeholder="Thêm shortcode (Enter)"
+                        onKeyDown={e => {
+                          if (e.key === 'Enter' || e.key === ',') {
+                            e.preventDefault();
+                            const val = e.target.value.trim().toLowerCase();
+                            if (val && !form.shortcodes.includes(val)) {
+                              setForm({ ...form, shortcodes: [...form.shortcodes, val] });
+                            }
+                            e.target.value = '';
+                          }
+                        }}
+                      />
+                    </div>
                   </div>
                 </div>
 

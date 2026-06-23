@@ -32,7 +32,12 @@ const spaTools = [
         booking_date: { type: "string", description: "Ngày đặt lịch dạng YYYY-MM-DD." },
         start_time: { type: "string", description: "Giờ bắt đầu dạng HH:MM (24h format)." },
         num_guests: { type: "integer", default: 1 },
-        service_id: { type: "string", description: "UUID của dịch vụ." },
+        service_id: { type: "string", description: "UUID của dịch vụ chính." },
+        extra_service_ids: { 
+          type: "array", 
+          items: { type: "string" },
+          description: "UUID của các dịch vụ bổ sung (nếu có). Ví dụ: ['uuid2', 'uuid3']" 
+        },
         employee_id: { type: "string", description: "UUID của nhân viên được chỉ định (nếu có)." },
         duration_minutes: { type: "integer", description: "Thời lượng tùy chỉnh tính bằng phút." },
         is_walk_in: { type: "boolean", description: "True nếu khách đến trực tiếp không đặt trước." },
@@ -52,7 +57,13 @@ const spaTools = [
         status: { type: "string", enum: ["confirmed", "arrived", "pending", "cancelled"] },
         employee_id: { type: "string", description: "UUID nhân viên mới nếu đổi thợ." },
         num_guests: { type: "integer", description: "Số khách mới nếu thay đổi." },
-        notes: { type: "string", description: "Ghi chú cập nhật." }
+        notes: { type: "string", description: "Ghi chú cập nhật." },
+        service_id: { type: "string", description: "UUID dịch vụ mới nếu thay đổi." },
+        extra_service_ids: {
+          type: "array",
+          items: { type: "string" },
+          description: "UUID các dịch vụ bổ sung nếu có."
+        },
       },
       required: ["booking_id"]
     }
@@ -206,8 +217,39 @@ async function executeTool(toolName, params, context) {
         bookingParams.start_time = `${String(Math.floor(rounded / 60)).padStart(2, '0')}:${String(rounded % 60).padStart(2, '0')}`;
       }
 
+      // Look up service durations from DB
+      let duration = params.duration_minutes || 0;
+      let serviceNames = [];
+
+      if (!params.duration_minutes) {
+        const allServiceIds = [
+          params.service_id,
+          ...(params.extra_service_ids || [])
+        ].filter(Boolean);
+
+        const { data: services } = await supabase
+          .from('services')
+          .select('id, name, duration_minutes')
+          .in('id', allServiceIds);
+
+        if (services?.length) {
+          duration = services.reduce((sum, s) => sum + (s.duration_minutes || 0), 0);
+          serviceNames = services.map(s => s.name);
+        }
+      }
+
+      // Add combined service names to notes if multiple services
+      if (serviceNames.length > 1 && !bookingParams.notes) {
+        bookingParams.notes = serviceNames.join(' + ');
+      }
+
+      // Fallback duration
+      if (!duration) duration = 60;
+
+      // Remove extra_service_ids before sending to Supabase
+      delete bookingParams.extra_service_ids;
+
       // Compute end_time
-      const duration = params.duration_minutes || 60;
       if (bookingParams.start_time) {
         const [h, m] = bookingParams.start_time.split(':').map(Number);
         const endMinutes = h * 60 + m + duration;
@@ -217,10 +259,40 @@ async function executeTool(toolName, params, context) {
       // Generate group_booking_id if multiple guests
       const group_booking_id = num_guests > 1 ? crypto.randomUUID() : null;
 
-      const rows = Array.from({ length: num_guests }, () => ({
+      // Fetch available staff for group assignment
+      let availableStaff = [];
+      if (num_guests > 1 && !params.employee_id) {
+        const { data: onDutyStaff } = await supabase
+          .from('employee_schedules')
+          .select('employee_id, employees!inner(id, name, branch_id)')
+          .eq('date', bookingParams.booking_date)
+          .eq('is_day_off', false)
+          .eq('employees.branch_id', branch_id)
+          .eq('employees.is_active', true);
+
+        const { data: overlapping } = await supabase
+          .from('bookings')
+          .select('employee_id')
+          .eq('booking_date', bookingParams.booking_date)
+          .eq('branch_id', branch_id)
+          .neq('status', 'cancelled')
+          .lt('start_time', bookingParams.end_time)
+          .gt('end_time', bookingParams.start_time);
+
+        const busyIds = new Set(overlapping?.map(b => b.employee_id) || []);
+        availableStaff = onDutyStaff
+          ?.filter(s => !busyIds.has(s.employee_id))
+          .map(s => s.employee_id) || [];
+      }
+
+      // Build rows — assign different staff per guest
+      const rows = Array.from({ length: num_guests }, (_, i) => ({
         ...bookingParams,
         branch_id,
-        group_booking_id
+        group_booking_id,
+        employee_id: num_guests > 1 && availableStaff.length > 0
+          ? availableStaff[i % availableStaff.length]
+          : bookingParams.employee_id
       }));
 
       const { data: inserted, error } = await supabase
@@ -250,6 +322,34 @@ async function executeTool(toolName, params, context) {
         .eq('id', booking_id)
         .single();
 
+      // Recalculate duration if service changed
+      if (updateParams.service_id) {
+        const allServiceIds = [
+          updateParams.service_id,
+          ...(updateParams.extra_service_ids || [])
+        ].filter(Boolean);
+
+        const { data: services } = await supabase
+          .from('services')
+          .select('id, name, duration_minutes')
+          .in('id', allServiceIds);
+
+        if (services?.length) {
+          const duration = services.reduce((sum, s) => sum + (s.duration_minutes || 0), 0);
+          const [h, m] = (updateParams.start_time || oldBooking.start_time).split(':').map(Number);
+          const endMinutes = h * 60 + m + duration;
+          updateParams.end_time = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
+
+          if (services.length > 1) {
+            updateParams.notes = services.map(s => s.name).join(' + ');
+          }
+        }
+      }
+
+      // Remove extra_service_ids before sending to Supabase
+      delete updateParams.extra_service_ids;
+
+      // NOW update Supabase with correct end_time
       const { data: updated, error } = await supabase
         .from('bookings')
         .update(updateParams)
@@ -264,7 +364,7 @@ async function executeTool(toolName, params, context) {
       return {
         success: true,
         booking: updated,
-        snapshot: oldBooking // for undo
+        snapshot: oldBooking
       };
     }
 
@@ -400,7 +500,7 @@ router.post('/', async (req, res) => {
   - Chỉ hỏi khi THỰC SỰ thiếu thông tin không thể suy luận`;
 
   const enrichedCommand = `${command}
-[Mặc định đã xác định: dịch vụ="Giữ chỗ", số khách=1, ngày=${todayDateStr}. Đây là thông tin ĐÃ CÓ, KHÔNG cần hỏi thêm. Hãy gọi tool ngay.]`;
+[Mặc định đã xác định: dịch vụ="Giữ Chỗ", số khách=1, ngày=${todayDateStr}. Đây là thông tin ĐÃ CÓ, KHÔNG cần hỏi thêm. Hãy gọi tool ngay.]`;
 
 
   let messages = [
