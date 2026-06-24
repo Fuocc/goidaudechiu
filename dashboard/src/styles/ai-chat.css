@@ -480,6 +480,21 @@
   color: #292524;
 }
 
+/*Tool used logs*/
+.ai-tool-log {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+.ai-tool-badge {
+  font-size: 11px;
+  color: #78716C;
+  background: #F5F5F4;
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+
 /* Message Actions inside success bubbles */
 .ai-action-buttons-row {
   display: flex;

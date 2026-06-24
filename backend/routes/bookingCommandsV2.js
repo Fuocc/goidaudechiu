@@ -110,6 +110,10 @@ const spaTools = [
         date: { type: "string", description: "Ngày YYYY-MM-DD." },
         start_time: { type: "string", description: "Giờ bắt đầu HH:MM." },
         end_time: { type: "string", description: "Giờ kết thúc HH:MM." },
+        duration_minutes: { 
+          type: "integer", 
+          description: "Thời lượng dịch vụ tính bằng phút. Dùng để tính end_time khi kiểm tra lịch trống." 
+        },
         branch_id: { type: "string" }
       },
       required: ["date", "start_time"]
@@ -342,7 +346,7 @@ async function executeTool(toolName, params, context) {
       return { success: true, count: inserted.length, bookings: inserted };
     }
 
-    case 'update_booking': {
+   case 'update_booking': {
       const { booking_id, ...updateParams } = params;
       const broadcast = context.req.app.get('broadcastSSE') || (() => {});
 
@@ -360,10 +364,25 @@ async function executeTool(toolName, params, context) {
         delete updateParams.duration_minutes;
       }
 
-      // Recalculate duration if service changed
-      if (updateParams.service_id) {
+      if (updateParams.start_time && !updateParams.service_id && !updateParams.duration_minutes) {
+        const duration = oldBooking.end_time && oldBooking.start_time
+          ? (() => {
+              const [oh, om] = oldBooking.start_time.split(':').map(Number);
+              const [eh, em] = oldBooking.end_time.split(':').map(Number);
+              return (eh * 60 + em) - (oh * 60 + om);
+            })()
+          : 60;
+        const [h, m] = updateParams.start_time.split(':').map(Number);
+        const endMinutes = h * 60 + m + duration;
+        updateParams.end_time = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
+      }
+
+      // Recalculate duration if service changed or extra services are provided
+      if (updateParams.service_id || updateParams.extra_service_ids?.length) {
+        const primaryServiceId = updateParams.service_id || oldBooking.service_id;
+
         const allServiceIds = [
-          updateParams.service_id,
+          primaryServiceId,
           ...(updateParams.extra_service_ids || [])
         ].filter(Boolean);
 
@@ -520,8 +539,16 @@ async function executeTool(toolName, params, context) {
       const targetDate = params.date || todayDateStr;
       const targetBranch = params.branch_id || branch_id;
       const bookingStart = params.start_time;
-      const bookingEnd = params.end_time || params.start_time;
+      let bookingEnd = params.end_time;
 
+      // Step 0: Calculate end time of booking if available      
+      if (!bookingEnd && params.duration_minutes) {
+        const [h, m] = bookingStart.split(':').map(Number);
+        const endMinutes = h * 60 + m + params.duration_minutes;
+        bookingEnd = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
+      } else {
+        bookingEnd = bookingEnd || bookingStart;
+      }
       // Step 1: Get active staff who are working today and their shift covers the booking time
       const { data: onDutyStaff, error: scheduleError } = await supabase
         .from('employee_schedules')
@@ -597,29 +624,40 @@ router.post('/', async (req, res) => {
   TOOLS — BẮT BUỘC gọi tool, KHÔNG tự trả lời:
   - Tìm lịch → search_bookings
   - Tạo lịch → get_spa_context → get_available_staff → create_booking
-  - Sửa lịch → search_bookings → (get_spa_context nếu đổi dịch vụ) → (get_available_staff nếu đổi giờ) → update_booking
-  - Khách đến/tới/vô/vào spa → search_bookings → check_in_booking. Chỉ tạo lịch mới, chỉ tạo mới không tìm thấy lịch sẵn có
+  - Sửa lịch hoặc lệnh có tên khách + dịch vụ không có giờ → search_bookings → (get_spa_context nếu đổi dịch vụ) → (get_available_staff nếu đổi giờ) → update_booking. Chỉ tạo mới nếu không tìm thấy lịch.
+  - Khách đến/tới/vô/vào spa → search_bookings → check_in_booking. KHÔNG tạo lịch mới.
   - Hủy lịch → search_bookings → delete_booking
   - Cần thông tin nhân viên/dịch vụ → get_spa_context
+  - Nếu có reply_to_booking_ids → chỉ gọi get_spa_context → update_booking hoặc delete_booking. KHÔNG gọi get_available_staff. KHÔNG tạo lịch mới.
+
+  NOTES:
+  - Bất kỳ nội dung nào không phải tên khách, giờ, dịch vụ, số khách, chi nhánh → điền vào notes. Ví dụ: "ydc 1568" → service=ydc, notes="1568". "C An 7h có thẻ" → notes="có thẻ"
 
   GIÁ TRỊ MẶC ĐỊNH — KHÔNG hỏi lại:
   - Tên khách: "Khách Lạ" nếu có từ "kl/khách lẻ/khách lạ/ko lịch/k lịch"; "Khách Tây" nếu có "tây/nước ngoài/nc ngoài"
   - Nhân viên: gọi get_available_staff và chọn người đầu tiên rảnh; nếu không ai rảnh → báo lại
   - KHÔNG tự thay đổi service_id nếu người dùng không đề cập đến dịch vụ
+  
 
   QUY TẮC GIỜ:
   - Có "sáng" hoặc "AM" → dùng AM
   - Có "tối", "chiều", "đêm" hoặc "PM" → dùng PM
-  - Không tạo lịch ngoài giờ mở cửa
 
   XỬ LÝ KẾT QUẢ:
   - Nhiều lịch trùng tên → hỏi lại để xác nhận
   - Chỉ hỏi khi thiếu thông tin không thể suy luận chắc chắn (ví dụ: nhân viên được book đang bận hoặc không ở chi nhánh)
+  - Kiểm tra chắc chắn không tạo lịch ngoài giờ mở cửa
   - Không reply bằng markdown.
   `;
 
+  const replyToIds = req.body.reply_to_booking_ids;
+
   const enrichedCommand = `${command}
-[Mặc định đã xác định: dịch vụ="Giữ Chỗ", số khách=1, ngày=${todayDateStr}. Đây là thông tin ĐÃ CÓ, KHÔNG cần hỏi thêm. Hãy gọi tool ngay.]`;
+  [Mặc định đã xác định: dịch vụ="Giữ Chỗ", số khách=1, ngày=${todayDateStr}. Đây là thông tin ĐÃ CÓ, KHÔNG cần hỏi thêm. Hãy gọi tool ngay.]${
+    replyToIds?.length
+      ? `\n[reply_to_booking_ids: ${replyToIds.join(', ')}. Chỉ gọi get_spa_context → update_booking hoặc delete_booking. KHÔNG gọi get_available_staff. KHÔNG tạo lịch mới.]`
+      : ''
+  }`;
 
 
   let messages = [
@@ -635,6 +673,7 @@ router.post('/', async (req, res) => {
 
   let loopCount = 0;
   const maxLoops = 5;
+  const toolLog = [];
 
   while (loopCount < maxLoops) {
     loopCount++;
@@ -663,6 +702,12 @@ router.post('/', async (req, res) => {
           req
         });
 
+        toolLog.push({
+          tool: toolCall.name,
+          params: toolCall.args,
+          result: toolResult
+        });
+
         messages.push({
           role: 'model',
           parts: parts
@@ -680,7 +725,16 @@ router.post('/', async (req, res) => {
 
       } else {
         const textReply = parts.find(p => p.text)?.text || "Em chưa hiểu ý anh/chị lắm, anh/chị nói rõ hơn được không?";
-        return res.json({ success: true, reply: textReply });
+        
+        const lastTool = toolLog.at(-1);
+        
+        return res.json({
+          success: true,
+          reply: textReply,
+          tool_used: lastTool?.tool || null,
+          tool_result: lastTool?.result || null,
+          tool_log: toolLog
+        });
       }
 
     } catch (err) {
@@ -689,7 +743,8 @@ router.post('/', async (req, res) => {
           success: false,
           error: 'AI đang bận, vui lòng thử lại sau.'
         });
-      }if (err.status === 429) {
+      }
+      if (err.status === 429) {
         return res.status(429).json({
           success: false,
           error: 'AI đang quá tải, vui lòng thử lại sau 1-2 phút.'

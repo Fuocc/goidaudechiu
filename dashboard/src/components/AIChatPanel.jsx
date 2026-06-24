@@ -190,6 +190,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
           })) : undefined
       })
     });
+    console.log('[request sent] reply_to_booking_ids:', replyContextIds); // 👈 ADD
     console.log('[V2 response]', data); // temporary log test delete after
 
     if (!data || !data.success) {
@@ -202,11 +203,35 @@ function AIChatPanel({ onClose, currentBranchId }) {
       time: getNowTime()
     };
 
-    // 4. Handle V2 Engine Response (Simple Text Reply)
     if (isV2) {
-      aiMsg.text = data.reply; // Direct natural string from Gemini
+      aiMsg.text = data.reply;
       aiMsg.isSuccess = true;
-    } 
+      aiMsg.toolLog = data.tool_log || [];
+
+      // Attach bookings for reply/undo buttons
+      const lastResult = data.tool_result || data.tool_log?.at(-1)?.result;
+      if (lastResult?.bookings) {
+        aiMsg.bookings = lastResult.bookings.map(b => b.id);
+        aiMsg.snapshot = lastResult.snapshot || null;
+      } else if (lastResult?.booking) {
+        aiMsg.bookings = [lastResult.booking.id];
+        aiMsg.snapshot = lastResult.snapshot || null;
+      }
+
+      // Auto-set replyingTo if checked-in a "Giữ chỗ" booking
+      if (data.tool_used === 'check_in_booking' && data.tool_result?.bookings) {
+        const hasGiuCho = data.tool_result.bookings.some(b => b.services?.name === 'Giữ chỗ');
+        if (hasGiuCho) {
+          console.log('[replyingTo auto-set]', data.tool_result.bookings.map(b => b.id)); // 👈 ADD
+          setReplyingTo({
+            bookingIds: data.tool_result.bookings.map(b => b.id),
+            label: getReplyLabel(data.reply)
+          });
+        }
+      }
+    }
+
+
     // 5. Handle Legacy V1 Engine Response (Regex/Structured Layout)
     else {
       const { count, duration, summary, bookings, intent } = data;
@@ -361,6 +386,17 @@ function AIChatPanel({ onClose, currentBranchId }) {
                             <strong>{msg.title}</strong>
                           </div>
                           <p className="ai-success-summary">{msg.text}</p>
+
+                          {/* AI Tool used logs */}
+                          {msg.toolLog?.length > 0 && (
+                            <div className="ai-tool-log">
+                              {msg.toolLog.map((t, i) => (
+                                <span key={i} className="ai-tool-badge">
+                                  ⚙ {t.tool}
+                                </span>
+                              ))}
+                            </div>
+                          )}
 
                           {/* Reply / Undo Buttons */}
                           {!isUndone && msg.bookings && msg.bookings.length > 0 && (
