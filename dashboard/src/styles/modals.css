@@ -33,7 +33,6 @@
   gap: 20px;
   max-width: 560px;
   max-height: 90vh;
-  overflow-y: auto;
   box-shadow: 0 24px 48px rgba(0, 0, 0, 0.12);
   animation: slideUp 0.3s ease;
 }
