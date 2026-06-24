@@ -31,7 +31,7 @@ const spaTools = [
         temporary_name: { type: "string", description: "Tên khách kèm tiền tố chuẩn hóa (ví dụ: 'Chị Vy', 'Anh Nam')." },
         booking_date: { type: "string", description: "Ngày đặt lịch dạng YYYY-MM-DD." },
         start_time: { type: "string", description: "Giờ bắt đầu dạng HH:MM (24h format)." },
-        num_guests: { type: "integer", default: 1 },
+        num_guests: { type: "integer", default: 1, description: "Số lượng khách đi cùng nhóm (ví dụ: '3ng', '3 khách', '3 người', '3yvv', '3cb17' -> 3)"},
         service_id: { type: "string", description: "UUID của dịch vụ chính." },
         extra_service_ids: { 
           type: "array", 
@@ -244,6 +244,8 @@ async function executeTool(toolName, params, context) {
       };
     }
 
+
+
     case 'create_booking': {
       const { num_guests = 1, ...bookingParams } = params;
       const broadcast = context.req.app.get('broadcastSSE') || (() => {});
@@ -288,8 +290,11 @@ async function executeTool(toolName, params, context) {
         bookingParams.end_time = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
       }
 
-      // Resolve requested staff
-      const requestedIds = params.employee_ids || [];
+      // Normalize requested IDs to ensure it's always an array structure
+      const requestedIds = Array.isArray(params.employee_ids)
+        ? params.employee_ids
+        : (params.employee_ids ? [params.employee_ids] : []);
+        
       const lockedIds = new Set(requestedIds.filter(Boolean));
 
       // Fetch available staff excluding locked and busy
@@ -325,15 +330,31 @@ async function executeTool(toolName, params, context) {
         };
       }
 
-      // Build rows
+      // Build rows guaranteeing distinct staff members per guest slot
       const group_booking_id = num_guests > 1 ? crypto.randomUUID() : null;
+      const assignedGroupStaff = new Set();
       let autoIndex = 0;
-      const rows = Array.from({ length: num_guests }, (_, i) => ({
-        ...bookingParams,
-        branch_id,
-        group_booking_id,
-        employee_id: requestedIds[i] || availableStaff[autoIndex++]
-      }));
+
+      const rows = Array.from({ length: num_guests }, (_, i) => {
+        let empId = requestedIds[i];
+
+        // If no specific staff requested, or if the requested person is already 
+        // assigned to someone else in this group, assign the next unique free staff member
+        if (!empId || assignedGroupStaff.has(empId)) {
+          empId = availableStaff[autoIndex++] || null;
+        }
+
+        if (empId) {
+          assignedGroupStaff.add(empId);
+        }
+
+        return {
+          ...bookingParams,
+          branch_id,
+          group_booking_id,
+          employee_id: empId
+        };
+      });
 
       const { data: inserted, error } = await supabase
         .from('bookings')
@@ -345,6 +366,113 @@ async function executeTool(toolName, params, context) {
 
       return { success: true, count: inserted.length, bookings: inserted };
     }
+
+    // case 'create_booking': {
+    //   const { num_guests = 1, ...bookingParams } = params;
+    //   const broadcast = context.req.app.get('broadcastSSE') || (() => {});
+
+    //   // Better handle for edge cases like 3cb17, 2ng, 3kh
+    //   // if (bookingParams.notes) {
+    //   //   bookingParams.notes = bookingParams.notes.replace(/^\d+(ng|kh|khách)?\s*/i, '');
+    //   // }
+
+    //   // Walk-in: round to nearest 5 minutes
+    //   if (params.is_walk_in && params.start_time) {
+    //     const [h, m] = params.start_time.split(':').map(Number);
+    //     const totalMinutes = h * 60 + m;
+    //     const rounded = Math.ceil(totalMinutes / 5) * 5;
+    //     bookingParams.start_time = `${String(Math.floor(rounded / 60)).padStart(2, '0')}:${String(rounded % 60).padStart(2, '0')}`;
+    //   }
+
+    //   // Look up service durations from DB
+    //   let duration = params.duration_minutes || 0;
+    //   let serviceNames = [];
+
+    //   if (!params.duration_minutes) {
+    //     const allServiceIds = [params.service_id, ...(params.extra_service_ids || [])].filter(Boolean);
+    //     const { data: services } = await supabase
+    //       .from('services')
+    //       .select('id, name, duration_minutes')
+    //       .in('id', allServiceIds);
+
+    //     if (services?.length) {
+    //       duration = services.reduce((sum, s) => sum + (s.duration_minutes || 0), 0);
+    //       serviceNames = services.map(s => s.name);
+    //     }
+    //   }
+
+    //   if (serviceNames.length > 1 && !bookingParams.notes) {
+    //     bookingParams.notes = serviceNames.join(' + ');
+    //   }
+
+    //   if (!duration) duration = 60;
+    //   delete bookingParams.extra_service_ids;
+    //   delete bookingParams.employee_ids;
+
+    //   // Compute end_time
+    //   if (bookingParams.start_time) {
+    //     const [h, m] = bookingParams.start_time.split(':').map(Number);
+    //     const endMinutes = h * 60 + m + duration;
+    //     bookingParams.end_time = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
+    //   }
+
+    //   // Resolve requested staff
+    //   const requestedIds = params.employee_ids || [];
+    //   const lockedIds = new Set(requestedIds.filter(Boolean));
+
+    //   // Fetch available staff excluding locked and busy
+    //   const { data: onDutyStaff } = await supabase
+    //     .from('employee_schedules')
+    //     .select('employee_id, employees!inner(id, name, branch_id)')
+    //     .eq('date', bookingParams.booking_date)
+    //     .eq('is_day_off', false)
+    //     .eq('employees.branch_id', branch_id)
+    //     .eq('employees.is_active', true);
+
+    //   const { data: overlapping } = await supabase
+    //     .from('bookings')
+    //     .select('employee_id')
+    //     .eq('booking_date', bookingParams.booking_date)
+    //     .eq('branch_id', branch_id)
+    //     .neq('status', 'cancelled')
+    //     .lt('start_time', bookingParams.end_time)
+    //     .gt('end_time', bookingParams.start_time);
+
+    //   const busyIds = new Set(overlapping?.map(b => b.employee_id) || []);
+    //   const availableStaff = onDutyStaff
+    //     ?.filter(s => !busyIds.has(s.employee_id) && !lockedIds.has(s.employee_id))
+    //     .map(s => s.employee_id) || [];
+
+    //   // Block if not enough staff for auto-assignment
+    //   const autoNeeded = num_guests - lockedIds.size;
+    //   if (availableStaff.length < autoNeeded) {
+    //     return {
+    //       success: false,
+    //       blocked: true,
+    //       reason: `Không đủ nhân viên rảnh. Cần ${autoNeeded} nhân viên tự động nhưng chỉ còn ${availableStaff.length} trống.`
+    //     };
+    //   }
+
+    //   // Build rows
+    //   const group_booking_id = num_guests > 1 ? crypto.randomUUID() : null;
+    //   let autoIndex = 0;
+    //   const rows = Array.from({ length: num_guests }, (_, i) => ({
+    //     ...bookingParams,
+    //     branch_id,
+    //     group_booking_id,
+    //     employee_id: requestedIds[i] || availableStaff[autoIndex++]
+    //   }));
+
+    //   const { data: inserted, error } = await supabase
+    //     .from('bookings')
+    //     .insert(rows)
+    //     .select('*, employees(name), services(name), branches(name)');
+
+    //   if (error) return { error: error.message };
+    //   inserted.forEach(b => broadcast('booking.created', b));
+
+    //   return { success: true, count: inserted.length, bookings: inserted };
+    // }
 
    case 'update_booking': {
       const { booking_id, ...updateParams } = params;
