@@ -86,7 +86,7 @@ function Services() {
       is_active: true,
       category: '',
       color: COLORS[0],
-      shortcodes: svc.shortcodes || []
+      shortcodes: []
     });
     setModalOpen(true);
   };
@@ -377,24 +377,27 @@ function Services() {
                 <div className="service-form-group">
                   <FiEdit3 className="service-icon" size={20} />
                   <div className="service-input-wrapper">
-                    <div className="shortcodes-input-container">
+                    <div
+                      className="service-input shortcodes-input-container"
+                      onClick={e => e.currentTarget.querySelector('.shortcode-input')?.focus()}
+                    >
                       {form.shortcodes.map((code, i) => (
                         <span key={i} className="shortcode-tag">
                           {code}
                           <button
                             type="button"
                             className="shortcode-tag-remove"
-                            onClick={() => setForm({
-                              ...form,
-                              shortcodes: form.shortcodes.filter((_, idx) => idx !== i)
-                            })}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setForm({ ...form, shortcodes: form.shortcodes.filter((_, idx) => idx !== i) });
+                            }}
                           >×</button>
                         </span>
                       ))}
                       <input
                         type="text"
                         className="shortcode-input"
-                        placeholder="Thêm shortcode (Enter)"
+                        placeholder={form.shortcodes.length === 0 ? "Thêm shortcode (Enter)" : ""}
                         onKeyDown={e => {
                           if (e.key === 'Enter' || e.key === ',') {
                             e.preventDefault();

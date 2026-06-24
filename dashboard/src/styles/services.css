@@ -268,22 +268,9 @@
   flex-wrap: wrap;
   gap: 6px;
   align-items: center;
-  padding: 8px 14px;
-  border-radius: 10px;
-  border: 1px solid transparent;
+  height: auto !important;
   min-height: 44px;
-  width: 100%;
   cursor: text;
-  transition: all 0.2s ease-out;
-}
-
-.shortcodes-input-container:hover {
-  background-color: #FAFAF8;
-}
-
-.shortcodes-input-container:focus-within {
-  border: 1px solid var(--black);
-  background-color: transparent;
 }
 
 .shortcode-tag {

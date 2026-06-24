@@ -38,7 +38,11 @@ const spaTools = [
           items: { type: "string" },
           description: "UUID của các dịch vụ bổ sung (nếu có). Ví dụ: ['uuid2', 'uuid3']" 
         },
-        employee_id: { type: "string", description: "UUID của nhân viên được chỉ định (nếu có)." },
+        employee_ids: {
+          type: "array",
+          items: { type: "string" },
+          description: "UUID nhân viên theo thứ tự khách. Bỏ qua hoặc dùng null nếu khách không chọn thợ. Ví dụ: 2 khách, chỉ khách 2 chọn Hân → [null, 'uuid-hân']."
+        },
         duration_minutes: { type: "integer", description: "Thời lượng tùy chỉnh tính bằng phút." },
         is_walk_in: { type: "boolean", description: "True nếu khách đến trực tiếp không đặt trước." },
         notes: { type: "string", description: "Ghi chú bổ sung." }
@@ -55,7 +59,13 @@ const spaTools = [
         booking_id: { type: "string", description: "UUID của lịch hẹn cần sửa." },
         start_time: { type: "string", description: "Giờ mới HH:MM nếu có thay đổi." },
         status: { type: "string", enum: ["confirmed", "arrived", "pending", "cancelled"] },
-        employee_id: { type: "string", description: "UUID nhân viên mới nếu đổi thợ." },
+        branch_id: { type: "string", description: "UUID chi nhánh mới nếu khách muốn đổi chi nhánh." },
+        status: { type: "string", enum: ["confirmed", "arrived", "pending", "cancelled", "completed"] },
+        employee_ids: {
+          type: "array",
+          items: { type: "string" },
+          description: "UUID nhân viên mới nếu đổi thợ. 1 nhân viên cho 1 khách."
+        },
         num_guests: { type: "integer", description: "Số khách mới nếu thay đổi." },
         notes: { type: "string", description: "Ghi chú cập nhật." },
         service_id: { type: "string", description: "UUID dịch vụ mới nếu thay đổi." },
@@ -64,6 +74,17 @@ const spaTools = [
           items: { type: "string" },
           description: "UUID các dịch vụ bổ sung nếu có."
         },
+      },
+      required: ["booking_id"]
+    }
+  },
+  {
+    name: "check_in_booking",
+    description: "Cập nhật khách đã đến: tự động set giờ hiện tại làm start_time, tính lại end_time theo dịch vụ, cập nhật status = arrived. Gọi sau search_bookings.",
+    parameters: {
+      type: "object",
+      properties: {
+        booking_id: { type: "string", description: "UUID của lịch hẹn cần check-in." }
       },
       required: ["booking_id"]
     }
@@ -108,14 +129,28 @@ async function executeTool(toolName, params, context) {
   switch (toolName) {
     case 'get_spa_context': {
       const [services, employees, branches] = await Promise.all([
-        supabase.from('services').select('id, name, duration_minutes').eq('is_active', true),
+        supabase.from('services').select('id, name, duration_minutes, shortcodes').eq('is_active', true),
         supabase.from('employees').select('id, name, branch_id').eq('is_active', true),
         supabase.from('branches').select('id, name, opening_hours')
       ]);
+
+      // Group employees by branch so AI knows who belongs where
+      const employeesByBranch = {};
+      employees.data?.forEach(e => {
+        if (!employeesByBranch[e.branch_id]) employeesByBranch[e.branch_id] = [];
+        employeesByBranch[e.branch_id].push({ id: e.id, name: e.name });
+      });
+
       return {
         services: services.data,
-        employees: employees.data,
-        branches: branches.data
+        current_branch_employees: employeesByBranch[branch_id] || [],
+        other_branches: branches.data
+          ?.filter(b => b.id !== branch_id)
+          .map(b => ({
+            id: b.id,
+            name: b.name,
+            employees: employeesByBranch[b.id] || []
+          }))
       };
     }
 
@@ -222,11 +257,7 @@ async function executeTool(toolName, params, context) {
       let serviceNames = [];
 
       if (!params.duration_minutes) {
-        const allServiceIds = [
-          params.service_id,
-          ...(params.extra_service_ids || [])
-        ].filter(Boolean);
-
+        const allServiceIds = [params.service_id, ...(params.extra_service_ids || [])].filter(Boolean);
         const { data: services } = await supabase
           .from('services')
           .select('id, name, duration_minutes')
@@ -238,16 +269,13 @@ async function executeTool(toolName, params, context) {
         }
       }
 
-      // Add combined service names to notes if multiple services
       if (serviceNames.length > 1 && !bookingParams.notes) {
         bookingParams.notes = serviceNames.join(' + ');
       }
 
-      // Fallback duration
       if (!duration) duration = 60;
-
-      // Remove extra_service_ids before sending to Supabase
       delete bookingParams.extra_service_ids;
+      delete bookingParams.employee_ids;
 
       // Compute end_time
       if (bookingParams.start_time) {
@@ -256,43 +284,51 @@ async function executeTool(toolName, params, context) {
         bookingParams.end_time = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
       }
 
-      // Generate group_booking_id if multiple guests
-      const group_booking_id = num_guests > 1 ? crypto.randomUUID() : null;
+      // Resolve requested staff
+      const requestedIds = params.employee_ids || [];
+      const lockedIds = new Set(requestedIds.filter(Boolean));
 
-      // Fetch available staff for group assignment
-      let availableStaff = [];
-      if (num_guests > 1 && !params.employee_id) {
-        const { data: onDutyStaff } = await supabase
-          .from('employee_schedules')
-          .select('employee_id, employees!inner(id, name, branch_id)')
-          .eq('date', bookingParams.booking_date)
-          .eq('is_day_off', false)
-          .eq('employees.branch_id', branch_id)
-          .eq('employees.is_active', true);
+      // Fetch available staff excluding locked and busy
+      const { data: onDutyStaff } = await supabase
+        .from('employee_schedules')
+        .select('employee_id, employees!inner(id, name, branch_id)')
+        .eq('date', bookingParams.booking_date)
+        .eq('is_day_off', false)
+        .eq('employees.branch_id', branch_id)
+        .eq('employees.is_active', true);
 
-        const { data: overlapping } = await supabase
-          .from('bookings')
-          .select('employee_id')
-          .eq('booking_date', bookingParams.booking_date)
-          .eq('branch_id', branch_id)
-          .neq('status', 'cancelled')
-          .lt('start_time', bookingParams.end_time)
-          .gt('end_time', bookingParams.start_time);
+      const { data: overlapping } = await supabase
+        .from('bookings')
+        .select('employee_id')
+        .eq('booking_date', bookingParams.booking_date)
+        .eq('branch_id', branch_id)
+        .neq('status', 'cancelled')
+        .lt('start_time', bookingParams.end_time)
+        .gt('end_time', bookingParams.start_time);
 
-        const busyIds = new Set(overlapping?.map(b => b.employee_id) || []);
-        availableStaff = onDutyStaff
-          ?.filter(s => !busyIds.has(s.employee_id))
-          .map(s => s.employee_id) || [];
+      const busyIds = new Set(overlapping?.map(b => b.employee_id) || []);
+      const availableStaff = onDutyStaff
+        ?.filter(s => !busyIds.has(s.employee_id) && !lockedIds.has(s.employee_id))
+        .map(s => s.employee_id) || [];
+
+      // Block if not enough staff for auto-assignment
+      const autoNeeded = num_guests - lockedIds.size;
+      if (availableStaff.length < autoNeeded) {
+        return {
+          success: false,
+          blocked: true,
+          reason: `Không đủ nhân viên rảnh. Cần ${autoNeeded} nhân viên tự động nhưng chỉ còn ${availableStaff.length} trống.`
+        };
       }
 
-      // Build rows — assign different staff per guest
+      // Build rows
+      const group_booking_id = num_guests > 1 ? crypto.randomUUID() : null;
+      let autoIndex = 0;
       const rows = Array.from({ length: num_guests }, (_, i) => ({
         ...bookingParams,
         branch_id,
         group_booking_id,
-        employee_id: num_guests > 1 && availableStaff.length > 0
-          ? availableStaff[i % availableStaff.length]
-          : bookingParams.employee_id
+        employee_id: requestedIds[i] || availableStaff[autoIndex++]
       }));
 
       const { data: inserted, error } = await supabase
@@ -301,14 +337,9 @@ async function executeTool(toolName, params, context) {
         .select('*, employees(name), services(name), branches(name)');
 
       if (error) return { error: error.message };
-
       inserted.forEach(b => broadcast('booking.created', b));
 
-      return {
-        success: true,
-        count: inserted.length,
-        bookings: inserted
-      };
+      return { success: true, count: inserted.length, bookings: inserted };
     }
 
     case 'update_booking': {
@@ -321,6 +352,13 @@ async function executeTool(toolName, params, context) {
         .select('*')
         .eq('id', booking_id)
         .single();
+
+      if (updateParams.duration_minutes && !updateParams.service_id) {
+        const [h, m] = (updateParams.start_time || oldBooking.start_time).split(':').map(Number);
+        const endMinutes = h * 60 + m + updateParams.duration_minutes;
+        updateParams.end_time = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
+        delete updateParams.duration_minutes;
+      }
 
       // Recalculate duration if service changed
       if (updateParams.service_id) {
@@ -346,8 +384,21 @@ async function executeTool(toolName, params, context) {
         }
       }
 
+      // If branch changed, clear old employee unless new one specified
+      if (updateParams.branch_id && updateParams.branch_id !== oldBooking.branch_id) {
+        if (!params.employee_ids?.length) {
+          updateParams.employee_id = null;
+        }
+      }
+
       // Remove extra_service_ids before sending to Supabase
       delete updateParams.extra_service_ids;
+
+      // Map employee_ids to employee_id for single booking update
+      if (params.employee_ids?.length > 0) {
+        updateParams.employee_id = params.employee_ids[0];
+      }
+      delete updateParams.employee_ids;
 
       // NOW update Supabase with correct end_time
       const { data: updated, error } = await supabase
@@ -367,6 +418,70 @@ async function executeTool(toolName, params, context) {
         snapshot: oldBooking
       };
     }
+
+    
+    case 'check_in_booking': {
+      const broadcast = context.req.app.get('broadcastSSE') || (() => {});
+
+      // Round current VN time to nearest 5 min
+      const now = new Date();
+      const vnNow = new Date(now.getTime() + 7 * 60 * 60 * 1000 + now.getTimezoneOffset() * 60000);
+      const totalMinutes = vnNow.getHours() * 60 + vnNow.getMinutes();
+      const rounded = Math.ceil(totalMinutes / 5) * 5;
+      const newStartTime = `${String(Math.floor(rounded / 60)).padStart(2, '0')}:${String(rounded % 60).padStart(2, '0')}`;
+
+      // Fetch the booking
+      const { data: booking, error: fetchError } = await supabase
+        .from('bookings')
+        .select('*, services(duration_minutes)')
+        .eq('id', params.booking_id)
+        .single();
+
+      if (fetchError || !booking) return { error: 'Không tìm thấy lịch hẹn.' };
+
+      // Collect all booking IDs to update (group or single)
+      let bookingsToUpdate = [booking];
+      if (booking.group_booking_id) {
+        const { data: siblings } = await supabase
+          .from('bookings')
+          .select('*, services(duration_minutes)')
+          .eq('group_booking_id', booking.group_booking_id)
+          .neq('status', 'cancelled');
+        if (siblings?.length) bookingsToUpdate = siblings;
+      }
+
+      // Update each booking with same start_time but individual end_time
+      const updates = await Promise.all(
+        bookingsToUpdate.map(async (b) => {
+          const duration = b.services?.duration_minutes || 60;
+          const [h, m] = newStartTime.split(':').map(Number);
+          const endMinutes = h * 60 + m + duration;
+          const newEndTime = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
+
+          const { data: updated, error } = await supabase
+            .from('bookings')
+            .update({
+              status: 'arrived',
+              start_time: newStartTime,
+              end_time: newEndTime
+            })
+            .eq('id', b.id)
+            .select('*, employees(name), services(name), branches(name)')
+            .single();
+
+          if (!error) broadcast('booking.updated', updated);
+          return updated;
+        })
+      );
+
+      return {
+        success: true,
+        checked_in: updates.length,
+        start_time: newStartTime,
+        bookings: updates
+      };
+    }
+
 
     case 'delete_booking': {
       const broadcast = context.req.app.get('broadcastSSE') || (() => {});
@@ -482,13 +597,15 @@ router.post('/', async (req, res) => {
   TOOLS — BẮT BUỘC gọi tool, KHÔNG tự trả lời:
   - Tìm lịch → search_bookings
   - Tạo lịch → get_spa_context → get_available_staff → create_booking
-  - Sửa lịch → search_bookings → update_booking
+  - Sửa lịch → search_bookings → (get_spa_context nếu đổi dịch vụ) → (get_available_staff nếu đổi giờ) → update_booking
+  - Khách đến/tới/vô/vào spa → search_bookings → check_in_booking. Chỉ tạo lịch mới, chỉ tạo mới không tìm thấy lịch sẵn có
   - Hủy lịch → search_bookings → delete_booking
   - Cần thông tin nhân viên/dịch vụ → get_spa_context
 
   GIÁ TRỊ MẶC ĐỊNH — KHÔNG hỏi lại:
   - Tên khách: "Khách Lạ" nếu có từ "kl/khách lẻ/khách lạ/ko lịch/k lịch"; "Khách Tây" nếu có "tây/nước ngoài/nc ngoài"
   - Nhân viên: gọi get_available_staff và chọn người đầu tiên rảnh; nếu không ai rảnh → báo lại
+  - KHÔNG tự thay đổi service_id nếu người dùng không đề cập đến dịch vụ
 
   QUY TẮC GIỜ:
   - Có "sáng" hoặc "AM" → dùng AM
@@ -497,7 +614,9 @@ router.post('/', async (req, res) => {
 
   XỬ LÝ KẾT QUẢ:
   - Nhiều lịch trùng tên → hỏi lại để xác nhận
-  - Chỉ hỏi khi THỰC SỰ thiếu thông tin không thể suy luận`;
+  - Chỉ hỏi khi thiếu thông tin không thể suy luận chắc chắn (ví dụ: nhân viên được book đang bận hoặc không ở chi nhánh)
+  - Không reply bằng markdown.
+  `;
 
   const enrichedCommand = `${command}
 [Mặc định đã xác định: dịch vụ="Giữ Chỗ", số khách=1, ngày=${todayDateStr}. Đây là thông tin ĐÃ CÓ, KHÔNG cần hỏi thêm. Hãy gọi tool ngay.]`;

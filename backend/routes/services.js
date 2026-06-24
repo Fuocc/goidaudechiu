@@ -52,8 +52,8 @@ router.get('/:id', async (req, res) => {
 // POST create service
 router.post('/', async (req, res) => {
   try {
-    const { name, description, duration_minutes, price, is_active, category, color } = req.body;
-    let payload = { name, description, duration_minutes, price, is_active: is_active !== false };
+    const { name, description, duration_minutes, price, is_active, category, color, shortcodes } = req.body;
+    let payload = { name, description, duration_minutes, price, is_active: is_active !== false, shortcodes };
     
     let result = await supabase
       .from('services')
@@ -80,8 +80,8 @@ router.post('/', async (req, res) => {
 // PUT update service
 router.put('/:id', async (req, res) => {
   try {
-    const { name, description, duration_minutes, price, is_active, category, color } = req.body;
-    let payload = { name, description, duration_minutes, price, is_active };
+    const { name, description, duration_minutes, price, is_active, category, color, shortcodes } = req.body;
+    let payload = { name, description, duration_minutes, price, is_active, shortcodes };
 
     let result = await supabase
       .from('services')

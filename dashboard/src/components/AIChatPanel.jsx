@@ -190,6 +190,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
           })) : undefined
       })
     });
+    console.log('[V2 response]', data); // temporary log test delete after
 
     if (!data || !data.success) {
       throw new Error(data?.error || 'Không xử lý được yêu cầu.');
