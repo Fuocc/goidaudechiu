@@ -1821,7 +1821,11 @@ function Bookings({ data }) {
                                   color: textColor,
                                 }}
                               >
-                                {b.notes ? <img src={noteIcon} alt='note icon' className="cal-booking-icon" /> : null}
+                                {b.notes && (
+                                  <Tooltip content={b.notes} placement="top">
+                                    <img src={noteIcon} alt={b.notes} className="cal-booking-icon" />
+                                  </Tooltip>
+                                )}
                                 <div className="cal-booking-name" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                                   {isSpamWarning && <FiAlertTriangle size={12} className="cal-alert-icon" />}
                                   {b.temporary_name || b.customers?.name}
@@ -1859,7 +1863,11 @@ function Bookings({ data }) {
                                   color: textColor,
                                 }}
                               >
-                                {b.notes ? <img src={noteIcon} alt='note icon' className="cal-booking-icon" /> : null}
+                                {b.notes && (
+                                  <Tooltip content={b.notes} placement="top">
+                                    <img src={noteIcon} alt={b.notes} className="cal-booking-icon" />
+                                  </Tooltip>
+                                )}
                                 <div className="cal-booking-name">{b.temporary_name || b.customers?.name}</div>
                                 <div className="cal-booking-service">{b.services?.name}</div>
                                 <div className="cal-booking-time">{formatTime(ghostStart)} - {formatTime(ghostEnd)}</div>

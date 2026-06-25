@@ -6,6 +6,10 @@ import geminiLogo from '../assets/gemini-logo.svg';
 import { Tooltip } from '../components/ui/tooltip';
 
 function AIChatPanel({ onClose, currentBranchId }) {
+  const [isV2, setIsV2] = useState(() => {
+    return localStorage.getItem('yoi_ai_version') === 'v2'; // Persist choice
+  });
+
   const [messages, setMessages] = useState(() => {
     try {
       const saved = localStorage.getItem('chatlgbt_messages');
@@ -136,99 +140,140 @@ function AIChatPanel({ onClose, currentBranchId }) {
   };
 
   const handleSend = async (e) => {
-    if (e) e.preventDefault();
-    if (!inputText.trim() || loading) return;
+  if (e) e.preventDefault();
+  if (!inputText.trim() || loading) return;
 
-    const userMsg = {
-      id: Date.now().toString(),
-      sender: 'user',
-      text: inputText,
+  const commandText = inputText;
+  setInputText('');
+  setLoading(true);
+
+  // 1. Append User Message
+  const userMsg = {
+    id: Date.now().toString(),
+    sender: 'user',
+    text: commandText,
+    time: getNowTime()
+  };
+  setMessages(prev => [...prev.filter(m => m.id !== 'welcome'), userMsg].slice(-50));
+
+  // 2. Manage Input History tracking
+  if (commandText.trim() && commandText !== commandHistory[0]) {
+    setCommandHistory(prev => {
+      const newHistory = [commandText, ...prev].slice(0, 50);
+      try { localStorage.setItem('yoi_command_history', JSON.stringify(newHistory)); } catch (e) {}
+      return newHistory;
+    });
+  }
+  setHistoryIndex(-1);
+  setUnfinishedText('');
+
+  const replyContextIds = replyingTo ? replyingTo.bookingIds : undefined;
+  setReplyingTo(null);
+
+  try {
+    // 3. Send API request with the toggled version
+    const targetUrl = isV2 ? '/bookings/command-v2' : '/bookings/command';
+
+    const data = await request(targetUrl, {
+      method: 'POST',
+      body: JSON.stringify({
+        command: commandText,
+        current_branch_id: selectedBranch,
+        reply_to_booking_ids: replyContextIds,
+        apiVersion: isV2 ? 'v2' : 'v1',
+        conversation_history: isV2 ? messages
+          .filter(m => m.id !== 'welcome' && m.sender !== 'system')
+          .slice(-10) // last 10 messages for context
+          .map(m => ({
+            role: m.sender === 'user' ? 'user' : 'model',
+            text: m.text
+          })) : undefined
+      })
+    });
+    console.log('[request sent] reply_to_booking_ids:', replyContextIds); // 👈 ADD
+    console.log('[V2 response]', data); // temporary log test delete after
+
+    if (!data || !data.success) {
+      throw new Error(data?.error || 'Không xử lý được yêu cầu.');
+    }
+
+    let aiMsg = {
+      id: (Date.now() + 1).toString(),
+      sender: 'ai',
       time: getNowTime()
     };
 
-    setMessages(prev => {
-      const filtered = prev.filter(m => m.id !== 'welcome');
-      return [...filtered, userMsg].slice(-50);
-    });
+    if (isV2) {
+      aiMsg.text = data.reply;
+      aiMsg.isSuccess = true;
+      aiMsg.toolLog = data.tool_log || [];
 
-    const commandText = inputText;
-    setInputText('');
-    setLoading(true);
-
-    if (commandText.trim() && commandText !== commandHistory[0]) {
-      setCommandHistory(prev => {
-        const newHistory = [commandText, ...prev].slice(0, 50);
-        try {
-          localStorage.setItem('yoi_command_history', JSON.stringify(newHistory));
-        } catch (e) {
-          console.error('Failed to save command history', e);
-        }
-        return newHistory;
-      });
-    }
-    setHistoryIndex(-1);
-    setUnfinishedText('');
-
-    const replyContextIds = replyingTo ? replyingTo.bookingIds : undefined;
-    setReplyingTo(null); // Clear reply context immediately on send
-
-    try {
-      const data = await request('/bookings/command', {
-        method: 'POST',
-        body: JSON.stringify({
-          command: commandText,
-          current_branch_id: selectedBranch,
-          reply_to_booking_ids: replyContextIds
-        })
-      });
-
-      if (data && data.success) {
-        const { count, duration, summary, bookings, intent } = data;
-        const durationLabel = duration ? ` (${duration}P)` : '';
-
-        let dynamicTitle = `Đã tạo ${count || 1} lịch${durationLabel}`;
-        if (intent === 'BOOKING_DELETE') {
-          dynamicTitle = `Đã hủy ${bookings?.length || 1} lịch`;
-        } else if (intent === 'STAFF_DUTY') {
-          dynamicTitle = `Cập nhật trực tour`;
-        } else if (summary?.includes('Đã đổi nhân viên')) {
-          dynamicTitle = `Đã đổi nhân viên${durationLabel}`;
-        } else if (summary?.includes('Đã cập nhật')) {
-          dynamicTitle = `Đã cập nhật ${count || 1} lịch${durationLabel}`;
-        } else if (summary?.includes('Đã báo khách tới')) {
-          dynamicTitle = `Đã báo khách tới${durationLabel}`;
-        }
-
-        const aiMsg = {
-          id: (Date.now() + 1).toString(),
-          sender: 'ai',
-          isSuccess: true,
-          title: dynamicTitle,
-          text: summary,
-          bookings: bookings || [], // Id of booking
-          snapshot: data.oldBookings || null,
-          time: getNowTime()
-        };
-        setMessages(prev => [...prev, aiMsg].slice(-50));
-
-        // Dispatch global refresh-bookings event
-        window.dispatchEvent(new CustomEvent('refresh-bookings'));
-      } else {
-        throw new Error(data?.error || 'Không phân tích được lệnh đặt lịch.');
+      // Attach bookings for reply/undo buttons
+      const lastResult = data.tool_result || data.tool_log?.at(-1)?.result;
+      if (lastResult?.bookings) {
+        aiMsg.bookings = lastResult.bookings.map(b => b.id);
+        aiMsg.snapshot = lastResult.snapshot || null;
+      } else if (lastResult?.booking) {
+        aiMsg.bookings = [lastResult.booking.id];
+        aiMsg.snapshot = lastResult.snapshot || null;
       }
-    } catch (err) {
-      console.error('ChatLGBT command error:', err);
-      const aiErrorMsg = {
-        id: (Date.now() + 1).toString(),
-        sender: 'ai',
-        text: `Lỗi: ${err.message}`,
-        time: getNowTime()
-      };
-      setMessages(prev => [...prev, aiErrorMsg].slice(-50));
-    } finally {
-      setLoading(false);
+
+      // Auto-set replyingTo if checked-in a "Giữ chỗ" booking
+      if (data.tool_used === 'check_in_booking' && data.tool_result?.bookings) {
+        const hasGiuCho = data.tool_result.bookings.some(b => b.services?.name === 'Giữ chỗ');
+        if (hasGiuCho) {
+          console.log('[replyingTo auto-set]', data.tool_result.bookings.map(b => b.id)); // 👈 ADD
+          setReplyingTo({
+            bookingIds: data.tool_result.bookings.map(b => b.id),
+            label: getReplyLabel(data.reply)
+          });
+        }
+      }
     }
-  };
+
+
+    // 5. Handle Legacy V1 Engine Response (Regex/Structured Layout)
+    else {
+      const { count, duration, summary, bookings, intent } = data;
+      const durationLabel = duration ? ` (${duration}P)` : '';
+
+      let dynamicTitle = `Đã tạo ${count || 1} lịch${durationLabel}`;
+      if (intent === 'BOOKING_DELETE') {
+        dynamicTitle = `Đã hủy ${bookings?.length || 1} lịch`;
+      } else if (intent === 'STAFF_DUTY') {
+        dynamicTitle = `Cập nhật trực tour`;
+      } else if (summary?.includes('Đã đổi nhân viên')) {
+        dynamicTitle = `Đã đổi nhân viên${durationLabel}`;
+      } else if (summary?.includes('Đã cập nhật')) {
+        dynamicTitle = `Đã cập nhật ${count || 1} lịch${durationLabel}`;
+      } else if (summary?.includes('Đã báo khách tới')) {
+        dynamicTitle = `Đã báo khách tới${durationLabel}`;
+      }
+
+      aiMsg.title = dynamicTitle;
+      aiMsg.text = summary;
+      aiMsg.bookings = bookings || [];
+      aiMsg.snapshot = data.oldBookings || null;
+      aiMsg.isSuccess = true;
+    }
+
+    setMessages(prev => [...prev, aiMsg].slice(-50));
+    
+    // Trigger calendars to refresh data
+    window.dispatchEvent(new CustomEvent('refresh-bookings'));
+
+  } catch (err) {
+    console.error('AI Command Error:', err);
+    setMessages(prev => [...prev, {
+      id: (Date.now() + 1).toString(),
+      sender: 'ai',
+      text: `Lỗi: ${err.message}`,
+      time: getNowTime()
+    }].slice(-50));
+  } finally {
+    setLoading(false);
+  }
+};
 
   const handleUndo = async (messageId, bookingIds, snapshot) => {
     if (!bookingIds || bookingIds.length === 0) return;
@@ -341,6 +386,17 @@ function AIChatPanel({ onClose, currentBranchId }) {
                             <strong>{msg.title}</strong>
                           </div>
                           <p className="ai-success-summary">{msg.text}</p>
+
+                          {/* AI Tool used logs */}
+                          {msg.toolLog?.length > 0 && (
+                            <div className="ai-tool-log">
+                              {msg.toolLog.map((t, i) => (
+                                <span key={i} className="ai-tool-badge">
+                                  ⚙ {t.tool}
+                                </span>
+                              ))}
+                            </div>
+                          )}
 
                           {/* Reply / Undo Buttons */}
                           {!isUndone && msg.bookings && msg.bookings.length > 0 && (
@@ -558,6 +614,45 @@ function AIChatPanel({ onClose, currentBranchId }) {
           </div>
         </form>
       </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 8px' }}>
+        <span style={{ fontSize: '12px', fontWeight: '500', color: '#78716C' }}>
+          {isV2 ? 'Engine: V2 (Agent)' : 'Engine: V1 (Regex)'}
+        </span>
+        <button
+          type="button"
+          onClick={() => {
+            const nextValue = !isV2;
+            setIsV2(nextValue);
+            localStorage.setItem('yoi_ai_version', nextValue ? 'v2' : 'v1');
+          }}
+          style={{
+            width: '40px',
+            height: '22px',
+            borderRadius: '999px',
+            backgroundColor: isV2 ? '#10B981' : '#D6D3D1', // Green for V2, Grey for V1
+            position: 'relative',
+            border: 'none',
+            cursor: 'pointer',
+            transition: 'background-color 0.2s ease'
+          }}
+        >
+          <div
+            style={{
+              width: '16px',
+              height: '16px',
+              borderRadius: '50%',
+              backgroundColor: '#FFFFFF',
+              position: 'absolute',
+              top: '3px',
+              left: isV2 ? '21px' : '3px',
+              transition: 'left 0.2s ease',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+            }}
+          />
+        </button>
+      </div>
+
     </div>
   );
 }

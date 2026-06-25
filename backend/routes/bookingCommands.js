@@ -78,6 +78,9 @@ const MULTI_INTENT_SCHEMA = {
         },
         notes: {
           type: "string"
+        },
+        duration_minutes: {
+          type: "integer"
         }
       }
     },
@@ -776,22 +779,63 @@ router.post('/', async (req, res) => {
       });
     }
 
-    // 1. Fetch current branches, services, and active employees from DB
+    const now = getVietnamDate();
+    const todayDateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+    // 1. Fetch current branches, services, active employees, and bookings from DB
     const [
       { data: dbBranches },
       { data: dbServices },
-      { data: dbEmployees }
+      { data: dbEmployees },
+      { data: dbBookings }
     ] = await Promise.all([
-      supabase.from('branches').select('id, name'),
+      supabase.from('branches').select('id, name, opening_hours'),
       supabase.from('services').select('id, name, duration_minutes'),
-      supabase.from('employees').select('id, name, is_active, branch_id').eq('is_active', true)
+      supabase.from('employees').select('id, name, is_active, branch_id').eq('is_active', true),
+      supabase
+        .from('bookings')
+        .select(`
+          id,
+          booking_date,
+          start_time,
+          end_time,
+          temporary_name,
+          employee_id,
+          service_id,
+          branch_id,
+          status,
+          num_guests,
+          customers(name, phone),
+          branches(name),
+          employees(name),
+          services(name)
+        `)
+        .gte('booking_date', todayDateStr)
+        .neq('status', 'cancelled')
+        .order('booking_date', { ascending: true })
+        .order('start_time', { ascending: true })
     ]);
-
-    const now = getVietnamDate();
-    const todayDateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    
     // Weekdays label map for prompt context
     const weekdaysVN = ['Chủ Nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
     const currentDayOfWeekStr = weekdaysVN[now.getDay()];
+
+    // Date label helper
+    const getDateLabel = (dateStr) => {
+      if (!dateStr) return 'hôm nay';
+      if (dateStr === todayDateStr) return 'hôm nay';
+
+      const tomorrow = new Date(now);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const tomorrowStr = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`;
+      if (dateStr === tomorrowStr) return 'ngày mai';
+
+      const date = new Date(dateStr + 'T00:00:00');
+      const dayName = weekdaysVN[date.getDay()];
+      const day = date.getDate();
+      const month = date.getMonth() + 1;
+      return `${dayName}, ${day}/${month}`;
+    };
 
     // Cancellation logic for "Hủy" command when replying to a booking
     const normalizedCmd = command.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -845,6 +889,23 @@ router.post('/', async (req, res) => {
       }
     }
 
+    // Compute earliest opening time in minutes across all branches
+    const earliestOpenMinutes = dbBranches?.reduce((earliest, branch) => {
+      const hours = branch.opening_hours || {};
+      const todayKey = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][now.getDay()];
+      const todayHours = hours[todayKey];
+      if (todayHours?.isOpen && todayHours?.open) {
+        const [h, m] = todayHours.open.split(':').map(Number);
+        const totalMinutes = h * 60 + m;
+        return Math.min(earliest, totalMinutes);
+      }
+      return earliest;
+    }, 23 * 60);
+
+    const earliestOpenHour = Math.floor(earliestOpenMinutes / 60);
+    const earliestOpenMinute = earliestOpenMinutes % 60;
+    const earliestOpenStr = `${earliestOpenHour}:${String(earliestOpenMinute).padStart(2, '0')}`;
+
     // ──────────────────────────────────────────────
     // SYSTEM PROMPT (Multi-Intent, Order-Insensitive)
     // JSON schema is enforced by responseSchema — prompt focuses on business rules only
@@ -868,9 +929,29 @@ Mọi lệnh còn lại về dịch vụ spa đều là BOOKING. Phân tích và
 - Ngày hôm nay: ${todayDateStr} (${currentDayOfWeekStr})
 - Giờ hiện tại (GMT+7): ${now.toLocaleTimeString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })} (${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')})
 - Chi nhánh hiện tại ID: ${current_branch_id || 'null'}
-- Danh sách chi nhánh: ${JSON.stringify(dbBranches || [])}
+- Danh sách chi nhánh và giờ hoạt động: ${JSON.stringify(dbBranches || [])}
 - Dịch vụ: ${JSON.stringify(dbServices || [])}
 - Nhân viên đang hoạt động: ${JSON.stringify(dbEmployees || [])}
+- Lịch hẹn hiện tại và sắp tới: ${JSON.stringify(dbBookings || [])}
+
+**Quy tắc giờ:**
+- KHÔNG tạo lịch ngoài giờ mở cửa của chi nhánh.
+- Giờ mở cửa sớm nhất hôm nay: ${earliestOpenStr}.
+- Nếu giờ không có AM/PM và giờ đó < ${earliestOpenStr} → tự động chuyển sang PM (cộng 12). Ví dụ: "8h" → 20:00.
+- CHỈ dùng AM nếu có từ "sáng" hoặc "AM" trong lệnh.
+
+**Phân biệt giờ và thời lượng:**
+- "Xh" hoặc "X giờ" = giờ hẹn. Ví dụ: "1h" → 13:00, "3h" → 15:00.
+- Thời lượng PHẢI có từ "phút", "p", "tiếng", hoặc "ph" đi kèm. Ví dụ: "90p", "90 phút", "1 tiếng" = 90 phút dịch vụ.
+- Nếu lệnh có CẢ HAI: "2h 90p" = giờ hẹn 2h (→ 14:00) VÀ thời lượng 90 phút.
+- "1h" một mình KHÔNG phải thời lượng — là giờ hẹn 1:00 (→ 13:00).
+- Nếu lệnh có "chừa", "chua", "để dành", "de danh" trước số + h/p → số đó là thời lượng cần chừa/để trống. Ví dụ: "2h chừa 90p" = giờ hẹn 14:00, chừa 90 phút = end_time 15:30.
+
+**Phân biệt tên khách**
+- Khi lệnh nói "Thảo", tìm lịch hẹn có temporary_name LÀ ĐÚNG "Thảo" hoặc "Chị Thảo" TRƯỚC.
+- CHỈ khớp "Thảo Mai" nếu KHÔNG TÌM THẤY bất kỳ lịch nào có tên "Thảo" hoặc "Chị Thảo".
+- Quy tắc: tên NGẮN HƠN không bao giờ được khớp với tên DÀI HƠN nếu tên ngắn hơn tồn tại trong lịch hẹn.
+- Ví dụ: "Thảo" → khớp "Thảo", KHÔNG khớp "Thảo Mai". "Thảo Mai" → khớp "Thảo Mai", KHÔNG khớp "Thảo".
 
 ${replyBookingContext ? `**REPLY CONTEXT (BẮT BUỘC action="update"):**
 Lễ tân đang trả lời lịch hẹn này:
@@ -886,7 +967,7 @@ ${JSON.stringify({
 
 **1. action:**
 - "create": lịch mới.
-- "update": khi có từ khóa chỉnh sửa ("đổi thành", "chỉnh", "chuyển sang", "chuyển qua", "dời sang", "thế", "tới", "đã tới", "hủy bớt", "giảm").
+- "update": khi có từ khóa chỉnh sửa ("đổi thành", "chỉnh", "chuyển", "chuyển sang", "chuyển qua", "dời sang", "thế", "tới", "dời", "đổi", "đã tới", "hủy bớt", "giảm").
 ${replyBookingContext ? '- BẮT BUỘC: action phải là "update" (đang reply context).' : ''}
 
 **2. is_walk_in:** true nếu có "kl", "khách lẻ", "qua liền".
@@ -1112,12 +1193,23 @@ Nếu không khớp → null.
       let bookingToUpdate = null;
       if (matchingBookings && matchingBookings.length > 0) {
         if (replacement.customerName) {
-          const searchCustName = stripDiacritics(replacement.customerName).toLowerCase();
+        const searchCustName = stripDiacritics(replacement.customerName).toLowerCase();
+        
+        // Exact match first
+        bookingToUpdate = matchingBookings.find(b => {
+          const bName = stripDiacritics(b.temporary_name || b.customers?.name || '').toLowerCase();
+          return bName === searchCustName;
+        });
+
+        // Fall back to partial only if no exact match
+        if (!bookingToUpdate) {
           bookingToUpdate = matchingBookings.find(b => {
             const bName = stripDiacritics(b.temporary_name || b.customers?.name || '').toLowerCase();
             return bName.includes(searchCustName);
           });
         }
+      }
+
         if (!bookingToUpdate) {
           bookingToUpdate = matchingBookings[0];
         }
@@ -1169,8 +1261,14 @@ Nếu không khớp → null.
       parsed.service_id = targetService.id;
     }
 
-    // CUSTOM RULE: If command matches "body", set duration to 90 minutes
-    let duration = targetService?.duration_minutes || 60;
+    const placeholderService = dbServices?.find(s =>
+      s.name.toLowerCase().includes('giữ chỗ') ||
+      s.name.toLowerCase().includes('giu cho')
+    );
+    const defaultDuration = placeholderService?.duration_minutes || 60;
+
+    let duration = parsedData.duration_minutes || targetService?.duration_minutes || defaultDuration;
+    // Custom rule: If booking for body then reserve 90p
     if (/body/i.test(command)) {
       duration = 90;
     }
@@ -1248,36 +1346,45 @@ Nếu không khớp → null.
       }
 
       if (matchedBookings.length === 0 && recentBookings && recentBookings.length > 0) {
+        let exactMatch = null;
+        let partialMatch = null;
+
         for (const b of recentBookings) {
           const bPhone = b.customer_phone || b.customers?.phone || '';
-          const bName = (b.temporary_name || b.customers?.name || '').toLowerCase();
+          const bName = stripDiacritics(b.temporary_name || b.customers?.name || '').toLowerCase();
           const bNotes = (b.notes || '').toLowerCase();
 
           let phoneMatch = false;
-          let nameMatch = false;
           let notePhoneMatch = false;
 
           if (parsed.customer_phone && bPhone.includes(parsed.customer_phone)) {
             phoneMatch = true;
           }
 
-          // Match short phone number in notes (e.g. "Số điện thoại 6557")
           if (parsed.short_phone && bNotes.includes(parsed.short_phone)) {
             notePhoneMatch = true;
           }
 
-          if (parsed.temporary_name && parsed.temporary_name !== 'Khách Lạ') {
-            const searchName = parsed.temporary_name.toLowerCase();
-            // Match if name is partially included
-            if (bName.includes(searchName)) {
-              nameMatch = true;
-            }
-          }
-
-          // If phone matches, note phone matches, or name matches
-          if (phoneMatch || notePhoneMatch || nameMatch) {
+          if (phoneMatch || notePhoneMatch) {
             matchedBookings = [b];
             break;
+          }
+
+          if (parsed.temporary_name && parsed.temporary_name !== 'Khách Lạ') {
+            const searchName = stripDiacritics(parsed.temporary_name).toLowerCase();
+            if (bName === searchName) {
+              exactMatch = exactMatch || b;
+            } else if (bName.includes(searchName)) {
+              partialMatch = partialMatch || b;
+            }
+          }
+        }
+
+        if (matchedBookings.length === 0) {
+          if (exactMatch) {
+            matchedBookings = [exactMatch];
+          } else if (partialMatch) {
+            matchedBookings = [partialMatch];
           }
         }
       }
@@ -1642,17 +1749,19 @@ Nếu không khớp → null.
     });
 
     const branchShort = matched.branchName ? matched.branchName.split(' - ')[1] || matched.branchName : 'chi nhánh mặc định';
-
+    
     let nameLabel = 'Khách lạ';
     if (isWalkIn) nameLabel = 'Khách lẻ';
-    else if (parsed.temporary_name && parsed.temporary_name !== 'Khách Lạ') nameLabel = `Chị ${parsed.temporary_name}`;
+    else if (parsed.temporary_name && parsed.temporary_name !== 'Khách Lạ') nameLabel = parsed.temporary_name;
 
     if (parsed.customer_phone) nameLabel += ` (${parsed.customer_phone})`;
 
     const actionText = parsed.status === 'arrived' ? ' đã tới' : '';
     const timeLabel = parsed.start_time ? parsed.start_time.replace(/^0/, '') : '';
+    const bookingDateLabel = getDateLabel(parsed.booking_date);
 
-    const summary = `${nameLabel}${actionText} lúc ${timeLabel}, hôm nay ở chi nhánh ${branchShort}`;
+    const summary = `${nameLabel}${actionText} lúc ${timeLabel}, ${bookingDateLabel} ở chi nhánh ${branchShort}`;
+
 
     res.json({
       success: true,
