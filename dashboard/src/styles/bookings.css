@@ -27,16 +27,16 @@
 }
 
 .booking-row-title {
-    width: 100%;
-    height: 46px;
-    padding: 12px 14px;
-    font-weight: 500;
-    border-radius: 10px;
-    font-size: 16px;
-    color: var(--black);
-    cursor: text;
-    background: var(--white);
-    transition: background 0.2s ease-out;
+  width: 100%;
+  height: 46px;
+  padding: 12px 14px;
+  font-weight: 500;
+  border-radius: 10px;
+  font-size: 16px;
+  color: var(--black);
+  cursor: text;
+  background: var(--white);
+  transition: background 0.2s ease-out;
 }
 
 .booking-row-title:hover {
@@ -323,13 +323,13 @@
 }
 
 .btn-today:not(.active)::after {
-    background-color: #e6a02a;
-    content: '';
-    display: inline-block;
-    width: 5px;
-    height: 5px;
-    border-radius: 5px;
-    vertical-align: middle;
+  background-color: #e6a02a;
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 5px;
+  vertical-align: middle;
 }
 
 .cal-header {
@@ -851,7 +851,7 @@
 }
 
 .placeholder-text-dim {
-    color: #afafaf;
+  color: #afafaf;
 }
 
 .form-input-search {
@@ -868,19 +868,19 @@
 }
 
 .form-input-clean {
-  border: none ;
-  box-shadow: none ;
+  border: none;
+  box-shadow: none;
   font-size: 16px;
   font-weight: 500;
   background: none;
 }
 
 .form-select-clean {
-  border: none ;
-  background: none ;
+  border: none;
+  background: none;
   font-size: 16px;
   font-weight: 500;
-  box-shadow: none ;
+  box-shadow: none;
 }
 
 .employee-avatar-placeholder {
@@ -1551,6 +1551,13 @@
 
   .cal-toolbar {
     position: sticky;
+    top: 0;
+    left: 0;
+  }
+
+  .cal-toolbar-mobile {
+    position: sticky;
+    left: 0;
     width: 100vw;
   }
 
@@ -1750,14 +1757,6 @@
     position: sticky;
     left: 0;
     z-index: 10;
-    background-color: #fff;
-  }
-
-  /* Freeze the first header cell (corner intersection) */
-  .cal-staff-header-wrap>.cal-staff-header:first-child {
-    position: sticky;
-    left: 0;
-    z-index: 12;
     background-color: #fff;
   }
 }

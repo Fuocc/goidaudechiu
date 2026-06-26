@@ -320,6 +320,22 @@ async function executeTool(toolName, params, context) {
         ?.filter(s => !busyIds.has(s.employee_id) && !lockedIds.has(s.employee_id))
         .map(s => s.employee_id) || [];
 
+      // ✅ FIX: Check if any explicitly requested employee is already busy at this time slot
+      const busyLockedStaff = [...lockedIds].filter(id => busyIds.has(id));
+      if (busyLockedStaff.length > 0) {
+        // Get names of conflicting employees for a helpful error message
+        const { data: conflictEmps } = await supabase
+          .from('employees')
+          .select('name')
+          .in('id', busyLockedStaff);
+        const names = conflictEmps?.map(e => e.name).join(', ') || 'Nhân viên đã được chỉ định';
+        return {
+          success: false,
+          blocked: true,
+          reason: `${names} đang có lịch hẹn trùng giờ (${bookingParams.start_time} - ${bookingParams.end_time}). Vui lòng chọn nhân viên khác hoặc đổi khung giờ.`
+        };
+      }
+
       // Block if not enough staff for auto-assignment
       const autoNeeded = num_guests - lockedIds.size;
       if (availableStaff.length < autoNeeded) {
@@ -531,10 +547,21 @@ async function executeTool(toolName, params, context) {
         }
       }
 
-      // If branch changed, clear old employee unless new one specified
+      // If branch changed, clear old employee unless new one specified AND they belong to new branch
       if (updateParams.branch_id && updateParams.branch_id !== oldBooking.branch_id) {
         if (!params.employee_ids?.length) {
           updateParams.employee_id = null;
+        } else {
+          // Verify the requested employee actually belongs to the new branch
+          const { data: empCheck } = await supabase
+            .from('employees')
+            .select('id')
+            .eq('id', params.employee_ids[0])
+            .eq('branch_id', updateParams.branch_id)
+            .single();
+          if (!empCheck) {
+            updateParams.employee_id = null; // Employee not in new branch, clear it
+          }
         }
       }
 
@@ -542,7 +569,8 @@ async function executeTool(toolName, params, context) {
       delete updateParams.extra_service_ids;
 
       // Map employee_ids to employee_id for single booking update
-      if (params.employee_ids?.length > 0) {
+      // Only apply if employee_id hasn't already been set by branch-change logic
+      if (params.employee_ids?.length > 0 && !('employee_id' in updateParams)) {
         updateParams.employee_id = params.employee_ids[0];
       }
       delete updateParams.employee_ids;
