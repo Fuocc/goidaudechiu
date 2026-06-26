@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 require('dotenv').config();
+const { startAutoScheduler } = require('./autoScheduler');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -99,7 +100,7 @@ app.post('/api/events/trigger', (req, res) => {
     if (event === 'booking.created' && typeof bookingsRouter.notifyNewBooking === 'function') {
       bookingsRouter.notifyNewBooking(data).catch(err => console.error('Web Push notify error:', err));
     }
-    
+
     return res.json({ success: true });
   }
   res.status(400).json({ error: 'Missing event name' });
@@ -194,4 +195,6 @@ app.listen(PORT, '0.0.0.0', () => {
     localIps.forEach(ip => {
     });
   }
+  // Bật bộ tự động xếp lịch mỗi ngày
+  startAutoScheduler();
 });

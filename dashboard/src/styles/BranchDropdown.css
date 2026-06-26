@@ -1,0 +1,131 @@
+.branch-dropdown-container {
+  position: relative;
+  display: inline-block;
+  font-family: var(--font-heading);
+}
+
+.branch-dropdown-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px;
+  background-color: transparent;
+  border-radius: 10px;
+  cursor: pointer;
+  font-weight: 500;
+  color: #1C1A17;
+  transition: all 0.25s ease-out;
+  font-size: 14px;
+}
+
+.branch-dropdown-trigger:hover {
+  background-color: #F4F2F0;
+}
+
+.branch-dropdown-trigger img {
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  object-fit: cover;
+}
+
+.branch-dropdown-trigger .dropdown-icon {
+  margin-left: 4px;
+}
+
+.branch-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: 280px;
+  background-color: #ffffff;
+  border-radius: 10px;
+  box-shadow: 0 2px 4px -1px rgba(0, 0, 0, 0.06), 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  border: 1px solid #E7E5E4;
+  z-index: 50;
+  padding: 12px;
+  animation: branchDropdownFadeIn 0.2s ease-out;
+}
+
+.branch-dropdown-header {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: #78716C;
+  letter-spacing: 0.05em;
+}
+
+.branch-dropdown-list {
+  display: flex;
+  flex-flow: column;
+  gap: 8px;
+}
+
+.branch-dropdown-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  border-radius: 6px;
+  background-color: transparent;
+}
+
+.branch-dropdown-item:hover {
+  background-color: #F4F2F0;
+}
+
+.branch-dropdown-item img {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  object-fit: cover;
+  margin-right: 12px;
+}
+
+.branch-dropdown-item span {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 500;
+  color: #1C1A17;
+}
+
+.branch-dropdown-divider {
+  height: 1px;
+  background-color: #E7E5E4;
+  margin: 8px 0;
+}
+
+.branch-dropdown-add {
+  display: flex;
+  align-items: center;
+  padding: 12px;
+  cursor: pointer;
+  color: #292524;
+  border-radius: 6px;
+  transition: background-color 0.2s ease-out;
+}
+
+.branch-dropdown-add:hover {
+  background-color: #F4F2F0;
+}
+
+.branch-dropdown-add .add-icon {
+  margin-right: 12px;
+}
+
+.branch-dropdown-add span {
+  font-size: 16px;
+  font-weight: 500;
+}
+
+@keyframes branchDropdownFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

@@ -18,6 +18,7 @@ import noteIcon from '../assets/note-icon.svg';
 import { Tooltip } from '../components/ui/tooltip';
 import { DatePicker, parseDate } from "@chakra-ui/react"
 import { supabase } from '../supabaseClient';
+import BranchDropdown from '../components/BranchDropdown';
 // import '../styles/timepicker.css';
 import '../styles/bookings.css';
 // ---- Helpers ----
@@ -1408,10 +1409,11 @@ function Bookings({ data }) {
       <div className="cal-toolbar">
         <div className="cal-toolbar-desktop">
           <div className="cal-toolbar-left">
-            <select className="form-select max-w-200"
-              value={filterBranch} onChange={e => setFilterBranch(e.target.value)}>
-              {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-            </select>
+            <BranchDropdown
+              branches={branches}
+              value={filterBranch}
+              onChange={setFilterBranch}
+            />
 
           </div>
           <div className="cal-toolbar-middle">
@@ -1493,10 +1495,11 @@ function Bookings({ data }) {
           {/* Row 2: Branch selector + View toggle */}
           <div className="cal-toolbar-row2">
             <div className="cal-toolbar-left">
-              <select className="form-select max-w-200"
-                value={filterBranch} onChange={e => setFilterBranch(e.target.value)}>
-                {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-              </select>
+              <BranchDropdown
+                branches={branches}
+                value={filterBranch}
+                onChange={setFilterBranch}
+              />
             </div>
             <div className="cal-view-toggle">
               <Tooltip content="View Lịch">

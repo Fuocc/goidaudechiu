@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { FiPlus, FiEdit2, FiTrash2, FiMapPin } from 'react-icons/fi';
 import { getBranches, createBranch, updateBranch, deleteBranch } from '../api';
 import { CardSkeleton } from '../components/ui/Skeleton';
@@ -42,11 +43,23 @@ function Branches() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ name: '', address: '', phone: '', image_url: '', google_map_url: '', opening_hours: DEFAULT_OPENING_HOURS });
+  const [form, setForm] = useState({ name: '', address: '', phone: '', image_url: '', google_map_url: '', opening_hours: DEFAULT_OPENING_HOURS, bed_count: 10 });
+  const [searchParams, setSearchParams] = useSearchParams();
 
   useEffect(() => {
     loadBranches();
   }, []);
+
+  useEffect(() => {
+    if (searchParams.get('action') === 'add') {
+      setEditing(null);
+      setForm({ name: '', address: '', phone: '', image_url: '', google_map_url: '', opening_hours: DEFAULT_OPENING_HOURS, bed_count: 10 });
+      setModalOpen(true);
+      
+      searchParams.delete('action');
+      setSearchParams(searchParams, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
 
   const loadBranches = async () => {
     setLoading(true);
@@ -77,7 +90,7 @@ function Branches() {
 
   const openCreate = () => {
     setEditing(null);
-    setForm({ name: '', address: '', phone: '', image_url: '', google_map_url: '', opening_hours: DEFAULT_OPENING_HOURS });
+    setForm({ name: '', address: '', phone: '', image_url: '', google_map_url: '', opening_hours: DEFAULT_OPENING_HOURS, bed_count: 10 });
     setModalOpen(true);
   };
 
@@ -89,7 +102,8 @@ function Branches() {
       phone: branch.phone || '',
       image_url: branch.image_url || '',
       google_map_url: branch.google_map_url || '',
-      opening_hours: branch.opening_hours || DEFAULT_OPENING_HOURS
+      opening_hours: branch.opening_hours || DEFAULT_OPENING_HOURS,
+      bed_count: branch.bed_count || 0
     });
     setModalOpen(true);
   };
@@ -224,10 +238,17 @@ function Branches() {
                     <input type="text" className="form-input" value={form.address}
                       onChange={e => setForm({ ...form, address: e.target.value })} />
                   </div>
-                  <div className="form-group">
-                    <label className="form-label">Số điện thoại</label>
-                    <input type="tel" className="form-input" value={form.phone}
-                      onChange={e => setForm({ ...form, phone: e.target.value })} />
+                  <div style={{ display: 'flex', gap: '16px' }}>
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label className="form-label">Số điện thoại</label>
+                      <input type="tel" className="form-input" value={form.phone}
+                        onChange={e => setForm({ ...form, phone: e.target.value })} />
+                    </div>
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label className="form-label">Số giường</label>
+                      <input type="number" className="form-input" value={form.bed_count} min="0"
+                        onChange={e => setForm({ ...form, bed_count: parseInt(e.target.value) || 0 })} />
+                    </div>
                   </div>
                   <div className="form-group">
                     <label className="form-label branch-image-label">Ảnh Thumbnail Chi Nhánh</label>

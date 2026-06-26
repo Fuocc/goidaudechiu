@@ -14,7 +14,6 @@
 
 /* Page Specific Imports (Can also be imported in JSX) */
 @import './styles/bookings.css';
-@import './styles/dashboard.css';
 @import './styles/schedules.css';
 @import './styles/login.css';
 @import './styles/webhooks.css';
