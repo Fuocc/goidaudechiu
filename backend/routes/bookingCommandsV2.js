@@ -7,8 +7,29 @@ const { GoogleGenAI } = require('@google/genai');
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const GEMINI_MODEL = 'gemini-3.1-flash-lite'; //250 requests/day
 
+const stripDiacritics = (str) => str.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
 /*1. AI Tools*/
 const spaTools = [
+  {
+    name: "set_staff_duty",
+    description: "Phân chia lịch tour trực nhân viên trong ngày cho chi nhánh hiện tại. Nhân viên KHÔNG có tên trong danh sách sẽ tự động nghỉ (OFF_DUTY). Nếu tên thuộc về nhân viên đang ở chi nhánh khác, hệ thống sẽ TỰ ĐỘNG chuyển nhân viên đó sang chi nhánh hiện tại. Dùng khi lệnh dạng 'Tour ...' hoặc chỉ liệt kê tên nhân viên theo thứ tự, không có giờ hẹn/tên khách/dịch vụ.",
+    parameters: {
+      type: "object",
+      properties: {
+        orderedStaffNames: {
+          type: "array",
+          items: { type: "string" },
+          description: "Danh sách tên nhân viên theo đúng thứ tự xuất hiện trong lệnh (thứ tự tour). Bỏ số thứ tự (1., 2.) và dòng phân cách."
+        },
+        date: {
+          type: "string",
+          description: "Ngày áp dụng dạng YYYY-MM-DD. Mặc định hôm nay nếu lệnh không nói rõ ngày."
+        }
+      },
+      required: ["orderedStaffNames"]
+    }
+  },
   {
     name: "search_bookings",
     description: "Tìm kiếm lịch hẹn theo tên khách, ngày, giờ hoặc chi nhánh.",
@@ -52,11 +73,16 @@ const spaTools = [
   },
   {
     name: "update_booking",
-    description: "Cập nhật hoặc điều chỉnh một lịch hẹn hiện có qua ID.",
+    description: "Cập nhật hoặc điều chỉnh một lịch hẹn hiện có qua ID. Nếu lịch thuộc một nhóm khách đi cùng (đặt chung nhiều người) và lệnh là dời giờ/ngày, chỉ cần truyền 1 booking_id đại diện — hệ thống sẽ tự dời cả nhóm.",
     parameters: {
       type: "object",
       properties: {
         booking_id: { type: "string", description: "UUID của lịch hẹn cần sửa." },
+        booking_ids: {
+          type: "array",
+          items: { type: "string" },
+          description: "Dùng khi cần cập nhật nhiều lịch hẹn cụ thể cùng lúc (ví dụ search_bookings trả về nhiều kết quả trùng tên cần sửa hết)."
+        },
         start_time: { type: "string", description: "Giờ mới HH:MM nếu có thay đổi." },
         status: { type: "string", enum: ["confirmed", "arrived", "pending", "cancelled"] },
         branch_id: { type: "string", description: "UUID chi nhánh mới nếu khách muốn đổi chi nhánh." },
@@ -123,14 +149,242 @@ const spaTools = [
     name: "get_spa_context",
     description: "Lấy danh sách tất cả dịch vụ và nhân viên đang hoạt động tại chi nhánh. Gọi tool này ĐẦU TIÊN nếu lệnh đề cập đến tên dịch vụ hoặc nhân viên cụ thể.",
     parameters: { type: "object", properties: {} }
+  },
+  {
+    name: "get_branches",
+    description: "Lấy danh sách tất cả chi nhánh kèm giờ hoạt động đầy đủ theo từng ngày trong tuần. Dùng để kiểm tra giờ mở cửa khi đặt lịch cho ngày không phải hôm nay, hoặc xác định tên/ID chi nhánh.",
+    parameters: { type: "object", properties: {} }
+  },
+  {
+    name: "get_daily_summary",
+    description: "Lấy tóm tắt lịch hẹn trong ngày tại một chi nhánh: tổng số lịch, số lượng theo trạng thái, nhân viên đang rảnh ngay bây giờ, và các lịch sắp tới. Dùng khi nhân viên hỏi 'hôm nay còn slot nào?', 'hôm nay đông không?'.",
+    parameters: {
+      type: "object",
+      properties: {
+        date: { type: "string", description: "Ngày YYYY-MM-DD. Mặc định hôm nay." },
+        branch_id: { type: "string" }
+      }
+    }
+  },
+  {
+    name: "check_conflicts",
+    description: "Kiểm tra một nhân viên có bị trùng lịch tại một khung giờ cụ thể hay không. Gọi trước khi xác nhận gán/đổi nhân viên cho lịch hẹn để tránh double-booking.",
+    parameters: {
+      type: "object",
+      properties: {
+        employee_id: { type: "string", description: "UUID nhân viên cần kiểm tra." },
+        date: { type: "string", description: "Ngày YYYY-MM-DD. Mặc định hôm nay." },
+        start_time: { type: "string", description: "Giờ bắt đầu HH:MM." },
+        end_time: { type: "string", description: "Giờ kết thúc HH:MM." },
+        duration_minutes: { type: "integer", description: "Thời lượng phút, dùng để tính end_time nếu không có sẵn." }
+      },
+      required: ["employee_id", "start_time"]
+    }
+  },
+  {
+    name: "reassign_staff_bookings",
+    description: "Chuyển toàn bộ lịch hẹn còn hiệu lực trong ngày của một nhân viên sang nhân viên khác đang rảnh. Dùng khi nhân viên A nghỉ đột xuất, hoặc chuyển hẳn sang chi nhánh khác và cần dồn lịch cũ cho người còn lại.",
+    parameters: {
+      type: "object",
+      properties: {
+        from_employee_id: { type: "string", description: "UUID nhân viên cần chuyển lịch đi." },
+        to_employee_id: { type: "string", description: "UUID nhân viên nhận lịch. Bỏ qua để hệ thống tự chọn người rảnh cho từng lịch." },
+        date: { type: "string", description: "Ngày YYYY-MM-DD. Mặc định hôm nay." }
+      },
+      required: ["from_employee_id"]
+    }
+  },
+  {
+    name: "move_staff_to_branch",
+    description: "Chuyển một nhân viên từ chi nhánh hiện tại sang chi nhánh khác (cập nhật chi nhánh cố định của nhân viên, đặt về OFF_DUTY). KHÔNG tự động chuyển các lịch hẹn cũ — gọi thêm reassign_staff_bookings nếu cần dồn lịch cho người khác.",
+    parameters: {
+      type: "object",
+      properties: {
+        employee_id: { type: "string", description: "UUID nhân viên cần chuyển." },
+        new_branch_id: { type: "string", description: "UUID chi nhánh mới." }
+      },
+      required: ["employee_id", "new_branch_id"]
+    }
   }
 ];
 
 /*2. Tool Execution */
 async function executeTool(toolName, params, context) {
-  const { supabase, branch_id, todayDateStr } = context;
+  const { supabase, branch_id, todayDateStr, dbBranches } = context;
 
   switch (toolName) {
+    case 'set_staff_duty': {
+      const broadcast = context.req.app.get('broadcastSSE') || (() => {});
+      const targetBranch = branch_id;
+
+      if (!targetBranch) {
+        return { error: 'Không xác định được chi nhánh. Vui lòng chọn chi nhánh trước.' };
+      }
+
+      const orderedStaffNames = (params.orderedStaffNames || []).map(n => (n || '').trim()).filter(Boolean);
+      if (orderedStaffNames.length === 0) {
+        return { error: 'Danh sách nhân viên trống.' };
+      }
+
+      const scheduleDate = params.date || todayDateStr;
+
+      // Step 1: Reset ALL employees of this branch to OFF_DUTY
+      const { error: resetErr } = await supabase
+        .from('employees')
+        .update({ status: 'OFF_DUTY', current_tour_order: null })
+        .eq('branch_id', targetBranch);
+      if (resetErr) return { error: resetErr.message };
+
+      // Step 2: Fetch ALL active employees (every branch) so names from other
+      // branches can be matched and transferred in.
+      const { data: allActiveEmployees } = await supabase
+        .from('employees')
+        .select('id, name, branch_id, is_active')
+        .eq('is_active', true);
+
+      const branchEmployees = (allActiveEmployees || []).filter(e => e.branch_id === targetBranch);
+      const otherBranchEmployees = (allActiveEmployees || []).filter(e => e.branch_id !== targetBranch);
+
+      const findByName = (pool, normalizedInput) => pool.find(emp => {
+        const empNorm = stripDiacritics(emp.name);
+        const empParts = empNorm.split(/\s+/);
+        const firstName = empParts[empParts.length - 1];
+        return firstName === normalizedInput || empNorm === normalizedInput;
+      });
+
+      const matchedIds = [];
+      const matchedNames = [];
+      const unmatchedNames = [];
+      const transferredEmployees = []; // { id, name, fromBranchId }
+      let updatedCount = 0;
+
+      for (let i = 0; i < orderedStaffNames.length; i++) {
+        const inputName = orderedStaffNames[i];
+        const normalizedInput = stripDiacritics(inputName);
+
+        // Prefer a match already in this branch; only fall back to other
+        // branches when the name isn't found locally.
+        let matched = findByName(branchEmployees, normalizedInput);
+        let isTransfer = false;
+        if (!matched) {
+          matched = findByName(otherBranchEmployees, normalizedInput);
+          isTransfer = !!matched;
+        }
+
+        if (!matched) {
+          unmatchedNames.push(inputName);
+          continue;
+        }
+
+        const updatePayload = { status: 'ON_DUTY', current_tour_order: i + 1 };
+        if (isTransfer) updatePayload.branch_id = targetBranch;
+
+        const { error: updErr } = await supabase
+          .from('employees')
+          .update(updatePayload)
+          .eq('id', matched.id);
+
+        if (updErr) {
+          console.error(`Error updating employee ${matched.name}:`, updErr);
+          continue;
+        }
+
+        matchedIds.push(matched.id);
+        matchedNames.push(matched.name);
+        updatedCount++;
+
+        if (isTransfer) {
+          transferredEmployees.push({ id: matched.id, name: matched.name, fromBranchId: matched.branch_id });
+          // Reflect the move locally so the schedule upsert below picks them up too
+          matched.branch_id = targetBranch;
+          branchEmployees.push(matched);
+        }
+      }
+
+      // Step 3: Upsert employee_schedules for scheduleDate (doesn't touch branch_id —
+      // this table has no branch column, so the "Lịch NV" page is unaffected).
+      const d = new Date(scheduleDate + 'T00:00:00');
+      const day = d.getDay();
+      const defaultStart = (day === 0 || day === 6) ? '09:00' : '10:00';
+      const defaultEnd = '22:00';
+
+      const scheduleRecords = branchEmployees.map(emp => {
+        const isOnDuty = matchedIds.includes(emp.id);
+        return {
+          employee_id: emp.id,
+          date: scheduleDate,
+          start_time: isOnDuty ? defaultStart : null,
+          end_time: isOnDuty ? defaultEnd : null,
+          is_day_off: !isOnDuty,
+          note: isOnDuty ? 'Trực theo tour' : 'Nghỉ theo tour'
+        };
+      });
+
+      if (scheduleRecords.length > 0) {
+        const { error: schedErr } = await supabase
+          .from('employee_schedules')
+          .upsert(scheduleRecords, { onConflict: 'employee_id,date' });
+        if (schedErr) console.error('Error upserting employee schedules in set_staff_duty:', schedErr);
+      }
+
+      // Step 4: Persist tour order into settings
+      let updatedSettings = null;
+      const { data: upsertData, error: settingsErr } = await supabase
+        .from('settings')
+        .upsert({ key: `tour_order_${targetBranch}`, value: matchedIds }, { onConflict: 'key' })
+        .select()
+        .single();
+      if (!settingsErr) updatedSettings = upsertData;
+
+      // Step 5: Fetch updated employee list + broadcast
+      const { data: updatedEmployees } = await supabase
+        .from('employees')
+        .select('id, name, status, current_tour_order, branch_id, is_active')
+        .eq('branch_id', targetBranch)
+        .order('current_tour_order', { ascending: true, nullsFirst: false });
+
+      if (updatedSettings) broadcast('settings.updated', updatedSettings);
+      broadcast('staff.duty_updated', { branch_id: targetBranch, employees: updatedEmployees });
+
+      // Notify branches that just lost a transferred employee, so their staff lists stay in sync
+      const affectedOldBranchIds = [...new Set(
+        transferredEmployees.map(t => t.fromBranchId).filter(id => id && id !== targetBranch)
+      )];
+      for (const oldBranchId of affectedOldBranchIds) {
+        const { data: oldBranchEmployees } = await supabase
+          .from('employees')
+          .select('id, name, status, current_tour_order, branch_id, is_active')
+          .eq('branch_id', oldBranchId)
+          .order('current_tour_order', { ascending: true, nullsFirst: false });
+
+        broadcast('staff.duty_updated', { branch_id: oldBranchId, employees: oldBranchEmployees });
+      }
+
+      // Step 6: Build summary
+      let summary = `Đã cập nhật ${updatedCount}/${orderedStaffNames.length} nhân viên trực.`;
+      if (transferredEmployees.length > 0) {
+        const branchNameOf = (id) => (dbBranches || []).find(b => b.id === id)?.name || 'chi nhánh khác';
+        const transferSummary = transferredEmployees
+          .map(t => `${t.name} (từ ${branchNameOf(t.fromBranchId)})`)
+          .join(', ');
+        summary += ` Đã chuyển ${transferredEmployees.length} nhân viên sang chi nhánh này: ${transferSummary}.`;
+      }
+      if (unmatchedNames.length > 0) {
+        summary += ` Không tìm thấy: ${unmatchedNames.join(', ')}.`;
+      }
+
+      return {
+        success: true,
+        updatedCount,
+        totalNames: orderedStaffNames.length,
+        matchedNames,
+        transferredEmployees,
+        unmatchedNames,
+        summary,
+        employees: updatedEmployees
+      };
+    }
+
     case 'get_spa_context': {
       const [services, employees, branches] = await Promise.all([
         supabase.from('services').select('id, name, duration_minutes, shortcodes').eq('is_active', true),
@@ -268,6 +522,14 @@ async function executeTool(toolName, params, context) {
           .from('services')
           .select('id, name, duration_minutes')
           .in('id', allServiceIds);
+
+        const foundIds = new Set((services || []).map(s => s.id));
+        const missingIds = allServiceIds.filter(id => !foundIds.has(id));
+        if (missingIds.length > 0) {
+          return {
+            error: `service_id không hợp lệ hoặc không tồn tại: ${missingIds.join(', ')}. Hãy gọi get_spa_context để lấy đúng UUID dịch vụ rồi thử lại, KHÔNG tự đoán UUID.`
+          };
+        }
 
         if (services?.length) {
           duration = services.reduce((sum, s) => sum + (s.duration_minutes || 0), 0);
@@ -491,106 +753,167 @@ async function executeTool(toolName, params, context) {
     // }
 
    case 'update_booking': {
-      const { booking_id, ...updateParams } = params;
+      const { booking_id, booking_ids, ...updateParams } = params;
       const broadcast = context.req.app.get('broadcastSSE') || (() => {});
 
-      // Snapshot for undo
-      const { data: oldBooking } = await supabase
-        .from('bookings')
-        .select('*')
-        .eq('id', booking_id)
-        .single();
+      let targetIds = Array.isArray(booking_ids) && booking_ids.length
+        ? booking_ids
+        : [booking_id].filter(Boolean);
 
-      if (updateParams.duration_minutes && !updateParams.service_id) {
-        const [h, m] = (updateParams.start_time || oldBooking.start_time).split(':').map(Number);
-        const endMinutes = h * 60 + m + updateParams.duration_minutes;
-        updateParams.end_time = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
-        delete updateParams.duration_minutes;
-      }
+      if (!targetIds.length) return { error: 'Thiếu booking_id để cập nhật.' };
 
-      if (updateParams.start_time && !updateParams.service_id && !updateParams.duration_minutes) {
-        const duration = oldBooking.end_time && oldBooking.start_time
-          ? (() => {
-              const [oh, om] = oldBooking.start_time.split(':').map(Number);
-              const [eh, em] = oldBooking.end_time.split(':').map(Number);
-              return (eh * 60 + em) - (oh * 60 + om);
-            })()
-          : 60;
-        const [h, m] = updateParams.start_time.split(':').map(Number);
-        const endMinutes = h * 60 + m + duration;
-        updateParams.end_time = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
-      }
+      // Rescheduling date/time should move the whole group together, since
+      // num_guests > 1 bookings from create_booking share one group_booking_id.
+      const isReschedule = Boolean(updateParams.start_time || updateParams.booking_date);
+      if (targetIds.length === 1 && isReschedule) {
+        const { data: originBooking } = await supabase
+          .from('bookings')
+          .select('group_booking_id')
+          .eq('id', targetIds[0])
+          .single();
 
-      // Recalculate duration if service changed or extra services are provided
-      if (updateParams.service_id || updateParams.extra_service_ids?.length) {
-        const primaryServiceId = updateParams.service_id || oldBooking.service_id;
-
-        const allServiceIds = [
-          primaryServiceId,
-          ...(updateParams.extra_service_ids || [])
-        ].filter(Boolean);
-
-        const { data: services } = await supabase
-          .from('services')
-          .select('id, name, duration_minutes')
-          .in('id', allServiceIds);
-
-        if (services?.length) {
-          const duration = services.reduce((sum, s) => sum + (s.duration_minutes || 0), 0);
-          const [h, m] = (updateParams.start_time || oldBooking.start_time).split(':').map(Number);
-          const endMinutes = h * 60 + m + duration;
-          updateParams.end_time = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
-
-          if (services.length > 1) {
-            updateParams.notes = services.map(s => s.name).join(' + ');
-          }
-        }
-      }
-
-      // If branch changed, clear old employee unless new one specified AND they belong to new branch
-      if (updateParams.branch_id && updateParams.branch_id !== oldBooking.branch_id) {
-        if (!params.employee_ids?.length) {
-          updateParams.employee_id = null;
-        } else {
-          // Verify the requested employee actually belongs to the new branch
-          const { data: empCheck } = await supabase
-            .from('employees')
+        if (originBooking?.group_booking_id) {
+          const { data: siblings } = await supabase
+            .from('bookings')
             .select('id')
-            .eq('id', params.employee_ids[0])
-            .eq('branch_id', updateParams.branch_id)
-            .single();
-          if (!empCheck) {
-            updateParams.employee_id = null; // Employee not in new branch, clear it
-          }
+            .eq('group_booking_id', originBooking.group_booking_id)
+            .neq('status', 'cancelled');
+          if (siblings?.length > 1) targetIds = siblings.map(s => s.id);
         }
       }
 
-      // Remove extra_service_ids before sending to Supabase
-      delete updateParams.extra_service_ids;
+      const updatedBookings = [];
+      const oldBookings = [];
 
-      // Map employee_ids to employee_id for single booking update
-      // Only apply if employee_id hasn't already been set by branch-change logic
-      if (params.employee_ids?.length > 0 && !('employee_id' in updateParams)) {
-        updateParams.employee_id = params.employee_ids[0];
+      for (let i = 0; i < targetIds.length; i++) {
+        const id = targetIds[i];
+
+        // Snapshot for undo
+        const { data: oldBooking } = await supabase
+          .from('bookings')
+          .select('*')
+          .eq('id', id)
+          .single();
+        if (!oldBooking) continue;
+
+        const rowUpdate = { ...updateParams };
+
+        if (rowUpdate.duration_minutes && !rowUpdate.service_id) {
+          const [h, m] = (rowUpdate.start_time || oldBooking.start_time).split(':').map(Number);
+          const endMinutes = h * 60 + m + rowUpdate.duration_minutes;
+          rowUpdate.end_time = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
+          delete rowUpdate.duration_minutes;
+        }
+
+        if (rowUpdate.start_time && !rowUpdate.service_id && !rowUpdate.duration_minutes) {
+          const duration = oldBooking.end_time && oldBooking.start_time
+            ? (() => {
+                const [oh, om] = oldBooking.start_time.split(':').map(Number);
+                const [eh, em] = oldBooking.end_time.split(':').map(Number);
+                return (eh * 60 + em) - (oh * 60 + om);
+              })()
+            : 60;
+          const [h, m] = rowUpdate.start_time.split(':').map(Number);
+          const endMinutes = h * 60 + m + duration;
+          rowUpdate.end_time = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
+        }
+
+        // Recalculate duration if service changed or extra services are provided
+        if (rowUpdate.service_id || rowUpdate.extra_service_ids?.length) {
+          const primaryServiceId = rowUpdate.service_id || oldBooking.service_id;
+
+          const allServiceIds = [
+            primaryServiceId,
+            ...(rowUpdate.extra_service_ids || [])
+          ].filter(Boolean);
+
+          const { data: services } = await supabase
+            .from('services')
+            .select('id, name, duration_minutes')
+            .in('id', allServiceIds);
+
+          const foundIds = new Set((services || []).map(s => s.id));
+          const missingIds = allServiceIds.filter(id => !foundIds.has(id));
+          if (missingIds.length > 0) {
+            return {
+              error: `service_id không hợp lệ hoặc không tồn tại: ${missingIds.join(', ')}. Hãy gọi get_spa_context để lấy đúng UUID dịch vụ rồi thử lại, KHÔNG tự đoán UUID.`
+            };
+          }
+
+          if (services?.length) {
+            const duration = services.reduce((sum, s) => sum + (s.duration_minutes || 0), 0);
+            const [h, m] = (rowUpdate.start_time || oldBooking.start_time).split(':').map(Number);
+            const endMinutes = h * 60 + m + duration;
+            rowUpdate.end_time = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
+
+            if (services.length > 1) {
+              rowUpdate.notes = services.map(s => s.name).join(' + ');
+            }
+          }
+        }
+
+        // If branch changed, clear old employee unless new one specified AND they belong to new branch
+        if (rowUpdate.branch_id && rowUpdate.branch_id !== oldBooking.branch_id) {
+          const requestedEmpId = params.employee_ids?.[i] ?? params.employee_ids?.[0];
+          if (!requestedEmpId) {
+            rowUpdate.employee_id = null;
+          } else {
+            // Verify the requested employee actually belongs to the new branch
+            const { data: empCheck } = await supabase
+              .from('employees')
+              .select('id')
+              .eq('id', requestedEmpId)
+              .eq('branch_id', rowUpdate.branch_id)
+              .single();
+            rowUpdate.employee_id = empCheck ? requestedEmpId : null; // Employee not in new branch, clear it
+          }
+        }
+
+        // Remove extra_service_ids / employee_ids (plural) before sending to Supabase —
+        // the bookings table only has singular employee_id/service_id columns.
+        delete rowUpdate.extra_service_ids;
+        delete rowUpdate.employee_ids;
+
+        // Map employee_ids to employee_id. For a single booking, take the first id.
+        // For a whole group, only assign per-guest if the array lines up 1:1 with the
+        // group — otherwise leave employee_id untouched to avoid double-booking the
+        // same staff member across the group.
+        if (!('employee_id' in rowUpdate) && params.employee_ids?.length > 0) {
+          if (targetIds.length === 1) {
+            rowUpdate.employee_id = params.employee_ids[0];
+          } else if (params.employee_ids.length === targetIds.length) {
+            rowUpdate.employee_id = params.employee_ids[i];
+          }
+        }
+
+        // NOW update Supabase with correct end_time
+        const { data: updated, error } = await supabase
+          .from('bookings')
+          .update(rowUpdate)
+          .eq('id', id)
+          .select('*, employees(name), services(name), branches(name)')
+          .single();
+
+        if (error) return { error: error.message };
+
+        broadcast('booking.updated', updated);
+        updatedBookings.push(updated);
+        oldBookings.push(oldBooking);
       }
-      delete updateParams.employee_ids;
 
-      // NOW update Supabase with correct end_time
-      const { data: updated, error } = await supabase
-        .from('bookings')
-        .update(updateParams)
-        .eq('id', booking_id)
-        .select('*, employees(name), services(name), branches(name)')
-        .single();
-
-      if (error) return { error: error.message };
-
-      broadcast('booking.updated', updated);
+      if (updatedBookings.length === 1) {
+        return {
+          success: true,
+          booking: updatedBookings[0],
+          snapshot: oldBookings[0]
+        };
+      }
 
       return {
         success: true,
-        booking: updated,
-        snapshot: oldBooking
+        bookings: updatedBookings,
+        count: updatedBookings.length,
+        snapshot: oldBookings
       };
     }
 
@@ -744,6 +1067,242 @@ async function executeTool(toolName, params, context) {
     }
 
 
+    case 'get_branches': {
+      const { data: branches, error } = await supabase
+        .from('branches')
+        .select('id, name, opening_hours');
+      if (error) return { error: error.message };
+      return { branches: branches || [] };
+    }
+
+    case 'get_daily_summary': {
+      const targetDate = params.date || todayDateStr;
+      const targetBranch = params.branch_id || branch_id;
+
+      const { data: bookings, error } = await supabase
+        .from('bookings')
+        .select('id, employee_id, temporary_name, start_time, end_time, status, employees(name), services(name)')
+        .eq('booking_date', targetDate)
+        .eq('branch_id', targetBranch)
+        .neq('status', 'cancelled')
+        .order('start_time', { ascending: true });
+      if (error) return { error: error.message };
+
+      const { data: onDutyStaff } = await supabase
+        .from('employee_schedules')
+        .select('employee_id, employees!inner(id, name, branch_id)')
+        .eq('date', targetDate)
+        .eq('is_day_off', false)
+        .eq('employees.branch_id', targetBranch)
+        .eq('employees.is_active', true);
+
+      const statusCounts = {};
+      (bookings || []).forEach(b => {
+        statusCounts[b.status] = (statusCounts[b.status] || 0) + 1;
+      });
+
+      const now = new Date();
+      const vnNow = new Date(now.getTime() + 7 * 60 * 60 * 1000 + now.getTimezoneOffset() * 60000);
+      const nowStr = `${String(vnNow.getHours()).padStart(2, '0')}:${String(vnNow.getMinutes()).padStart(2, '0')}`;
+
+      const busyNowIds = new Set(
+        (bookings || [])
+          .filter(b => b.start_time && b.end_time && b.start_time <= nowStr && b.end_time > nowStr)
+          .map(b => b.employee_id)
+      );
+
+      const staffFreeNow = (onDutyStaff || [])
+        .filter(s => !busyNowIds.has(s.employee_id))
+        .map(s => ({ id: s.employee_id, name: s.employees.name }));
+
+      return {
+        date: targetDate,
+        total_bookings: bookings?.length || 0,
+        status_counts: statusCounts,
+        on_duty_staff_count: onDutyStaff?.length || 0,
+        staff_free_now: staffFreeNow,
+        upcoming: (bookings || [])
+          .filter(b => !b.start_time || b.start_time >= nowStr)
+          .slice(0, 10)
+          .map(b => ({
+            id: b.id,
+            name: b.temporary_name,
+            time: b.start_time,
+            status: b.status,
+            employee: b.employees?.name,
+            service: b.services?.name
+          }))
+      };
+    }
+
+    case 'check_conflicts': {
+      const targetDate = params.date || todayDateStr;
+      const startTime = params.start_time;
+      let endTime = params.end_time;
+
+      if (!params.employee_id || !startTime) {
+        return { error: 'Thiếu employee_id hoặc start_time để kiểm tra.' };
+      }
+
+      if (!endTime && params.duration_minutes) {
+        const [h, m] = startTime.split(':').map(Number);
+        const endMinutes = h * 60 + m + params.duration_minutes;
+        endTime = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
+      }
+      endTime = endTime || startTime;
+
+      const { data: overlapping, error } = await supabase
+        .from('bookings')
+        .select('id, temporary_name, start_time, end_time, status')
+        .eq('booking_date', targetDate)
+        .eq('employee_id', params.employee_id)
+        .neq('status', 'cancelled')
+        .lt('start_time', endTime)
+        .gt('end_time', startTime);
+
+      if (error) return { error: error.message };
+
+      return {
+        has_conflict: (overlapping?.length || 0) > 0,
+        conflicts: overlapping || []
+      };
+    }
+
+    case 'reassign_staff_bookings': {
+      const broadcast = context.req.app.get('broadcastSSE') || (() => {});
+      const targetDate = params.date || todayDateStr;
+      const fromId = params.from_employee_id;
+      if (!fromId) return { error: 'Thiếu from_employee_id.' };
+
+      const { data: bookingsToMove, error: fetchErr } = await supabase
+        .from('bookings')
+        .select('id, start_time, end_time, employee_id, branch_id')
+        .eq('booking_date', targetDate)
+        .eq('employee_id', fromId)
+        .neq('status', 'cancelled')
+        .order('start_time', { ascending: true });
+
+      if (fetchErr) return { error: fetchErr.message };
+      if (!bookingsToMove || bookingsToMove.length === 0) {
+        return { success: true, moved: 0, message: 'Nhân viên này không có lịch hẹn nào cần chuyển trong ngày.' };
+      }
+
+      const targetBranchForBookings = bookingsToMove[0].branch_id;
+
+      const { data: onDutyStaff } = await supabase
+        .from('employee_schedules')
+        .select('employee_id, employees!inner(id, name, branch_id, is_active)')
+        .eq('date', targetDate)
+        .eq('is_day_off', false)
+        .eq('employees.branch_id', targetBranchForBookings)
+        .eq('employees.is_active', true)
+        .neq('employee_id', fromId);
+
+      const { data: allBookingsThatDay } = await supabase
+        .from('bookings')
+        .select('employee_id, start_time, end_time')
+        .eq('booking_date', targetDate)
+        .eq('branch_id', targetBranchForBookings)
+        .neq('status', 'cancelled');
+
+      const moved = [];
+      const unassigned = [];
+      const workingSchedule = [...(allBookingsThatDay || [])];
+
+      for (const booking of bookingsToMove) {
+        let newEmployeeId = params.to_employee_id || null;
+
+        const isFree = (empId) => !workingSchedule.some(b =>
+          b.employee_id === empId &&
+          b.start_time < booking.end_time && b.end_time > booking.start_time
+        );
+
+        if (newEmployeeId && !isFree(newEmployeeId)) {
+          newEmployeeId = null;
+        }
+
+        if (!newEmployeeId) {
+          const candidate = (onDutyStaff || []).find(s => isFree(s.employee_id));
+          newEmployeeId = candidate?.employee_id || null;
+        }
+
+        if (!newEmployeeId) {
+          unassigned.push(booking.id);
+          continue;
+        }
+
+        const { data: updated, error: updErr } = await supabase
+          .from('bookings')
+          .update({ employee_id: newEmployeeId })
+          .eq('id', booking.id)
+          .select('*, employees(name), services(name), branches(name)')
+          .single();
+
+        if (updErr) continue;
+
+        broadcast('booking.updated', updated);
+        moved.push({ booking_id: booking.id, new_employee_id: newEmployeeId });
+        workingSchedule.push({ employee_id: newEmployeeId, start_time: booking.start_time, end_time: booking.end_time });
+      }
+
+      return {
+        success: true,
+        moved: moved.length,
+        unassigned_count: unassigned.length,
+        unassigned_booking_ids: unassigned,
+        details: moved
+      };
+    }
+
+    case 'move_staff_to_branch': {
+      const broadcast = context.req.app.get('broadcastSSE') || (() => {});
+      const { employee_id, new_branch_id } = params;
+      if (!employee_id || !new_branch_id) {
+        return { error: 'Thiếu employee_id hoặc new_branch_id.' };
+      }
+
+      const { data: employee, error: fetchErr } = await supabase
+        .from('employees')
+        .select('id, name, branch_id')
+        .eq('id', employee_id)
+        .single();
+
+      if (fetchErr || !employee) return { error: 'Không tìm thấy nhân viên.' };
+
+      const oldBranchId = employee.branch_id;
+
+      const { data: updated, error: updErr } = await supabase
+        .from('employees')
+        .update({ branch_id: new_branch_id, status: 'OFF_DUTY', current_tour_order: null })
+        .eq('id', employee_id)
+        .select('id, name, branch_id, status')
+        .single();
+
+      if (updErr) return { error: updErr.message };
+
+      const { data: oldBranchEmployees } = await supabase
+        .from('employees')
+        .select('id, name, status, current_tour_order, branch_id, is_active')
+        .eq('branch_id', oldBranchId)
+        .order('current_tour_order', { ascending: true, nullsFirst: false });
+      const { data: newBranchEmployees } = await supabase
+        .from('employees')
+        .select('id, name, status, current_tour_order, branch_id, is_active')
+        .eq('branch_id', new_branch_id)
+        .order('current_tour_order', { ascending: true, nullsFirst: false });
+
+      broadcast('staff.duty_updated', { branch_id: oldBranchId, employees: oldBranchEmployees });
+      broadcast('staff.duty_updated', { branch_id: new_branch_id, employees: newBranchEmployees });
+
+      return {
+        success: true,
+        employee: updated,
+        from_branch_id: oldBranchId,
+        to_branch_id: new_branch_id,
+        summary: `Đã chuyển ${employee.name} sang chi nhánh mới.`
+      };
+    }
+
     default:
       return { error: `Không tìm thấy tool: ${toolName}` };
   }
@@ -778,6 +1337,7 @@ router.post('/', async (req, res) => {
   const systemPrompt = `Bạn là trợ lý AI đặt lịch cho Ý Ơi Spa. Hôm nay: ${todayDateStr}.  Giờ hiện tại: ${currentTimeStr}. Chi nhánh: ${current_branch_id}. Giờ mở cửa: ${branchHoursStr}.
 
   TOOLS — BẮT BUỘC gọi tool, KHÔNG tự trả lời:
+  - Lệnh dạng "Tour" + ngày + danh sách tên nhân viên (VD: "Tour 12/06: 1.Hân 2.Trang 3.Nị"), HOẶC lệnh CHỈ liệt kê tên nhân viên nối tiếp nhau (cách nhau bằng dấu cách/xuống dòng/phẩy) mà KHÔNG có giờ hẹn, tên khách hay dịch vụ → gọi set_staff_duty NGAY, KHÔNG gọi tool nào khác trước. Trích orderedStaffNames theo đúng thứ tự xuất hiện (bỏ số thứ tự "1.", "2." và dòng phân cách "---", "==="). Nhân viên hiện đang ở chi nhánh khác vẫn có thể xuất hiện trong danh sách — hệ thống sẽ tự chuyển họ sang chi nhánh hiện tại, không cần hỏi lại.
   - Tìm lịch → search_bookings
   - Tạo lịch → get_spa_context → get_available_staff → create_booking
   - Sửa lịch hoặc lệnh có tên khách + dịch vụ không có giờ → search_bookings → (get_spa_context nếu đổi dịch vụ) → (get_available_staff nếu đổi giờ) → update_booking. Chỉ tạo mới nếu không tìm thấy lịch.
@@ -785,6 +1345,11 @@ router.post('/', async (req, res) => {
   - Hủy lịch → search_bookings → delete_booking
   - Cần thông tin nhân viên/dịch vụ → get_spa_context
   - Nếu có reply_to_booking_ids → chỉ gọi get_spa_context → update_booking hoặc delete_booking. KHÔNG gọi get_available_staff. KHÔNG tạo lịch mới.
+  - Hỏi "hôm nay còn slot nào?", "hôm nay đông không?" → get_daily_summary
+  - Cần giờ mở cửa các chi nhánh cho ngày không phải hôm nay → get_branches
+  - Trước khi gán/đổi nhân viên cụ thể vào lịch mà chưa chắc họ rảnh → check_conflicts
+  - Nhân viên A nghỉ đột xuất hoặc cần dồn hết lịch của A cho người khác (KHÔNG phải đổi chi nhánh cố định) → reassign_staff_bookings
+  - "Chuyển NV A sang CN2/chi nhánh khác" (đổi nơi làm việc cố định của nhân viên) → move_staff_to_branch. Nếu A còn lịch hẹn cũ cần dồn cho người khác, gọi thêm reassign_staff_bookings.
 
   NOTES:
   - Bất kỳ nội dung nào không phải tên khách, giờ, dịch vụ, số khách, chi nhánh → điền vào notes. Ví dụ: "ydc 1568" → service=ydc, notes="1568". "C An 7h có thẻ" → notes="có thẻ"
@@ -855,6 +1420,7 @@ router.post('/', async (req, res) => {
           supabase,
           branch_id: current_branch_id,
           todayDateStr,
+          dbBranches,
           req
         });
 

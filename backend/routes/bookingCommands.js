@@ -643,11 +643,22 @@ async function handleStaffDuty(req, res, staffDutyData, currentBranchId, dbBranc
     throw resetErr;
   }
 
-  // Step 2: Match names and set ON_DUTY with tour order
+  // Step 2: Match names and set ON_DUTY with tour order.
+  // Prefer a match already in this branch; if a name isn't found locally, fall back
+  // to searching other branches — this covers staff being transferred in for the tour.
   const branchEmployees = (dbEmployees || []).filter(e => e.branch_id === branchId);
+  const otherBranchEmployees = (dbEmployees || []).filter(e => e.branch_id !== branchId);
   const matchedIds = [];
   const matchedNames = [];
+  const transferredEmployees = []; // { id, name, fromBranchId }
   let updatedCount = 0;
+
+  const findByName = (pool, normalizedInput) => pool.find(emp => {
+    const empNorm = stripDiacritics(emp.name);
+    const empParts = empNorm.split(/\s+/);
+    const firstName = empParts[empParts.length - 1];
+    return firstName === normalizedInput || empNorm === normalizedInput;
+  });
 
   for (let i = 0; i < orderedStaffNames.length; i++) {
     const inputName = orderedStaffNames[i].trim();
@@ -655,29 +666,34 @@ async function handleStaffDuty(req, res, staffDutyData, currentBranchId, dbBranc
 
     const normalizedInput = stripDiacritics(inputName);
 
-    // Find matching employee: compare against Vietnamese first name (last word of full name)
-    let matched = null;
-    for (const emp of branchEmployees) {
-      const empNorm = stripDiacritics(emp.name);
-      const empParts = empNorm.split(/\s+/);
-      const firstName = empParts[empParts.length - 1];
+    let matched = findByName(branchEmployees, normalizedInput);
+    let isTransfer = false;
 
-      if (firstName === normalizedInput || empNorm === normalizedInput) {
-        matched = emp;
-        break;
-      }
+    if (!matched) {
+      matched = findByName(otherBranchEmployees, normalizedInput);
+      isTransfer = !!matched;
     }
 
     if (matched) {
+      const updatePayload = { status: 'ON_DUTY', current_tour_order: i + 1 };
+      if (isTransfer) updatePayload.branch_id = branchId;
+
       const { error: updateErr } = await supabase
         .from('employees')
-        .update({ status: 'ON_DUTY', current_tour_order: i + 1 })
+        .update(updatePayload)
         .eq('id', matched.id);
 
       if (!updateErr) {
         matchedIds.push(matched.id);
         matchedNames.push(matched.name);
         updatedCount++;
+
+        if (isTransfer) {
+          transferredEmployees.push({ id: matched.id, name: matched.name, fromBranchId: matched.branch_id });
+          // Reflect the move locally so the schedule upsert below (Step 2.5) picks them up too
+          matched.branch_id = branchId;
+          branchEmployees.push(matched);
+        }
       } else {
         console.error(`Error updating employee ${matched.name}:`, updateErr);
       }
@@ -748,14 +764,41 @@ async function handleStaffDuty(req, res, staffDutyData, currentBranchId, dbBranc
     employees: updatedEmployees
   });
 
+  // Also notify branches that just lost a transferred employee, so their staff lists stay in sync
+  const affectedOldBranchIds = [...new Set(
+    transferredEmployees.map(t => t.fromBranchId).filter(id => id && id !== branchId)
+  )];
+  for (const oldBranchId of affectedOldBranchIds) {
+    const { data: oldBranchEmployees } = await supabase
+      .from('employees')
+      .select('id, name, status, current_tour_order, branch_id, is_active')
+      .eq('branch_id', oldBranchId)
+      .order('current_tour_order', { ascending: true, nullsFirst: false });
+
+    broadcast('staff.duty_updated', {
+      branch_id: oldBranchId,
+      employees: oldBranchEmployees
+    });
+  }
+
   // Step 6: Return response
+  let summary = `Đã cập nhật ${updatedCount}/${orderedStaffNames.length} nhân viên trực.`;
+  if (transferredEmployees.length > 0) {
+    const branchNameOf = (id) => (dbBranches || []).find(b => b.id === id)?.name || 'chi nhánh khác';
+    const transferSummary = transferredEmployees
+      .map(t => `${t.name} (từ ${branchNameOf(t.fromBranchId)})`)
+      .join(', ');
+    summary += ` Đã chuyển ${transferredEmployees.length} nhân viên sang chi nhánh này: ${transferSummary}.`;
+  }
+
   return res.json({
     success: true,
     intent: 'STAFF_DUTY',
     updatedCount,
     totalNames: orderedStaffNames.length,
     matchedNames,
-    summary: `Đã cập nhật ${updatedCount}/${orderedStaffNames.length} nhân viên trực.`,
+    transferredEmployees,
+    summary,
     employees: updatedEmployees
   });
 }
