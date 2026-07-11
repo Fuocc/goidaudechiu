@@ -9,18 +9,28 @@ const GEMINI_MODEL = 'gemini-3.1-flash-lite'; //250 requests/day
 
 const stripDiacritics = (str) => str.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
+// A point-in-time availability query (no end_time/duration given) must not
+// collapse to a zero-length window — otherwise a booking that starts exactly
+// at the queried instant is missed by the strict `<`/`>` overlap comparison
+// below (e.g. asking "rảnh lúc 14h" while a booking starts at 14:00 exactly).
+const addMinutesToTime = (timeStr, minutes) => {
+  const [h, m] = timeStr.split(':').map(Number);
+  const total = h * 60 + m + minutes;
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+};
+
 /*1. AI Tools*/
 const spaTools = [
   {
     name: "set_staff_duty",
-    description: "Phân chia lịch tour trực nhân viên trong ngày cho chi nhánh hiện tại. Nhân viên KHÔNG có tên trong danh sách sẽ tự động nghỉ (OFF_DUTY). Nếu tên thuộc về nhân viên đang ở chi nhánh khác, hệ thống sẽ TỰ ĐỘNG chuyển nhân viên đó sang chi nhánh hiện tại. Dùng khi lệnh dạng 'Tour ...' hoặc chỉ liệt kê tên nhân viên theo thứ tự, không có giờ hẹn/tên khách/dịch vụ.",
+    description: "Phân chia lịch tour trực nhân viên trong ngày cho chi nhánh hiện tại. Nhân viên KHÔNG có tên trong danh sách sẽ tự động nghỉ (OFF_DUTY). Nếu tên thuộc về nhân viên đang ở chi nhánh khác, hệ thống sẽ TỰ ĐỘNG chuyển nhân viên đó sang chi nhánh hiện tại. Dùng khi lệnh dạng 'Tour ...' hoặc chỉ liệt kê tên nhân viên theo thứ tự, không có giờ hẹn/tên khách/dịch vụ. Để XÓA/BỎ toàn bộ tour trực trong ngày (cho tất cả nhân viên đi làm bình thường, không theo tour), gọi tool này với orderedStaffNames là MẢNG RỖNG [].",
     parameters: {
       type: "object",
       properties: {
         orderedStaffNames: {
           type: "array",
           items: { type: "string" },
-          description: "Danh sách tên nhân viên theo đúng thứ tự xuất hiện trong lệnh (thứ tự tour). Bỏ số thứ tự (1., 2.) và dòng phân cách."
+          description: "Danh sách tên nhân viên theo đúng thứ tự xuất hiện trong lệnh (thứ tự tour). Bỏ số thứ tự (1., 2.) và dòng phân cách. Truyền mảng rỗng [] nếu lệnh là xóa/bỏ tour trực (không phải phân công)."
         },
         date: {
           type: "string",
@@ -100,6 +110,10 @@ const spaTools = [
           items: { type: "string" },
           description: "UUID các dịch vụ bổ sung nếu có."
         },
+        customer_name_hint: {
+          type: "string",
+          description: "Tên khách được nhắc trong lệnh gốc (nếu có). Hệ thống sẽ đối chiếu với tên thật của lịch hẹn trước khi sửa để tránh sửa nhầm lịch của khách khác."
+        },
       },
       required: ["booking_id"]
     }
@@ -122,7 +136,11 @@ const spaTools = [
       type: "object",
       properties: {
         booking_id: { type: "string", description: "UUID của lịch hẹn cần hủy." },
-        cancel_group: { type: "boolean", description: "True nếu muốn hủy toàn bộ nhóm." }
+        cancel_group: { type: "boolean", description: "True nếu muốn hủy toàn bộ nhóm." },
+        customer_name_hint: {
+          type: "string",
+          description: "Tên khách được nhắc trong lệnh gốc. Hệ thống sẽ đối chiếu với tên thật của lịch hẹn trước khi hủy để tránh hủy nhầm lịch của khách khác."
+        }
       },
       required: ["booking_id"]
     }
@@ -222,9 +240,9 @@ async function executeTool(toolName, params, context) {
       }
 
       const orderedStaffNames = (params.orderedStaffNames || []).map(n => (n || '').trim()).filter(Boolean);
-      if (orderedStaffNames.length === 0) {
-        return { error: 'Danh sách nhân viên trống.' };
-      }
+      // An empty list is intentional: it means "clear/reset today's tour" —
+      // every employee in the branch is reset to OFF_DUTY / day-off below,
+      // instead of previously erroring out and leaving the schedule untouched.
 
       const scheduleDate = params.date || todayDateStr;
 
@@ -552,6 +570,27 @@ async function executeTool(toolName, params, context) {
         bookingParams.end_time = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
       }
 
+      // Reject bookings that fall outside the branch's opening hours for
+      // that day of week — previously unchecked, letting e.g. 2AM bookings
+      // through silently.
+      if (bookingParams.booking_date && bookingParams.start_time && bookingParams.end_time) {
+        const branch = (dbBranches || []).find(b => b.id === branch_id);
+        const weekday = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][
+          new Date(bookingParams.booking_date + 'T00:00:00').getDay()
+        ];
+        const hours = branch?.opening_hours?.[weekday];
+        const openTime = hours?.open || '09:00';
+        const closeTime = hours?.close || '22:00';
+
+        if (bookingParams.start_time < openTime || bookingParams.end_time > closeTime) {
+          return {
+            success: false,
+            blocked: true,
+            reason: `Chi nhánh chỉ mở cửa từ ${openTime} đến ${closeTime} vào ngày ${bookingParams.booking_date}. Không thể đặt lịch ${bookingParams.start_time}-${bookingParams.end_time}. Vui lòng chọn giờ khác trong khung giờ mở cửa.`
+          };
+        }
+      }
+
       // Normalize requested IDs to ensure it's always an array structure
       const requestedIds = Array.isArray(params.employee_ids)
         ? params.employee_ids
@@ -784,17 +823,37 @@ async function executeTool(toolName, params, context) {
 
       const updatedBookings = [];
       const oldBookings = [];
+      const skippedIds = [];
+      const stripPrefix = (str) => (str || '').toLowerCase().replace(/^(chị|anh|c\.|a\.)\s+/i, '').trim();
 
       for (let i = 0; i < targetIds.length; i++) {
         const id = targetIds[i];
 
-        // Snapshot for undo
+        // Snapshot for undo. A booking that no longer exists, or that was
+        // already cancelled, must NOT be silently reported as updated —
+        // that's how the agent used to hallucinate "success" on stale
+        // reply-to references.
         const { data: oldBooking } = await supabase
           .from('bookings')
           .select('*')
           .eq('id', id)
           .single();
-        if (!oldBooking) continue;
+        if (!oldBooking || oldBooking.status === 'cancelled') {
+          skippedIds.push(id);
+          continue;
+        }
+
+        // Double-check the booking actually belongs to the customer named in
+        // the original command before mutating it, to avoid acting on the
+        // wrong record when search_bookings only found a fuzzy/partial match.
+        if (params.customer_name_hint) {
+          const hint = stripPrefix(params.customer_name_hint);
+          const actualName = stripPrefix(oldBooking.temporary_name);
+          if (hint && actualName && !actualName.includes(hint) && !hint.includes(actualName)) {
+            skippedIds.push(id);
+            continue;
+          }
+        }
 
         const rowUpdate = { ...updateParams };
 
@@ -869,10 +928,12 @@ async function executeTool(toolName, params, context) {
           }
         }
 
-        // Remove extra_service_ids / employee_ids (plural) before sending to Supabase —
-        // the bookings table only has singular employee_id/service_id columns.
+        // Remove extra_service_ids / employee_ids (plural) and the name-hint
+        // guard param before sending to Supabase — the bookings table only
+        // has singular employee_id/service_id columns and no name-hint column.
         delete rowUpdate.extra_service_ids;
         delete rowUpdate.employee_ids;
+        delete rowUpdate.customer_name_hint;
 
         // Map employee_ids to employee_id. For a single booking, take the first id.
         // For a whole group, only assign per-guest if the array lines up 1:1 with the
@@ -883,6 +944,35 @@ async function executeTool(toolName, params, context) {
             rowUpdate.employee_id = params.employee_ids[0];
           } else if (params.employee_ids.length === targetIds.length) {
             rowUpdate.employee_id = params.employee_ids[i];
+          }
+        }
+
+        // Guard against double-booking: if the time, date, or assigned staff
+        // is changing, make sure the resulting slot doesn't overlap another
+        // active booking for the same employee.
+        const effEmployeeId = 'employee_id' in rowUpdate ? rowUpdate.employee_id : oldBooking.employee_id;
+        const effDate = rowUpdate.booking_date || oldBooking.booking_date;
+        const effStart = rowUpdate.start_time || oldBooking.start_time;
+        const effEnd = rowUpdate.end_time || oldBooking.end_time;
+        const scheduleChanged = Boolean(
+          rowUpdate.start_time || rowUpdate.booking_date || ('employee_id' in rowUpdate)
+        );
+
+        if (scheduleChanged && effEmployeeId && effStart && effEnd) {
+          const { data: conflicting } = await supabase
+            .from('bookings')
+            .select('id, temporary_name')
+            .eq('booking_date', effDate)
+            .eq('employee_id', effEmployeeId)
+            .neq('status', 'cancelled')
+            .neq('id', id)
+            .lt('start_time', effEnd)
+            .gt('end_time', effStart);
+
+          if (conflicting?.length > 0) {
+            return {
+              error: `Không thể cập nhật: nhân viên đã có lịch trùng giờ (${conflicting.map(c => c.temporary_name).join(', ')}) lúc ${effStart}-${effEnd}. Vui lòng chọn giờ hoặc nhân viên khác.`
+            };
           }
         }
 
@@ -901,6 +991,12 @@ async function executeTool(toolName, params, context) {
         oldBookings.push(oldBooking);
       }
 
+      if (updatedBookings.length === 0) {
+        return {
+          error: `Không tìm thấy lịch hẹn còn hiệu lực để cập nhật (có thể đã bị hủy, không tồn tại, hoặc tên khách không khớp). ID đã bỏ qua: ${skippedIds.join(', ') || targetIds.join(', ')}.`
+        };
+      }
+
       if (updatedBookings.length === 1) {
         return {
           success: true,
@@ -913,6 +1009,7 @@ async function executeTool(toolName, params, context) {
         success: true,
         bookings: updatedBookings,
         count: updatedBookings.length,
+        skipped: skippedIds,
         snapshot: oldBookings
       };
     }
@@ -991,6 +1088,23 @@ async function executeTool(toolName, params, context) {
         .eq('id', params.booking_id)
         .single();
 
+      if (!oldBooking) return { error: 'Không tìm thấy lịch hẹn để hủy.' };
+      if (oldBooking.status === 'cancelled') return { error: 'Lịch hẹn này đã được hủy trước đó.' };
+
+      // Double-check the booking actually belongs to the customer named in
+      // the original command before cancelling it, so a typo'd command or a
+      // loose partial match from search_bookings can't cancel the wrong record.
+      if (params.customer_name_hint) {
+        const stripPrefix = (str) => (str || '').toLowerCase().replace(/^(chị|anh|c\.|a\.)\s+/i, '').trim();
+        const hint = stripPrefix(params.customer_name_hint);
+        const actualName = stripPrefix(oldBooking.temporary_name);
+        if (hint && actualName && !actualName.includes(hint) && !hint.includes(actualName)) {
+          return {
+            error: `Tên khách không khớp: lịch hẹn này thuộc về "${oldBooking.temporary_name}", không phải "${params.customer_name_hint}". Vui lòng gọi lại search_bookings để xác nhận đúng lịch trước khi hủy.`
+          };
+        }
+      }
+
       let bookingIds = [params.booking_id];
 
       // Cancel whole group if requested
@@ -1026,7 +1140,7 @@ async function executeTool(toolName, params, context) {
         const endMinutes = h * 60 + m + params.duration_minutes;
         bookingEnd = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
       } else {
-        bookingEnd = bookingEnd || bookingStart;
+        bookingEnd = bookingEnd || addMinutesToTime(bookingStart, 1);
       }
       // Step 1: Get active staff who are working today and their shift covers the booking time
       const { data: onDutyStaff, error: scheduleError } = await supabase
@@ -1149,7 +1263,7 @@ async function executeTool(toolName, params, context) {
         const endMinutes = h * 60 + m + params.duration_minutes;
         endTime = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
       }
-      endTime = endTime || startTime;
+      endTime = endTime || addMinutesToTime(startTime, 1);
 
       const { data: overlapping, error } = await supabase
         .from('bookings')
@@ -1338,6 +1452,7 @@ router.post('/', async (req, res) => {
 
   TOOLS — BẮT BUỘC gọi tool, KHÔNG tự trả lời:
   - Lệnh dạng "Tour" + ngày + danh sách tên nhân viên (VD: "Tour 12/06: 1.Hân 2.Trang 3.Nị"), HOẶC lệnh CHỈ liệt kê tên nhân viên nối tiếp nhau (cách nhau bằng dấu cách/xuống dòng/phẩy) mà KHÔNG có giờ hẹn, tên khách hay dịch vụ → gọi set_staff_duty NGAY, KHÔNG gọi tool nào khác trước. Trích orderedStaffNames theo đúng thứ tự xuất hiện (bỏ số thứ tự "1.", "2." và dòng phân cách "---", "==="). Nhân viên hiện đang ở chi nhánh khác vẫn có thể xuất hiện trong danh sách — hệ thống sẽ tự chuyển họ sang chi nhánh hiện tại, không cần hỏi lại.
+  - Lệnh xóa/bỏ lịch trực tour trong ngày (VD: "bỏ tour hôm nay", "xóa lịch trực tour, cho tất cả đi làm bình thường") → gọi set_staff_duty với orderedStaffNames: [] (mảng rỗng). KHÔNG được trả lời là đã xóa nếu không gọi tool này.
   - Tìm lịch → search_bookings
   - Tạo lịch → get_spa_context → get_available_staff → create_booking
   - Sửa lịch hoặc lệnh có tên khách + dịch vụ không có giờ → search_bookings → (get_spa_context nếu đổi dịch vụ) → (get_available_staff nếu đổi giờ) → update_booking. Chỉ tạo mới nếu không tìm thấy lịch.
@@ -1345,7 +1460,7 @@ router.post('/', async (req, res) => {
   - Hủy lịch → search_bookings → delete_booking
   - Cần thông tin nhân viên/dịch vụ → get_spa_context
   - Nếu có reply_to_booking_ids → chỉ gọi get_spa_context → update_booking hoặc delete_booking. KHÔNG gọi get_available_staff. KHÔNG tạo lịch mới.
-  - Hỏi "hôm nay còn slot nào?", "hôm nay đông không?" → get_daily_summary
+  - Hỏi "hôm nay còn slot nào?", "hôm nay đông không?" → get_daily_summary. Trả lời PHẢI nêu rõ total_bookings (tổng số lịch hẹn hôm nay) chứ không chỉ liệt kê tên nhân viên rảnh
   - Cần giờ mở cửa các chi nhánh cho ngày không phải hôm nay → get_branches
   - Trước khi gán/đổi nhân viên cụ thể vào lịch mà chưa chắc họ rảnh → check_conflicts
   - Nhân viên A nghỉ đột xuất hoặc cần dồn hết lịch của A cho người khác (KHÔNG phải đổi chi nhánh cố định) → reassign_staff_bookings
@@ -1358,23 +1473,27 @@ router.post('/', async (req, res) => {
   - Tên khách: "Khách Lạ" nếu có từ "kl/khách lẻ/khách lạ/ko lịch/k lịch"; "Khách Tây" nếu có "tây/nước ngoài/nc ngoài"
   - Nhân viên: gọi get_available_staff và chọn người đầu tiên rảnh; nếu không ai rảnh → báo lại
   - KHÔNG tự thay đổi service_id nếu người dùng không đề cập đến dịch vụ
+  - Nếu khách nói rõ tên/mã dịch vụ nhưng không khớp dịch vụ nào ở get_spa_context → PHẢI hỏi lại xác nhận đúng dịch vụ, KHÔNG tự gán "Giữ Chỗ" hoặc dịch vụ khác thay thế
   
 
   QUY TẮC GIỜ:
   - Có "sáng" hoặc "AM" → dùng AM
   - Có "tối", "chiều", "đêm" hoặc "PM" → dùng PM
+  - Giờ không rõ AM/PM (VD chỉ nói "7h", "3h") và một trong hai cách hiểu rơi ngoài giờ mở cửa còn cách kia nằm trong giờ mở cửa → ưu tiên chọn cách hiểu nằm TRONG giờ mở cửa (thường là PM cho giờ nhỏ như 1-8h, vì spa thường không mở trước 8-9h sáng)
 
   XỬ LÝ KẾT QUẢ:
   - Nhiều lịch trùng tên → hỏi lại để xác nhận
   - Chỉ hỏi khi thiếu thông tin không thể suy luận chắc chắn (ví dụ: nhân viên được book đang bận hoặc không ở chi nhánh)
   - Kiểm tra chắc chắn không tạo lịch ngoài giờ mở cửa
+  - search_bookings trả về exact:false (chỉ khớp gần đúng, không khớp chính xác tên) → liệt kê các lịch tìm thấy và hỏi lại khách xác nhận đúng người trước khi update_booking/delete_booking, KHÔNG tự chọn đại 1 kết quả
+  - Khi gọi update_booking hoặc delete_booking (trừ khi có reply_to_booking_ids), luôn truyền customer_name_hint bằng đúng tên khách trong lệnh gốc để hệ thống double-check tránh sửa/hủy nhầm lịch
   - Không reply bằng markdown.
   `;
 
   const replyToIds = req.body.reply_to_booking_ids;
 
   const enrichedCommand = `${command}
-  [Mặc định đã xác định: dịch vụ="Giữ Chỗ", số khách=1, ngày=${todayDateStr}. Đây là thông tin ĐÃ CÓ, KHÔNG cần hỏi thêm. Hãy gọi tool ngay.]${
+  [Nếu lệnh KHÔNG nhắc đến tên dịch vụ nào cả thì mặc định: dịch vụ="Giữ Chỗ". Số khách mặc định=1, ngày mặc định=${todayDateStr} nếu không nói rõ. Đây là thông tin ĐÃ CÓ cho các trường hợp đó, KHÔNG cần hỏi thêm. NHƯNG nếu lệnh CÓ nhắc tên dịch vụ cụ thể mà không khớp dịch vụ nào trong get_spa_context, TUYỆT ĐỐI KHÔNG tự ý đổi sang "Giữ Chỗ" hay dịch vụ khác — phải hỏi lại khách để xác nhận đúng dịch vụ. Hãy gọi tool ngay với các mặc định hợp lệ.]${
     replyToIds?.length
       ? `\n[reply_to_booking_ids: ${replyToIds.join(', ')}. Chỉ gọi get_spa_context → update_booking hoặc delete_booking. KHÔNG gọi get_available_staff. KHÔNG tạo lịch mới.]`
       : ''
@@ -1393,7 +1512,9 @@ router.post('/', async (req, res) => {
   ];
 
   let loopCount = 0;
-  const maxLoops = 5;
+  // Compound commands (e.g. cancelling 3 named bookings) need ~2 tool calls
+  // per target; 5 was too low and cut off mid-command with a raw error.
+  const maxLoops = 15;
   const toolLog = [];
 
   while (loopCount < maxLoops) {
@@ -1476,7 +1597,20 @@ router.post('/', async (req, res) => {
     }
   }
 
-  return res.status(500).json({ error: "Vượt quá giới hạn vòng lặp xử lý" });
+  // Hit the round-trip cap before the model produced a final text reply.
+  // Report what was actually completed so far instead of a raw technical
+  // error — the user still needs to know some steps may be unfinished.
+  const completedSummary = toolLog.length
+    ? `Đã thực hiện được ${toolLog.length} thao tác (${toolLog.map(t => t.tool).join(', ')}) nhưng lệnh có vẻ cần nhiều bước hơn giới hạn xử lý hiện tại. Vui lòng kiểm tra lại kết quả và thử tách lệnh thành các yêu cầu nhỏ hơn.`
+    : 'Lệnh này cần nhiều bước hơn giới hạn xử lý hiện tại. Vui lòng thử tách thành các yêu cầu nhỏ hơn.';
+
+  return res.json({
+    success: true,
+    reply: completedSummary,
+    tool_used: toolLog.at(-1)?.tool || null,
+    tool_result: toolLog.at(-1)?.result || null,
+    tool_log: toolLog
+  });
 });
 
 module.exports = router;
