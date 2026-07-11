@@ -1,10 +1,5 @@
 const supabase = require('./supabaseClient');
 
-/**
- * Tự động tạo lịch làm việc (09:00 - 22:00) cho tất cả nhân viên
- * cho 30 ngày tiếp theo.
- * Logic sử dụng UPSERT nên không sợ bị trùng lặp nếu chạy nhiều lần.
- */
 async function generateForNext30Days() {
   try {
     const { data: employees } = await supabase.from('employees').select('id').eq('is_active', true);
@@ -27,7 +22,6 @@ async function generateForNext30Days() {
         is_day_off: false,
         note: null
       }));
-      // Thêm ignoreDuplicates: true để KHÔNG ghi đè lên các ngày mà Admin đã sửa bằng tay (ví dụ xin nghỉ)
       await supabase.from('employee_schedules').upsert(records, { onConflict: 'employee_id,date', ignoreDuplicates: true });
     }
   } catch (err) {
@@ -36,10 +30,7 @@ async function generateForNext30Days() {
 }
 
 function startAutoScheduler() {
-  // Chạy ngay 1 lần lúc server vừa khởi động
   generateForNext30Days();
-
-  // Sau đó thiết lập cứ đúng 24 tiếng (24 * 60 * 60 * 1000 ms) sẽ chạy lại 1 lần
   setInterval(generateForNext30Days, 24 * 60 * 60 * 1000);
 }
 

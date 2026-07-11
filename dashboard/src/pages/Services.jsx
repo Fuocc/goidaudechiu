@@ -134,6 +134,8 @@ function Services() {
     if (!confirm('Bạn có chắc muốn vô hiệu hóa dịch vụ này?')) return;
     try {
       await deleteService(id);
+      setModalOpen(false);
+      toast.success('Đã vô hiệu hóa dịch vụ');
       loadServices();
     } catch (err) {
       alert(err.message);
@@ -283,9 +285,8 @@ function Services() {
                       {showColorPicker && (
                         <div className="color-picker-popover" ref={colorPickerRef}>
                           {COLORS.map(c => (
-                            <div className="color-option-wrap">
+                            <div className="color-option-wrap" key={c}>
                               <div
-                                key={c}
                                 className={`color-option ${form.color === c ? 'active' : ''}`}
                                 style={{ background: c }}
                                 onClick={() => {
