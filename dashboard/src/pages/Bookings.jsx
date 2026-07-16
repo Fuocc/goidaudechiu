@@ -1522,30 +1522,32 @@ function Bookings({ data }) {
             </div>
           </div>
         </div>
-        <div className="cal-staff-header-wrap">
-          {/* Header row */}
-          <div className="cal-staff-header"></div>
-          {loading ? (
-            Array.from({ length: 3 }).map((_, idx) => (
-              <div key={`skeleton-hdr-${idx}`} className="cal-staff-header available">
-                <div className="skeleton-shimmer-light" style={{ width: '80px', height: '16px', borderRadius: '4px' }} />
-              </div>
-            ))
-          ) : (
-            employees.map(emp => {
-              const empSched = employeeSchedules.find(s => s.employee_id === emp.id);
-              const isAvailable = empSched && !empSched.is_day_off;
-              return (
-                <div
-                  key={emp.id}
-                  className={`cal-staff-header ${isAvailable ? 'available' : 'unavailable'}`}
-                >
-                  {emp.name}
+        {effectiveViewMode === 'calendar' && (
+          <div className="cal-staff-header-wrap">
+            {/* Header row */}
+            <div className="cal-staff-header"></div>
+            {loading ? (
+              Array.from({ length: 3 }).map((_, idx) => (
+                <div key={`skeleton-hdr-${idx}`} className="cal-staff-header available">
+                  <div className="skeleton-shimmer-light" style={{ width: '80px', height: '16px', borderRadius: '4px' }} />
                 </div>
-              );
-            })
-          )}
-        </div>
+              ))
+            ) : (
+              employees.map(emp => {
+                const empSched = employeeSchedules.find(s => s.employee_id === emp.id);
+                const isAvailable = empSched && !empSched.is_day_off;
+                return (
+                  <div
+                    key={emp.id}
+                    className={`cal-staff-header ${isAvailable ? 'available' : 'unavailable'}`}
+                  >
+                    {emp.name}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
       </div>
 
       {/* Calendar View */}

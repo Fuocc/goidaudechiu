@@ -137,6 +137,7 @@
   border-radius: 12px;
   overflow: hidden;
   border: 1px solid #F2F2F2;
+  margin-bottom: 12px;
 }
 
 .card-header {
@@ -307,6 +308,9 @@
 .badge-inactive {
   background: var(--error-bg);
   color: var(--error);
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 4px;
 }
 
 /* --- Pagination & Items Per Page --- */
@@ -460,7 +464,6 @@
   /* Prevent card shadow snapping */
   .card {
     box-shadow: none;
-    border-radius: unset;
     border-bottom: 1px solid rgba(0, 0, 0, 0.06);
   }
 

@@ -657,7 +657,7 @@ function renderTimeSlots(params) {
 
   const visibleSlots = cache.availabilitySlots.filter(slot => {
     const slotMinutes = timeToMinutesHHMM(slot.start_time);
-    const isPast = todaySelected && slotMinutes < (nowMinutes + 15);
+    const isPast = todaySelected && slotMinutes < nowMinutes;
     const isTooLate = slot.start_time >= DISABLE_AFTER_TIME;
     if (isPast || isTooLate) return false;
 

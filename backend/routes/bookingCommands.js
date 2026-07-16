@@ -1538,7 +1538,8 @@ Nếu không khớp → null.
       { data: employees },
       { data: beds },
       { data: dayBookings },
-      { data: settingsData }
+      { data: settingsData },
+      { data: onDutySchedules }
     ] = await Promise.all([
       supabase.from('employees').select('id, name, is_active').eq('is_active', true).eq('branch_id', parsed.branch_id),
       supabase.from('beds').select('id, name, branch_id').eq('branch_id', parsed.branch_id),
@@ -1546,8 +1547,11 @@ Nếu không khớp → null.
         .eq('branch_id', parsed.branch_id)
         .eq('booking_date', parsed.booking_date)
         .in('status', ['confirmed', 'pending', 'arrived']),
-      supabase.from('settings').select('*')
+      supabase.from('settings').select('*'),
+      supabase.from('employee_schedules').select('employee_id').eq('date', parsed.booking_date).eq('is_day_off', false)
     ]);
+
+    const onDutyEmployeeIds = new Set((onDutySchedules || []).map(s => s.employee_id));
 
     if (!employees || employees.length === 0) {
       return res.status(409).json({ error: 'Không có nhân viên nào hoạt động.' });
@@ -1656,6 +1660,17 @@ Nếu không khớp → null.
       if (parsed.employee_ids && parsed.employee_ids.length > 0) {
         // Find the requested employee for this specific guest index
         const reqEmpId = parsed.employee_ids[g];
+
+        // If we specifically requested an employee for THIS guest but they are off/have no shift that day, MUST FAIL
+        if (reqEmpId && !onDutyEmployeeIds.has(reqEmpId)) {
+          if (createdBookings.length > 0) {
+            const idsToDelete = createdBookings.map(b => b.id);
+            await supabase.from('bookings').delete().in('id', idsToDelete);
+          }
+          const reqEmpName = employees.find(e => e.id === reqEmpId)?.name || 'Nhân viên đã chỉ định';
+          return res.status(409).json({ error: `${reqEmpName} không có lịch làm việc ngày ${parsed.booking_date} (nghỉ hoặc chưa có ca). Vui lòng chọn nhân viên khác hoặc kiểm tra lại lịch làm việc.` });
+        }
+
         if (reqEmpId) {
           assignedEmployee = availableEmployees.find(e => e.id === reqEmpId);
         }

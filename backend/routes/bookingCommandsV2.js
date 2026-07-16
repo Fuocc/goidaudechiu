@@ -67,7 +67,7 @@ const spaTools = [
           description: "UUID nhân viên mới nếu đổi thợ. 1 nhân viên cho 1 khách."
         },
         num_guests: { type: "integer", description: "Số khách mới nếu thay đổi." },
-        notes: { type: "string", description: "Ghi chú cập nhật." },
+        notes: { type: "string", description: "Ghi chú cần bổ sung/thay đổi. Chỉ điền phần nội dung mới - hệ thống sẽ tự nối vào ghi chú cũ, không cần lặp lại ghi chú cũ." },
         service_id: { type: "string", description: "UUID dịch vụ mới nếu thay đổi." },
         extra_service_ids: {
           type: "array",
@@ -290,6 +290,30 @@ async function executeTool(toolName, params, context) {
         bookingParams.end_time = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
       }
 
+      // If the name matches exactly one existing customer, link customer_id instead of
+      // just storing a temporary_name. Ambiguous (2+) matches keep using temporary_name.
+      if (bookingParams.temporary_name && !bookingParams.customer_id) {
+        const stripPrefix = (str) => (str || '')
+          .toLowerCase()
+          .replace(/^(chị|anh|c\.|a\.)\s+/i, '')
+          .trim();
+        const searchNorm = stripPrefix(bookingParams.temporary_name);
+
+        if (searchNorm) {
+          const { data: candidateCustomers } = await supabase
+            .from('customers')
+            .select('id, name')
+            .ilike('name', `%${searchNorm}%`);
+
+          const exactMatches = (candidateCustomers || []).filter(c => stripPrefix(c.name) === searchNorm);
+
+          if (exactMatches.length === 1) {
+            bookingParams.customer_id = exactMatches[0].id;
+            delete bookingParams.temporary_name;
+          }
+        }
+      }
+
       // Normalize requested IDs to ensure it's always an array structure
       const requestedIds = Array.isArray(params.employee_ids)
         ? params.employee_ids
@@ -316,9 +340,25 @@ async function executeTool(toolName, params, context) {
         .gt('end_time', bookingParams.start_time);
 
       const busyIds = new Set(overlapping?.map(b => b.employee_id) || []);
+      const onDutyIds = new Set(onDutyStaff?.map(s => s.employee_id) || []);
       const availableStaff = onDutyStaff
         ?.filter(s => !busyIds.has(s.employee_id) && !lockedIds.has(s.employee_id))
         .map(s => s.employee_id) || [];
+
+      // Check if any explicitly requested employee is off-duty / has no shift that day
+      const dayOffLockedStaff = [...lockedIds].filter(id => !onDutyIds.has(id));
+      if (dayOffLockedStaff.length > 0) {
+        const { data: offEmps } = await supabase
+          .from('employees')
+          .select('name')
+          .in('id', dayOffLockedStaff);
+        const names = offEmps?.map(e => e.name).join(', ') || 'Nhân viên đã chỉ định';
+        return {
+          success: false,
+          blocked: true,
+          reason: `${names} không có lịch làm việc ngày ${bookingParams.booking_date} (nghỉ hoặc chưa có ca). Vui lòng chọn nhân viên khác hoặc kiểm tra lại lịch làm việc.`
+        };
+      }
 
       // ✅ FIX: Check if any explicitly requested employee is already busy at this time slot
       const busyLockedStaff = [...lockedIds].filter(id => busyIds.has(id));
@@ -493,6 +533,7 @@ async function executeTool(toolName, params, context) {
    case 'update_booking': {
       const { booking_id, ...updateParams } = params;
       const broadcast = context.req.app.get('broadcastSSE') || (() => {});
+      const explicitNewNotes = typeof params.notes === 'string' ? params.notes.trim() : null;
 
       // Snapshot for undo
       const { data: oldBooking } = await supabase
@@ -562,6 +603,20 @@ async function executeTool(toolName, params, context) {
           if (!empCheck) {
             updateParams.employee_id = null; // Employee not in new branch, clear it
           }
+        }
+      }
+
+      // Merge new notes into existing ones instead of overwriting, so a follow-up
+      // command that only adds a note doesn't wipe out the note set earlier.
+      if (explicitNewNotes) {
+        const baseNotes = (updateParams.notes && updateParams.notes !== explicitNewNotes)
+          ? updateParams.notes.trim()
+          : (oldBooking?.notes || '').trim();
+        if (baseNotes && baseNotes !== explicitNewNotes &&
+            !explicitNewNotes.includes(baseNotes) && !baseNotes.includes(explicitNewNotes)) {
+          updateParams.notes = `${baseNotes} + ${explicitNewNotes}`;
+        } else {
+          updateParams.notes = explicitNewNotes;
         }
       }
 
@@ -785,6 +840,7 @@ router.post('/', async (req, res) => {
   - Hủy lịch → search_bookings → delete_booking
   - Cần thông tin nhân viên/dịch vụ → get_spa_context
   - Nếu có reply_to_booking_ids → chỉ gọi get_spa_context → update_booking hoặc delete_booking. KHÔNG gọi get_available_staff. KHÔNG tạo lịch mới.
+  - Nếu create_booking hoặc update_booking trả về blocked:true (vd: nhân viên được chỉ định đang nghỉ/không có ca, hoặc đang bận trùng giờ) → PHẢI dừng lại, KHÔNG gọi lại tool với nhân viên khác hoặc bỏ employee_ids, mà báo ngay lý do (reason) cho người dùng và hỏi họ muốn chọn nhân viên khác hay đổi giờ.
 
   NOTES:
   - Bất kỳ nội dung nào không phải tên khách, giờ, dịch vụ, số khách, chi nhánh → điền vào notes. Ví dụ: "ydc 1568" → service=ydc, notes="1568". "C An 7h có thẻ" → notes="có thẻ"

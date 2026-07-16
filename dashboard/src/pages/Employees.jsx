@@ -5,11 +5,103 @@ import { toast } from 'react-toastify';
 import { TableSkeleton, MobileCardSkeleton } from '../components/ui/Skeleton';
 import '../styles/employees.css';
 
+function EmployeeTable({ title, employees, loading, isMobile, openEdit, handleDelete, emptyTitle, emptyText, showBranchColumn }) {
+  return (
+    <div className="card">
+      <div className="card-header">
+        <h3 className="card-title">{title}</h3>
+      </div>
+
+      {loading ? (
+        !isMobile ? (
+          <TableSkeleton rows={3} cols={showBranchColumn ? 5 : 4} />
+        ) : (
+          <div className="mobile-card-list">
+            {Array.from({ length: 2 }).map((_, i) => (
+              <MobileCardSkeleton key={i} />
+            ))}
+          </div>
+        )
+      ) : !isMobile ? (
+        <div className="table-container">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Tên</th>
+                <th>Số điện thoại</th>
+                {showBranchColumn && <th>Chi nhánh</th>}
+                <th>Trạng thái</th>
+                <th>Thao tác</th>
+              </tr>
+            </thead>
+            <tbody>
+              {employees.length === 0 ? (
+                <tr>
+                  <td colSpan={showBranchColumn ? 5 : 4}>
+                    <div className="empty-state">
+                      <h4>{emptyTitle}</h4>
+                      <p>{emptyText}</p>
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                employees.map(emp => (
+                  <tr key={emp.id}>
+                    <td className="emp-name">{emp.name}</td>
+                    <td>{emp.phone || '—'}</td>
+                    {showBranchColumn && <td>{emp.branches?.name || 'Không hợp lệ'}</td>}
+                    <td>
+                      <span className={`badge ${emp.is_active ? 'badge-active' : 'badge-inactive'}`}>
+                        {emp.is_active ? 'Hoạt động' : 'Nghỉ'}
+                      </span>
+                    </td>
+                    <td>
+                      <div className="actions-cell">
+                        <button className="btn-icon" onClick={() => openEdit(emp)}><FiEdit2 size={14} /></button>
+                        <button className="btn-icon btn-danger" onClick={() => handleDelete(emp.id)}><FiTrash2 size={14} /></button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="mobile-card-list">
+          {employees.length === 0 ? (
+            <div className="empty-state">
+              <h4>{emptyTitle}</h4>
+              <p>{emptyText}</p>
+            </div>
+          ) : (
+            employees.map(emp => (
+              <div key={emp.id} className="mobile-card employee-card" onClick={() => openEdit(emp)}>
+                <div className="employee-card-info">
+                  <div className="employee-card-name">{emp.name}</div>
+                  <div className="employee-card-branch">
+                    {showBranchColumn ? `${emp.branches?.name || 'Không hợp lệ'} · ` : ''}{emp.phone || '—'}
+                  </div>
+                </div>
+                <span className={`badge ${emp.is_active ? 'badge-active' : 'badge-inactive'}`}>
+                  {emp.is_active ? 'Hoạt động' : 'Nghỉ'}
+                </span>
+                <div className="mobile-card-actions" onClick={e => e.stopPropagation()}>
+                  <button className="btn-icon" onClick={() => openEdit(emp)}><FiEdit2 size={14} /></button>
+                  <button className="btn-icon btn-danger" onClick={() => handleDelete(emp.id)}><FiTrash2 size={14} /></button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function Employees() {
   const [employees, setEmployees] = useState([]);
   const [branches, setBranches] = useState([]);
-  const [filterBranch, setFilterBranch] = useState('');
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -31,11 +123,8 @@ function Employees() {
 
   useEffect(() => {
     loadBranches();
-  }, []);
-
-  useEffect(() => {
     loadEmployees();
-  }, [filterBranch]);
+  }, []);
 
   const loadBranches = async () => {
     try {
@@ -49,7 +138,7 @@ function Employees() {
   const loadEmployees = async () => {
     setLoading(true);
     try {
-      const data = await getEmployees(filterBranch || undefined);
+      const data = await getEmployees();
       setEmployees(data);
     } catch (err) {
     } finally {
@@ -96,6 +185,9 @@ function Employees() {
     }
   };
 
+  const validBranchIds = new Set(branches.map(b => b.id));
+  const unassignedEmployees = employees.filter(e => !validBranchIds.has(e.branch_id));
+
   return (
     <div>
       <div className="page-header">
@@ -108,104 +200,34 @@ function Employees() {
         </button>
       </div>
 
-      <div className="card">
-        <div className="card-header">
-          <select
-            className="form-input emp-branch-select"
-            value={filterBranch}
-            onChange={e => setFilterBranch(e.target.value)}
-            style={isMobile ? { maxWidth: '100%' } : {}}
-          >
-            <option value="">Tất cả chi nhánh</option>
-            {branches.map(b => (
-              <option key={b.id} value={b.id}>{b.name}</option>
-            ))}
-          </select>
-        </div>
+      {branches.map(branch => (
+        <EmployeeTable
+          key={branch.id}
+          title={branch.name}
+          employees={employees.filter(e => e.branch_id === branch.id)}
+          loading={loading}
+          isMobile={isMobile}
+          openEdit={openEdit}
+          handleDelete={handleDelete}
+          emptyTitle="Chưa có nhân viên"
+          emptyText="Thêm nhân viên để bắt đầu nhận lịch đặt"
+          showBranchColumn={false}
+        />
+      ))}
 
-        {loading ? (
-          !isMobile ? (
-            <TableSkeleton rows={5} cols={5} />
-          ) : (
-            <div className="mobile-card-list">
-              {Array.from({ length: 3 }).map((_, i) => (
-                <MobileCardSkeleton key={i} />
-              ))}
-            </div>
-          )
-        ) : !isMobile ? (
-          <div className="table-container">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Tên</th>
-                  <th>Số điện thoại</th>
-                  <th>Chi nhánh</th>
-                  <th>Trạng thái</th>
-                  <th>Thao tác</th>
-                </tr>
-              </thead>
-              <tbody>
-                {employees.length === 0 ? (
-                  <tr>
-                    <td colSpan="5">
-                      <div className="empty-state">
-                        <h4>Chưa có nhân viên</h4>
-                        <p>Thêm nhân viên để bắt đầu nhận lịch đặt</p>
-                      </div>
-                    </td>
-                  </tr>
-                ) : (
-                  employees.map(emp => (
-                    <tr key={emp.id}>
-                      <td className="emp-name">{emp.name}</td>
-                      <td>{emp.phone || '—'}</td>
-                      <td>{emp.branches?.name || '—'}</td>
-                      <td>
-                        <span className={`badge ${emp.is_active ? 'badge-active' : 'badge-inactive'}`}>
-                          {emp.is_active ? 'Hoạt động' : 'Nghỉ'}
-                        </span>
-                      </td>
-                      <td>
-                        <div className="actions-cell">
-                          <button className="btn-icon" onClick={() => openEdit(emp)}><FiEdit2 size={14} /></button>
-                          <button className="btn-icon btn-danger" onClick={() => handleDelete(emp.id)}><FiTrash2 size={14} /></button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className="mobile-card-list">
-            {employees.length === 0 ? (
-              <div className="empty-state">
-                <h4>Chưa có nhân viên</h4>
-                <p>Thêm nhân viên để bắt đầu nhận lịch đặt</p>
-              </div>
-            ) : (
-              employees.map(emp => (
-                <div key={emp.id} className="mobile-card employee-card" onClick={() => openEdit(emp)}>
-                  <div className="employee-card-info">
-                    <div className="employee-card-name">{emp.name}</div>
-                    <div className="employee-card-branch">{emp.branches?.name || '—'} · {emp.phone || '—'}</div>
-                  </div>
-                  <span className={`badge ${emp.is_active ? 'badge-active' : 'badge-inactive'}`}>
-                    {emp.is_active ? 'Hoạt động' : 'Nghỉ'}
-                  </span>
-                  <div className="mobile-card-actions" onClick={e => e.stopPropagation()}>
-                    <button className="btn-icon" onClick={() => openEdit(emp)}><FiEdit2 size={14} /></button>
-                    <button className="btn-icon btn-danger" onClick={() => handleDelete(emp.id)}><FiTrash2 size={14} /></button>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        )}
-      </div>
-
+      {unassignedEmployees.length > 0 && (
+        <EmployeeTable
+          title="Chưa phân công"
+          employees={unassignedEmployees}
+          loading={loading}
+          isMobile={isMobile}
+          openEdit={openEdit}
+          handleDelete={handleDelete}
+          emptyTitle="Không có nhân viên"
+          emptyText=""
+          showBranchColumn={true}
+        />
+      )}
 
       {modalOpen && (
         <div className="modal-overlay" onClick={() => setModalOpen(false)}>
