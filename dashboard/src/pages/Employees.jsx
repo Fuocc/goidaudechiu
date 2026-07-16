@@ -123,26 +123,28 @@ function Employees() {
 
   useEffect(() => {
     loadBranches();
-    loadEmployees();
   }, []);
+
+  useEffect(() => {
+    loadEmployees();
+  }, [filterBranch]);
 
   const loadBranches = async () => {
     try {
-      const data = await getBranches();
-      setBranches(data);
+      const [branchesData, employeesData] = await Promise.all([getBranches(), getEmployees()]);
+      setBranches(branchesData);
+      setEmployees(employeesData);
     } catch (err) {
-
+    } finally {
+      setLoading(false);
     }
   };
 
   const loadEmployees = async () => {
-    setLoading(true);
     try {
       const data = await getEmployees();
       setEmployees(data);
     } catch (err) {
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -200,34 +202,104 @@ function Employees() {
         </button>
       </div>
 
-      {branches.map(branch => (
-        <EmployeeTable
-          key={branch.id}
-          title={branch.name}
-          employees={employees.filter(e => e.branch_id === branch.id)}
-          loading={loading}
-          isMobile={isMobile}
-          openEdit={openEdit}
-          handleDelete={handleDelete}
-          emptyTitle="Chưa có nhân viên"
-          emptyText="Thêm nhân viên để bắt đầu nhận lịch đặt"
-          showBranchColumn={false}
-        />
-      ))}
+      <div className="card">
+        <div className="card-header">
+          <select
+            className="form-input emp-branch-select"
+            value={filterBranch}
+            onChange={e => setFilterBranch(e.target.value)}
+            style={isMobile ? { maxWidth: '100%' } : {}}
+          >
+            <option value="">Tất cả chi nhánh</option>
+            {branches.map(b => (
+              <option key={b.id} value={b.id}>{b.name}</option>
+            ))}
+          </select>
+        </div>
 
-      {unassignedEmployees.length > 0 && (
-        <EmployeeTable
-          title="Chưa phân công"
-          employees={unassignedEmployees}
-          loading={loading}
-          isMobile={isMobile}
-          openEdit={openEdit}
-          handleDelete={handleDelete}
-          emptyTitle="Không có nhân viên"
-          emptyText=""
-          showBranchColumn={true}
-        />
-      )}
+        {loading ? (
+          !isMobile ? (
+            <TableSkeleton rows={5} cols={5} />
+          ) : (
+            <div className="mobile-card-list">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <MobileCardSkeleton key={i} />
+              ))}
+            </div>
+          )
+        ) : !isMobile ? (
+          <div className="table-container">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Tên</th>
+                  <th>Số điện thoại</th>
+                  <th>Chi nhánh</th>
+                  <th>Trạng thái</th>
+                  <th>Thao tác</th>
+                </tr>
+              </thead>
+              <tbody>
+                {employees.length === 0 ? (
+                  <tr>
+                    <td colSpan="5">
+                      <div className="empty-state">
+                        <h4>Chưa có nhân viên</h4>
+                        <p>Thêm nhân viên để bắt đầu nhận lịch đặt</p>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  employees.map(emp => (
+                    <tr key={emp.id}>
+                      <td className="emp-name">{emp.name}</td>
+                      <td>{emp.phone || '—'}</td>
+                      <td>{emp.branches?.name || '—'}</td>
+                      <td>
+                        <span className={`badge ${emp.is_active ? 'badge-active' : 'badge-inactive'}`}>
+                          {emp.is_active ? 'Hoạt động' : 'Nghỉ'}
+                        </span>
+                      </td>
+                      <td>
+                        <div className="actions-cell">
+                          <button className="btn-icon" onClick={() => openEdit(emp)}><FiEdit2 size={14} /></button>
+                          <button className="btn-icon btn-danger" onClick={() => handleDelete(emp.id)}><FiTrash2 size={14} /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="mobile-card-list">
+            {employees.length === 0 ? (
+              <div className="empty-state">
+                <h4>Chưa có nhân viên</h4>
+                <p>Thêm nhân viên để bắt đầu nhận lịch đặt</p>
+              </div>
+            ) : (
+              employees.map(emp => (
+                <div key={emp.id} className="mobile-card employee-card" onClick={() => openEdit(emp)}>
+                  <div className="employee-card-info">
+                    <div className="employee-card-name">{emp.name}</div>
+                    <div className="employee-card-branch">{emp.branches?.name || '—'} · {emp.phone || '—'}</div>
+                  </div>
+                  <span className={`badge ${emp.is_active ? 'badge-active' : 'badge-inactive'}`}>
+                    {emp.is_active ? 'Hoạt động' : 'Nghỉ'}
+                  </span>
+                  <div className="mobile-card-actions" onClick={e => e.stopPropagation()}>
+                    <button className="btn-icon" onClick={() => openEdit(emp)}><FiEdit2 size={14} /></button>
+                    <button className="btn-icon btn-danger" onClick={() => handleDelete(emp.id)}><FiTrash2 size={14} /></button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+
 
       {modalOpen && (
         <div className="modal-overlay" onClick={() => setModalOpen(false)}>

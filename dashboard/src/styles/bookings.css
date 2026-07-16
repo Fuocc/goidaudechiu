@@ -1748,7 +1748,7 @@
 
   .calendar-grid {
     grid-template-columns: 60px repeat(var(--staff-count, 1), 12em);
-    width: max-content;
+    width: 100px;
     min-width: 100%;
   }
 
@@ -1756,6 +1756,8 @@
   .cal-time-column {
     position: sticky;
     left: 0;
+    top: 0;
+    align-self: start;
     z-index: 10;
     background-color: #fff;
   }
