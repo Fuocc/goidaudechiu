@@ -5,11 +5,22 @@ import '../styles/ai-chat.css';
 import geminiLogo from '../assets/gemini-logo.svg';
 import { Tooltip } from '../components/ui/tooltip';
 
-function AIChatPanel({ onClose, currentBranchId }) {
-  const [isV2, setIsV2] = useState(() => {
-    return localStorage.getItem('yoi_ai_version') === 'v2'; // Persist choice
-  });
+const BRANCH_STORAGE_KEY = 'yoi_ai_branch';
 
+// Tiêu đề thẻ kết quả dựa trên các thao tác THỰC SỰ đã thay đổi lịch (backend trả về `actions`)
+function getActionTitle(actions) {
+  const count = (type) => actions
+    .filter(a => a.type === type)
+    .reduce((sum, a) => sum + (a.booking_ids?.length || 0), 0);
+  const parts = [];
+  if (count('create')) parts.push(`Đã tạo ${count('create')} lịch`);
+  if (count('update')) parts.push(`Đã cập nhật ${count('update')} lịch`);
+  if (count('check_in')) parts.push(`Đã báo khách tới`);
+  if (count('cancel')) parts.push(`Đã hủy ${count('cancel')} lịch`);
+  return parts.join(' · ') || 'Đã thực hiện';
+}
+
+function AIChatPanel({ onClose, currentBranchId }) {
   const [messages, setMessages] = useState(() => {
     try {
       const saved = localStorage.getItem('chatlgbt_messages');
@@ -106,9 +117,13 @@ function AIChatPanel({ onClose, currentBranchId }) {
     const loadBranches = async () => {
       try {
         const b = await request('/branches');
-        setBranches(b || []);
-        const defaultBranch = currentBranchId || (b && b[0]?.id) || '';
-        setSelectedBranch(defaultBranch);
+        const list = b || [];
+        setBranches(list);
+        // Ưu tiên: chi nhánh truyền vào → chi nhánh đã chọn lần trước → chi nhánh đầu tiên
+        let saved = '';
+        try { saved = localStorage.getItem(BRANCH_STORAGE_KEY) || ''; } catch (e) { /* ignore */ }
+        const savedValid = list.some(br => br.id === saved) ? saved : '';
+        setSelectedBranch(currentBranchId || savedValid || list[0]?.id || '');
       } catch (err) {
         console.error(err);
       }
@@ -171,90 +186,54 @@ function AIChatPanel({ onClose, currentBranchId }) {
   setReplyingTo(null);
 
   try {
-    // 3. Send API request with the toggled version
-    const targetUrl = isV2 ? '/bookings/command-v2' : '/bookings/command';
-
-    const data = await request(targetUrl, {
+    const data = await request('/bookings/command-v2', {
       method: 'POST',
       body: JSON.stringify({
         command: commandText,
         current_branch_id: selectedBranch,
         reply_to_booking_ids: replyContextIds,
-        apiVersion: isV2 ? 'v2' : 'v1',
-        conversation_history: isV2 ? messages
-          .filter(m => m.id !== 'welcome' && m.sender !== 'system')
-          .slice(-10) // last 10 messages for context
+        // Chỉ gửi hội thoại thật (bỏ tin lỗi / hoàn tác / chào) để AI không bị nhiễu ngữ cảnh
+        conversation_history: messages
+          .filter(m => m.id !== 'welcome' && !m.isError && !m.isUndoSuccess && m.text)
+          .slice(-10)
           .map(m => ({
             role: m.sender === 'user' ? 'user' : 'model',
             text: m.text
-          })) : undefined
+          }))
       })
     });
-    console.log('[request sent] reply_to_booking_ids:', replyContextIds); // 👈 ADD
-    console.log('[V2 response]', data); // temporary log test delete after
 
     if (!data || !data.success) {
       throw new Error(data?.error || 'Không xử lý được yêu cầu.');
     }
 
-    let aiMsg = {
+    const actions = Array.isArray(data.actions) ? data.actions : [];
+    const bookingIds = [...new Set(actions.flatMap(a => a.booking_ids || []))];
+
+    const aiMsg = {
       id: (Date.now() + 1).toString(),
       sender: 'ai',
-      time: getNowTime()
+      time: getNowTime(),
+      text: data.reply,
+      toolLog: data.tool_log || [],
+      // Chỉ hiện thẻ "thành công" + nút Hoàn tác khi thật sự có lịch bị thay đổi.
+      // AI hỏi lại / chỉ tìm kiếm → hiện tin nhắn thường, không có nút nguy hiểm.
+      isSuccess: actions.length > 0,
+      title: actions.length > 0 ? getActionTitle(actions) : undefined,
+      actions,
+      bookings: bookingIds
     };
 
-    if (isV2) {
-      aiMsg.text = data.reply;
-      aiMsg.isSuccess = true;
-      aiMsg.toolLog = data.tool_log || [];
-
-      // Attach bookings for reply/undo buttons
-      const lastResult = data.tool_result || data.tool_log?.at(-1)?.result;
-      if (lastResult?.bookings) {
-        aiMsg.bookings = lastResult.bookings.map(b => b.id);
-        aiMsg.snapshot = lastResult.snapshot || null;
-      } else if (lastResult?.booking) {
-        aiMsg.bookings = [lastResult.booking.id];
-        aiMsg.snapshot = lastResult.snapshot || null;
+    // Auto-set replyingTo if checked-in a "Giữ chỗ" booking
+    const checkIn = actions.find(a => a.type === 'check_in');
+    if (checkIn && data.tool_result?.bookings) {
+      const hasGiuCho = data.tool_result.bookings.some(b => b?.services?.name === 'Giữ chỗ');
+      if (hasGiuCho) {
+        setReplyingTo({
+          bookingIds: checkIn.booking_ids,
+          label: getReplyLabel(data.reply)
+        });
       }
-
-      // Auto-set replyingTo if checked-in a "Giữ chỗ" booking
-      if (data.tool_used === 'check_in_booking' && data.tool_result?.bookings) {
-        const hasGiuCho = data.tool_result.bookings.some(b => b.services?.name === 'Giữ chỗ');
-        if (hasGiuCho) {
-          console.log('[replyingTo auto-set]', data.tool_result.bookings.map(b => b.id)); // 👈 ADD
-          setReplyingTo({
-            bookingIds: data.tool_result.bookings.map(b => b.id),
-            label: getReplyLabel(data.reply)
-          });
-        }
-      }
-    }
-
-
-    // 5. Handle Legacy V1 Engine Response (Regex/Structured Layout)
-    else {
-      const { count, duration, summary, bookings, intent } = data;
-      const durationLabel = duration ? ` (${duration}P)` : '';
-
-      let dynamicTitle = `Đã tạo ${count || 1} lịch${durationLabel}`;
-      if (intent === 'BOOKING_DELETE') {
-        dynamicTitle = `Đã hủy ${bookings?.length || 1} lịch`;
-      } else if (intent === 'STAFF_DUTY') {
-        dynamicTitle = `Cập nhật trực tour`;
-      } else if (summary?.includes('Đã đổi nhân viên')) {
-        dynamicTitle = `Đã đổi nhân viên${durationLabel}`;
-      } else if (summary?.includes('Đã cập nhật')) {
-        dynamicTitle = `Đã cập nhật ${count || 1} lịch${durationLabel}`;
-      } else if (summary?.includes('Đã báo khách tới')) {
-        dynamicTitle = `Đã báo khách tới${durationLabel}`;
-      }
-
-      aiMsg.title = dynamicTitle;
-      aiMsg.text = summary;
-      aiMsg.bookings = bookings || [];
-      aiMsg.snapshot = data.oldBookings || null;
-      aiMsg.isSuccess = true;
     }
 
     setMessages(prev => [...prev, aiMsg].slice(-50));
@@ -268,6 +247,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
       id: (Date.now() + 1).toString(),
       sender: 'ai',
       text: `Lỗi: ${err.message}`,
+      isError: true,
       time: getNowTime()
     }].slice(-50));
   } finally {
@@ -275,33 +255,17 @@ function AIChatPanel({ onClose, currentBranchId }) {
   }
 };
 
-  const handleUndo = async (messageId, bookingIds, snapshot) => {
-    if (!bookingIds || bookingIds.length === 0) return;
-    setUndoLoadingId(messageId);
+  // Hoàn tác được thực hiện ở server dựa trên danh sách `actions` (tạo → xóa lịch vừa tạo,
+  // sửa / check-in / hủy → khôi phục đầy đủ dữ liệu cũ kể cả trạng thái).
+  const handleUndo = async (msg) => {
+    if (!msg.actions || msg.actions.length === 0) return;
+    setUndoLoadingId(msg.id);
+    const messageId = msg.id;
     try {
-      // Check if we have an array of old history snapshots
-      if (snapshot && Array.isArray(snapshot) && snapshot.length > 0) {
-        // Scenario A1: Group Edit/Update Restore (Multiple appointments)
-        await Promise.all(
-          snapshot.map(oldRow => 
-            request(`/bookings/${oldRow.id}`, {
-              method: 'PUT',
-              body: JSON.stringify(oldRow)
-            })
-          )
-        );
-      } else if (snapshot && snapshot.id) {
-        // Scenario A2: Single Edit/Update Restore fallback
-        await request(`/bookings/${snapshot.id}`, {
-          method: 'PUT',
-          body: JSON.stringify(snapshot)
-        });
-      } else {
-        // Scenario B: No snapshot exists (Brand new booking creation wipeout)
-        await Promise.all(
-          bookingIds.map(id => request(`/bookings/${id}`, { method: 'DELETE' }))
-        );
-      }
+      await request('/bookings/undo', {
+        method: 'POST',
+        body: JSON.stringify({ actions: msg.actions })
+      });
 
       // Track as undone
       setUndoneMessages(prev => [...prev, messageId]);
@@ -398,8 +362,8 @@ function AIChatPanel({ onClose, currentBranchId }) {
                             </div>
                           )}
 
-                          {/* Reply / Undo Buttons */}
-                          {!isUndone && msg.bookings && msg.bookings.length > 0 && (
+                          {/* Reply / Undo Buttons — chỉ cho tin nhắn có thao tác thật (actions từ server) */}
+                          {!isUndone && msg.actions?.length > 0 && msg.bookings?.length > 0 && (
                             <div className="ai-action-buttons-row">
                               <button
                                 type="button"
@@ -417,7 +381,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
                               <button
                                 type="button"
                                 className="ai-action-btn undo"
-                                onClick={() => handleUndo(msg.id, msg.bookings, msg.snapshot)}
+                                onClick={() => handleUndo(msg)}
                                 disabled={loading || undoLoadingId === msg.id}
                               >
                                 <FiRotateCcw size={12} className={undoLoadingId === msg.id ? 'spin' : ''} />
@@ -553,6 +517,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
                         className={`custom-branch-option ${isActive ? 'active' : ''}`}
                         onClick={() => {
                           setSelectedBranch(b.id);
+                          try { localStorage.setItem(BRANCH_STORAGE_KEY, b.id); } catch (e) { /* ignore */ }
                           setIsBranchSelectOpen(false);
                         }}
                       >
@@ -572,7 +537,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
                               {
                                 id: 'welcome',
                                 sender: 'ai',
-                                text: 'Xin chào! Mình là ChatLGBT, trợ lý đặt lịch nhanh của bạn. 🌟',
+                                text: 'Xin chào! Mình là Ý Chatbot, trợ lý đặt lịch nhanh của bạn. 🌟',
                                 isWelcome: true
                               }
                             ];
@@ -613,44 +578,6 @@ function AIChatPanel({ onClose, currentBranchId }) {
             </button>
           </div>
         </form>
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 8px' }}>
-        <span style={{ fontSize: '12px', fontWeight: '500', color: '#78716C' }}>
-          {isV2 ? 'Engine: V2 (Agent)' : 'Engine: V1 (Regex)'}
-        </span>
-        <button
-          type="button"
-          onClick={() => {
-            const nextValue = !isV2;
-            setIsV2(nextValue);
-            localStorage.setItem('yoi_ai_version', nextValue ? 'v2' : 'v1');
-          }}
-          style={{
-            width: '40px',
-            height: '22px',
-            borderRadius: '999px',
-            backgroundColor: isV2 ? '#10B981' : '#D6D3D1', // Green for V2, Grey for V1
-            position: 'relative',
-            border: 'none',
-            cursor: 'pointer',
-            transition: 'background-color 0.2s ease'
-          }}
-        >
-          <div
-            style={{
-              width: '16px',
-              height: '16px',
-              borderRadius: '50%',
-              backgroundColor: '#FFFFFF',
-              position: 'absolute',
-              top: '3px',
-              left: isV2 ? '21px' : '3px',
-              transition: 'left 0.2s ease',
-              boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
-            }}
-          />
-        </button>
       </div>
 
     </div>

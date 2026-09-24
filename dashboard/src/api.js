@@ -1,15 +1,34 @@
-const API_BASE = import.meta.env.VITE_API_BASE;
+export const API_BASE = import.meta.env.VITE_API_BASE;
+
+// Token lấy trực tiếp từ Clerk ở mỗi request (Clerk tự cache & làm mới token ~60s).
+// Không lưu token vào localStorage nữa: nếu trang bị chèn script độc (XSS) sẽ khó lấy cắp hơn.
+let getAuthToken = async () => null;
+export function setAuthTokenGetter(getter) {
+  getAuthToken = typeof getter === 'function' ? getter : async () => null;
+}
+
+async function buildHeaders(extra, forceRefresh = false) {
+  let token = null;
+  try {
+    token = await getAuthToken(forceRefresh ? { skipCache: true } : undefined);
+  } catch (e) {
+    token = null;
+  }
+  return {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...extra
+  };
+}
 
 export async function request(url, options = {}) {
-  const token = localStorage.getItem('sb_access_token');
-  const headers = {
-    'Content-Type': 'application/json',
-    'X-Dashboard-Source': 'admin',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...options.headers
-  };
+  let res = await fetch(`${API_BASE}${url}`, { ...options, headers: await buildHeaders(options.headers) });
 
-  const res = await fetch(`${API_BASE}${url}`, { ...options, headers });
+  // Token vừa hết hạn → lấy token mới và thử lại đúng 1 lần
+  if (res.status === 401) {
+    res = await fetch(`${API_BASE}${url}`, { ...options, headers: await buildHeaders(options.headers, true) });
+  }
+
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Request failed' }));
     throw new Error(err.error || 'Request failed');

@@ -15,40 +15,28 @@ import Settings from './pages/Settings';
 import ShareLink from './pages/ShareLink';
 import Sidebar from './components/Sidebar';
 import UserSettings from './pages/UserSettings';
+import { setAuthTokenGetter } from './api';
+
+const VALID_ROLES = ['staff', 'admin', 'dev'];
 
 function App() {
   const { isLoaded, userId, getToken, signOut } = useAuth();
   const { user } = useUser();
 
-  const userRole = user?.publicMetadata?.role || 'admin'; // Default to admin or read from Clerk metadata
+  // Role đặt trong Clerk → Users → Public metadata. Không có role hợp lệ → không cho vào (backend cũng từ chối).
+  const userRole = user?.publicMetadata?.role;
+  const isAdmin = userRole === 'admin' || userRole === 'dev';
 
+  // Mỗi request API tự lấy token mới nhất từ Clerk (không lưu token vào localStorage)
   useEffect(() => {
-    if (isLoaded && userId) {
-      // Fetch Clerk JWT and update localStorage
-      getToken().then(token => {
-        if (token) {
-          localStorage.setItem('sb_access_token', token);
-        }
-      });
-
-      // Keep token fresh
-      const interval = setInterval(() => {
-        getToken().then(token => {
-          if (token) {
-            localStorage.setItem('sb_access_token', token);
-          }
-        });
-      }, 60 * 1000);
-
-      return () => clearInterval(interval);
-    } else if (isLoaded && !userId) {
-      localStorage.removeItem('sb_access_token');
-    }
-  }, [isLoaded, userId, getToken]);
+    setAuthTokenGetter(userId ? (opts) => getToken(opts) : null);
+    // Dọn token cũ do phiên bản trước lưu lại
+    try { localStorage.removeItem('sb_access_token'); } catch (e) { /* ignore */ }
+  }, [userId, getToken]);
 
   const handleLogout = async () => {
+    setAuthTokenGetter(null);
     await signOut();
-    localStorage.removeItem('sb_access_token');
   };
 
   if (!isLoaded) {
@@ -63,6 +51,15 @@ function App() {
     return <Login />;
   }
 
+  if (user && !VALID_ROLES.includes(userRole)) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', gap: 16, padding: 24, textAlign: 'center' }}>
+        <p style={{ color: '#57534E' }}>Tài khoản của bạn chưa được cấp quyền truy cập. Vui lòng liên hệ quản trị viên.</p>
+        <button className="btn btn-primary" onClick={handleLogout}>Đăng xuất</button>
+      </div>
+    );
+  }
+
   return (
     <div className="app-layout">
       <Sidebar user={user} onLogout={handleLogout} />
@@ -73,7 +70,7 @@ function App() {
             <Route path="/customers" element={<Customers />} />
             <Route path="/user-settings" element={<UserSettings />} />
 
-            {userRole === 'admin' && (
+            {isAdmin && (
               <>
                 <Route path="/employees" element={<Employees />} />
                 <Route path="/services" element={<Services />} />

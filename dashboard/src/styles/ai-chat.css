@@ -566,8 +566,11 @@
 
 @media only screen and (max-width: 768px) {
   .ai-chat-panel-floating {
-    height: calc(100% - 64px);
+    /* Neo đáy panel ngay trên thanh menu dưới (kể cả vùng home indicator iPhone)
+       thay vì trừ cứng 64px — trước đây ô nhập + nút gửi bị menu che mất ~34px */
     top: 0;
+    bottom: var(--mobile-bottom-offset);
+    height: auto;
     right: 0;
     box-shadow: none;
     border-left: none;

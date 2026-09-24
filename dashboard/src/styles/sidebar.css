@@ -1015,7 +1015,8 @@
   .sidebar.mobile-open {
     transform: translateX(0);
     padding: 32px;
-    height: calc(100% - 64px);
+    padding-top: calc(32px + env(safe-area-inset-top, 0px));
+    height: calc(100% - var(--mobile-bottom-offset));
   }
 
   .sidebar-logo h1 span {
@@ -1083,9 +1084,10 @@
     left: 0;
     top: 0;
     right: 0;
-    bottom: 64px;
+    /* Neo theo top/bottom thay vì 100vh (100vh trên iOS cao hơn vùng nhìn thấy) */
+    bottom: var(--mobile-bottom-offset);
     width: 100vw;
-    height: calc(100vh - 64px);
+    height: auto;
     justify-content: center;
     transform-origin: bottom center;
   }

@@ -161,7 +161,13 @@
 
   .modal {
     max-width: 100% !important;
-    max-height: 100vh;
+    /* Chừa 24px phía trên để người dùng thấy đây là sheet; dvh = chiều cao thực tế trên iOS/Android */
+    max-height: calc(100vh - 24px);
+    max-height: calc(100dvh - 24px);
+    /* Form dài (VD "Lịch mới") phải cuộn được, nếu không nút Lưu/Tạo nằm ngoài màn hình */
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
     border-radius: 16px 16px 0 0 !important;
     margin: 0;
     position: fixed;
@@ -170,6 +176,19 @@
     right: 0;
     padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
     animation: slideUpMobile 0.3s ease;
+  }
+
+  /* Nút hành động luôn dính đáy sheet khi cuộn */
+  .modal .modal-footer,
+  .modal .service-modal-footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    margin-top: 12px;
+    padding: 12px 0 calc(20px + env(safe-area-inset-bottom, 0px));
+    margin-bottom: calc(-20px - env(safe-area-inset-bottom, 0px));
+    background: var(--white);
+    box-shadow: 0 -8px 12px -8px rgba(0, 0, 0, 0.08);
   }
 
   .modal-overlay {

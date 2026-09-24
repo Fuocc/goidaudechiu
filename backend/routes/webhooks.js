@@ -1,6 +1,30 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../supabaseClient');
+const { assertSafeWebhookUrl, safeWebhookFetch } = require('../lib/safeUrl');
+
+// Chỉ các sự kiện hệ thống thật sự phát ra
+const WEBHOOK_EVENTS = ['booking.confirmed', 'booking.pending'];
+
+// Kiểm tra dữ liệu webhook trước khi lưu (chặn URL nội bộ / http / sự kiện lạ)
+async function validateWebhookInput(body, { partial = false } = {}) {
+  const out = {};
+  if (!partial || body.name !== undefined) {
+    const name = typeof body.name === 'string' ? body.name.trim().slice(0, 100) : '';
+    if (!name) throw new Error('Vui lòng nhập tên webhook.');
+    out.name = name;
+  }
+  if (!partial || body.url !== undefined) {
+    out.url = await assertSafeWebhookUrl(body.url);
+  }
+  if (!partial || body.event !== undefined) {
+    const event = body.event || 'booking.confirmed';
+    if (!WEBHOOK_EVENTS.includes(event)) throw new Error('Loại sự kiện webhook không hợp lệ.');
+    out.event = event;
+  }
+  if (body.is_active !== undefined) out.is_active = body.is_active !== false;
+  return out;
+}
 
 /**
  * GET /api/webhooks
@@ -25,10 +49,15 @@ router.get('/', async (req, res) => {
  */
 router.post('/', async (req, res) => {
   try {
-    const { name, url, event, is_active } = req.body;
+    let input;
+    try {
+      input = await validateWebhookInput(req.body || {});
+    } catch (validationErr) {
+      return res.status(400).json({ error: validationErr.message });
+    }
     const { data, error } = await supabase
       .from('webhooks')
-      .insert([{ name, url, event, is_active: is_active !== false }])
+      .insert([{ is_active: true, ...input }])
       .select()
       .single();
 
@@ -44,10 +73,15 @@ router.post('/', async (req, res) => {
  */
 router.put('/:id', async (req, res) => {
   try {
-    const { name, url, event, is_active } = req.body;
+    let input;
+    try {
+      input = await validateWebhookInput(req.body || {}, { partial: true });
+    } catch (validationErr) {
+      return res.status(400).json({ error: validationErr.message });
+    }
     const { data, error } = await supabase
       .from('webhooks')
-      .update({ name, url, event, is_active })
+      .update(input)
       .eq('id', req.params.id)
       .select()
       .single();
@@ -117,11 +151,16 @@ router.post('/test/:id', async (req, res) => {
       }
     };
 
-    const response = await fetch(webhook.url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(testPayload)
-    });
+    let response;
+    try {
+      response = await safeWebhookFetch(webhook.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(testPayload)
+      });
+    } catch (fetchErr) {
+      return res.status(400).json({ success: false, error: `Không gửi được webhook: ${fetchErr.message}` });
+    }
 
     res.json({
       success: response.ok,

@@ -6,6 +6,14 @@
   padding: 28px !important;
 }
 
+/* Trên mobile giữ dạng bottom-sheet giống các modal khác (trước đây bị !important ở trên đè mất) */
+@media only screen and (max-width: 768px) {
+  .service-modal {
+    border-radius: 16px 16px 0 0 !important;
+    padding: 20px 18px calc(20px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+}
+
 .service-form-group {
   margin-bottom: 20px;
   position: relative;

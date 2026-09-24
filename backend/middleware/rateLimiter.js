@@ -1,4 +1,5 @@
 const supabase = require('../supabaseClient');
+const { getClientIp } = require('./security');
 
 // In-memory store for IP rate limiting
 // Key: IP, Value: Array of timestamps of booking attempts
@@ -12,13 +13,15 @@ const MAX_LIMIT = 3;
  * Protects booking creation from spam by restricting attempts per IP and Phone number.
  */
 async function bookingRateLimiter(req, res, next) {
-  // Dashboard/Admin bypass: never rate-limit requests from the admin dashboard
-  if (req.headers['x-dashboard-source'] === 'admin') {
+  // Chỉ bỏ qua giới hạn cho người đã ĐĂNG NHẬP dashboard (req.auth do accessControl xác thực).
+  // Trước đây bỏ qua theo header X-Dashboard-Source: ai cũng tự gửi header đó được.
+  if (req.auth) {
     return next();
   }
 
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-  const { customer_phone } = req.body;
+  const ip = getClientIp(req);
+  // Chỉ nhận chuỗi — dữ liệu lạ (object/array) trước đây làm .trim() ném lỗi và treo request
+  const customer_phone = typeof req.body?.customer_phone === 'string' ? req.body.customer_phone : '';
   const now = Date.now();
 
   // 0) --- Bypasses for Development & Testing ---
@@ -36,10 +39,8 @@ async function bookingRateLimiter(req, res, next) {
   //   return next();
   // }
 
-  // C. Tester Phone Numbers Bypass
-  // Any phone number starting with '0999' is designated for testing and won't be rate-limited
-  if (customer_phone && customer_phone.trim().startsWith('0999')) {
-
+  // C. Tester Phone Numbers Bypass — chỉ khi chạy local (trên Render ai cũng dùng số 0999... để lách được)
+  if (!process.env.RENDER && typeof customer_phone === 'string' && customer_phone.trim().startsWith('0999')) {
     return next();
   }
 

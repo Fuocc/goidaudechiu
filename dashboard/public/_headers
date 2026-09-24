@@ -1,0 +1,15 @@
+# Header bảo mật cho dashboard trên Netlify.
+# CSP đang ở chế độ Report-Only (chỉ báo vi phạm trong Console, KHÔNG chặn) để kiểm tra Clerk đăng nhập ổn định.
+# Khi Console không còn cảnh báo "Content-Security-Policy-Report-Only", đổi tên header thành
+# "Content-Security-Policy" để bật chặn thật.
+/*
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+  Strict-Transport-Security: max-age=15552000; includeSubDomains
+  Content-Security-Policy-Report-Only: default-src 'self'; script-src 'self' https://*.clerk.accounts.dev https://*.clerk.com https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https://img.clerk.com https://*.clerk.com; connect-src 'self' https://*.onrender.com https://*.clerk.accounts.dev https://*.clerk.com https://clerk-telemetry.com; frame-src https://challenges.cloudflare.com https://*.clerk.accounts.dev https://*.clerk.com; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+
+# Service worker luôn lấy bản mới nhất
+/sw.js
+  Cache-Control: no-cache

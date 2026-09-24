@@ -17,7 +17,7 @@ import noteIcon from '../assets/note-icon.svg';
 
 import { Tooltip } from '../components/ui/tooltip';
 import { DatePicker, parseDate } from "@chakra-ui/react"
-import { supabase } from '../supabaseClient';
+import { subscribeRealtime } from '../realtime';
 import BranchDropdown from '../components/BranchDropdown';
 // import '../styles/timepicker.css';
 import '../styles/bookings.css';
@@ -163,11 +163,13 @@ function Bookings({ data }) {
   const [filterBranch, setFilterBranch] = useState('');
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(new Date());
+  const loadBookingsRef = useRef(null);
 
   useEffect(() => {
     const handleRefresh = () => {
-      refreshBookingsOnly();
-      loadBookings();
+      // Gọi bản loadBookings MỚI NHẤT qua ref (effect này không chạy lại khi đổi ngày/chi nhánh → tránh tải nhầm ngày cũ).
+      // loadBookings tải lại cả lịch hẹn + nhân viên (AI có thể đổi tour trực).
+      loadBookingsRef.current?.();
     };
     const handleEditDraftEvent = (e) => {
       const { draft, matched } = e.detail;
@@ -326,72 +328,30 @@ function Bookings({ data }) {
     return () => clearInterval(timer);
   }, []);
 
-  // ---- Live Booking Updates (SSE & Supabase Realtime) ----
+  // ---- Live Booking Updates (SSE dùng chung, đã xác thực) ----
+  // 1 lệnh AI tạo nhóm 3 khách sinh ra nhiều sự kiện liên tiếp → gộp lại thành 1 lần tải (debounce 300ms)
+  // thay vì bắn nhiều request cùng lúc (response về lệch thứ tự có thể hiển thị dữ liệu cũ).
   useEffect(() => {
-    // 1) Supabase Realtime (for booking creations & holds on other ports/backends)
-    const channel = supabase
-      .channel('realtime-bookings')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'bookings'
-        },
-        () => {
-
-          refreshBookingsOnly();
-        }
-      )
-      .subscribe();
-
-    // 2) SSE Connection (for backend events on this server)
-    const API_BASE = import.meta.env.VITE_API_BASE;
-    const sseUrl = API_BASE.replace(/\/api$/, '') + '/api/events';
-
-    let eventSource;
-    let reconnectTimer;
-
-    const connect = () => {
-      eventSource = new EventSource(sseUrl);
-
-      eventSource.addEventListener('booking.created', () => {
-
+    let debounceTimer = null;
+    const scheduleRefresh = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
         refreshBookingsOnly();
-      });
-
-      eventSource.addEventListener('booking.updated', () => {
-
-        refreshBookingsOnly();
-      });
-
-      eventSource.addEventListener('booking.deleted', () => {
-
-        refreshBookingsOnly();
-      });
-
-      eventSource.addEventListener('booking.hold', () => {
-
-        refreshBookingsOnly();
-      });
-
-      eventSource.addEventListener('booking.hold_released', () => {
-
-        refreshBookingsOnly();
-      });
-
-      eventSource.onerror = () => {
-        eventSource.close();
-        reconnectTimer = setTimeout(connect, 5000);
-      };
+      }, 300);
     };
 
-    connect();
+    const unsubscribe = subscribeRealtime({
+      'booking.created': scheduleRefresh,
+      'booking.updated': scheduleRefresh,
+      'booking.deleted': scheduleRefresh,
+      'booking.hold': scheduleRefresh,
+      'booking.hold_released': scheduleRefresh
+    });
 
     return () => {
-      supabase.removeChannel(channel);
-      if (eventSource) eventSource.close();
-      if (reconnectTimer) clearTimeout(reconnectTimer);
+      unsubscribe();
+      if (debounceTimer) clearTimeout(debounceTimer);
     };
   }, []); // Connect once on mount
 
@@ -661,6 +621,7 @@ function Bookings({ data }) {
       setLoading(false);
     }
   };
+  loadBookingsRef.current = loadBookings;
 
   // Navigation
   const goToday = () => {

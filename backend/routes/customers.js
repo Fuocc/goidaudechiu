@@ -8,6 +8,15 @@ const normalize = (str) => (str || '').normalize('NFD').replace(/[\u0300-\u036f]
 // GET all customers
 router.get('/', async (req, res) => {
   try {
+    // Tìm kiếm ngay trong DB (không dấu, tối đa 20 kết quả) — hàm search_customers ở SQL Bước 5.
+    // Cách cũ tải cả bảng rồi lọc: vượt 1000 khách là không tìm ra khách cũ.
+    const search = typeof req.query.search === 'string' ? req.query.search.trim().slice(0, 100) : '';
+    if (search) {
+      const { data: found, error: rpcErr } = await supabase.rpc('search_customers', { q: search, max_rows: 20 });
+      if (!rpcErr) return res.json(found || []);
+      // Chưa tạo hàm SQL → dùng cách cũ bên dưới
+    }
+
     let query = supabase
       .from('customers')
       .select('*')
@@ -17,8 +26,8 @@ router.get('/', async (req, res) => {
     if (error) throw error;
 
     // Client-side filtering with Latin/diacritics normalization
-    if (req.query.search) {
-      const searchNorm = normalize(req.query.search);
+    if (search) {
+      const searchNorm = normalize(search);
       const filtered = data.filter(c => {
         const nameNorm = normalize(c.name);
         const phone = (c.phone || '').toLowerCase();

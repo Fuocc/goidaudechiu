@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { FiX } from 'react-icons/fi';
-import { supabase } from '../supabaseClient';
+import { toast } from 'react-toastify';
+import { subscribeRealtime } from '../realtime';
 import { useWebPush } from '../hooks/useWebPush';
 import { savePreferenceToDB } from '../idbHelper';
 import '../styles/sidebar.css';
@@ -132,7 +133,8 @@ function Sidebar({ user, onLogout }) {
 
   const profileRef = useRef(null);
   const popoverRef = useRef(null);
-  const role = user?.publicMetadata?.role || 'admin';
+  const role = user?.publicMetadata?.role;
+  const isAdmin = role === 'admin' || role === 'dev';
 
   // ---- Click Outside Handler for Floating Logout Popover ----
   useEffect(() => {
@@ -149,49 +151,49 @@ function Sidebar({ user, onLogout }) {
   }, []);
 
   // ---- VAPID Web Push Notification Hook ----
-  const { isSupported, isSubscribed, loading, subscribe, unsubscribe } = useWebPush();
+  const { isSupported, isSubscribed, loading: pushLoading, subscribe } = useWebPush();
+  const autoSubscribeTriedRef = useRef(false);
 
-  // Auto-subscribe if permission is already granted
+  // Tự động đăng ký push đúng 1 lần mỗi lần mở app (không lặp lại khi thất bại).
+  // - Đã cấp quyền: đăng ký ngay.
+  // - Chưa hỏi quyền: đợi thao tác đầu tiên của người dùng (trình duyệt bắt buộc) rồi mới hỏi.
   useEffect(() => {
-    if (isSupported && !isSubscribed && !loading) {
-      if (Notification.permission === 'granted') {
-        subscribe().catch(() => { });
-      }
-    }
-  }, [isSupported, isSubscribed, loading, subscribe]);
+    if (!isSupported || pushLoading || isSubscribed || autoSubscribeTriedRef.current) return;
 
-  // Interaction-driven auto-prompt for default permission
-  useEffect(() => {
-    if (typeof window !== 'undefined' && 'Notification' in window) {
-      if (Notification.permission === 'default') {
-        const autoRequest = async () => {
-          // Remove the listeners immediately after the first interaction trigger
-          document.removeEventListener('click', autoRequest);
-          document.removeEventListener('keydown', autoRequest);
-
-          try {
-            const permission = await Notification.requestPermission();
-            if (permission === 'granted') {
-              console.log("Notification permission granted via auto-prompt.");
-              if (isSupported && !isSubscribed && !loading) {
-                subscribe().catch(() => { });
-              }
-            }
-          } catch (err) {
-            console.error("Auto request notification failed:", err);
+    const runSilentSubscribe = async () => {
+      autoSubscribeTriedRef.current = true;
+      const result = await subscribe({ silent: true });
+      if (!result.ok && result.error !== 'cooldown' && result.error !== 'Quyền thông báo bị từ chối.') {
+        // Chỉ báo 1 lần mỗi phiên, không dùng alert chặn màn hình
+        try {
+          if (!sessionStorage.getItem('yoi_push_warned')) {
+            sessionStorage.setItem('yoi_push_warned', '1');
+            toast.info('Trình duyệt này chưa bật được thông báo đẩy. Hãy thử Chrome/Safari bản mới hoặc kiểm tra cài đặt thông báo.', { autoClose: 6000 });
           }
-        };
-
-        document.addEventListener('click', autoRequest);
-        document.addEventListener('keydown', autoRequest);
-
-        return () => {
-          document.removeEventListener('click', autoRequest);
-          document.removeEventListener('keydown', autoRequest);
-        };
+        } catch (e) { /* ignore */ }
       }
+    };
+
+    if (Notification.permission === 'granted') {
+      runSilentSubscribe();
+      return;
     }
-  }, [isSupported, isSubscribed, loading, subscribe]);
+
+    if (Notification.permission === 'default') {
+      const onFirstInteraction = () => {
+        document.removeEventListener('click', onFirstInteraction);
+        document.removeEventListener('keydown', onFirstInteraction);
+        runSilentSubscribe();
+      };
+      document.addEventListener('click', onFirstInteraction);
+      document.addEventListener('keydown', onFirstInteraction);
+      return () => {
+        document.removeEventListener('click', onFirstInteraction);
+        document.removeEventListener('keydown', onFirstInteraction);
+      };
+    }
+    // permission === 'denied': không làm gì
+  }, [isSupported, pushLoading, isSubscribed, subscribe]);
 
   // ---- Notifications State & Real-time Listeners ----
   const [notifications, setNotifications] = useState(() => {
@@ -602,66 +604,12 @@ function Sidebar({ user, onLogout }) {
     }
   };
 
+  // Lịch mới → phát chuông + tải lại thông báo. Dùng kết nối SSE chung đã xác thực
+  // (bỏ Supabase Realtime: dashboard không còn truy cập thẳng database bằng anon key).
   useEffect(() => {
-    const channel = supabase
-      .channel('realtime-notifications')
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'bookings'
-        },
-        async (payload) => {
-          try {
-            const { data: booking, error } = await supabase
-              .from('bookings')
-              .select(`
-                *,
-                customers(name, phone),
-                services(name, color),
-                branches(name)
-              `)
-              .eq('id', payload.new.id)
-              .single();
-
-            if (!error && booking) {
-              handleNewBooking(booking);
-            }
-          } catch (err) {
-
-          }
-        }
-      )
-      .subscribe();
-
-    const API_BASE = import.meta.env.VITE_API_BASE;
-    const sseUrl = API_BASE.replace(/\/api$/, '') + '/api/events';
-
-    let eventSource;
-    let reconnectTimer;
-
-    const connect = () => {
-      eventSource = new EventSource(sseUrl);
-
-      eventSource.addEventListener('booking.created', (e) => {
-        const booking = JSON.parse(e.data);
-        handleNewBooking(booking);
-      });
-
-      eventSource.onerror = () => {
-        eventSource.close();
-        reconnectTimer = setTimeout(connect, 5000);
-      };
-    };
-
-    connect();
-
-    return () => {
-      supabase.removeChannel(channel);
-      if (eventSource) eventSource.close();
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-    };
+    return subscribeRealtime({
+      'booking.created': (booking) => { if (booking) handleNewBooking(booking); }
+    });
   }, [handleNewBooking]);
 
   // ---- Dynamic Sections Definition based on Mockup ----
@@ -715,10 +663,10 @@ function Sidebar({ user, onLogout }) {
     }
   ];
 
-  const sectionsToRender = role === 'admin' ? adminSections : staffSections;
+  const sectionsToRender = isAdmin ? adminSections : staffSections;
 
   // Mobile Bottom Navigation: max 4 items
-  const bottomNavItems = role === 'admin'
+  const bottomNavItems = isAdmin
     ? [
       { path: '/', label: 'Lịch hẹn', icon: CalendarIcon },
       { path: '/customers', label: 'Khách', icon: SmileIcon },
@@ -730,7 +678,7 @@ function Sidebar({ user, onLogout }) {
       { path: '/customers', label: 'Khách', icon: SmileIcon },
     ];
 
-  const roleLabel = role === 'admin' ? 'Quản trị viên' : 'Nhân viên';
+  const roleLabel = role === 'dev' ? 'Developer' : role === 'admin' ? 'Quản trị viên' : 'Nhân viên';
 
   // Close sidebar and notif panel on route change (mobile and desktop)
   useEffect(() => {
@@ -905,7 +853,7 @@ function Sidebar({ user, onLogout }) {
           </div>
 
           {/* Cài đặt Link positioned at the very bottom */}
-          {role === 'admin' && (
+          {isAdmin && (
             <NavLink
               to="/settings"
               className={({ isActive }) => `sidebar-link sidebar-settings-link${isActive ? ' active' : ''}`}
@@ -947,14 +895,24 @@ function Sidebar({ user, onLogout }) {
             <span>Thông báo</span>
           </button>
 
-          {/* Nhân viên */}
-          <NavLink
-            to="/employees"
-            className={({ isActive }) => `mobile-nav-item${isActive && !panelOpen && !mobileOpen ? ' active' : ''}`}
-          >
-            <UsersIcon />
-            <span>Nhân viên</span>
-          </NavLink>
+          {/* Nhân viên — chỉ admin/dev; staff thấy "Khách hàng" (trang staff được phép dùng) */}
+          {isAdmin ? (
+            <NavLink
+              to="/employees"
+              className={({ isActive }) => `mobile-nav-item${isActive && !panelOpen && !mobileOpen ? ' active' : ''}`}
+            >
+              <UsersIcon />
+              <span>Nhân viên</span>
+            </NavLink>
+          ) : (
+            <NavLink
+              to="/customers"
+              className={({ isActive }) => `mobile-nav-item${isActive && !panelOpen && !mobileOpen ? ' active' : ''}`}
+            >
+              <SmileIcon />
+              <span>Khách</span>
+            </NavLink>
+          )}
 
           {/* Menu — no notif-badge */}
           <button

@@ -20,23 +20,31 @@ router.get('/vapid-public-key', (req, res) => {
 
 // API POST: Đăng ký thiết bị nhận thông báo push (Subscribe)
 router.post('/subscribe', async (req, res) => {
-    const { subscription } = req.body;
+    const { subscription } = req.body || {};
+    const endpoint = subscription?.endpoint;
+    const p256dh = subscription?.keys?.p256dh;
+    const auth = subscription?.keys?.auth;
 
-    if (!subscription || !subscription.endpoint || !subscription.keys) {
+    // Endpoint phải là https của dịch vụ push; key là chuỗi base64 ngắn
+    const isValid = typeof endpoint === 'string' && endpoint.startsWith('https://') && endpoint.length <= 1000 &&
+        typeof p256dh === 'string' && p256dh.length <= 200 &&
+        typeof auth === 'string' && auth.length <= 100;
+    if (!isValid) {
         return res.status(400).json({ error: 'Dữ liệu Subscription không hợp lệ' });
     }
 
-    const { endpoint, keys: { p256dh, auth } } = subscription;
-
     try {
-        // Lưu thông tin đăng ký vào bảng push_subscriptions trong database Supabase
-        const { data, error } = await supabase
+        // Lưu thông tin đăng ký, gắn với tài khoản đang đăng nhập (cột user_id — SQL Bước 3)
+        let { error } = await supabase
             .from('push_subscriptions')
-            .upsert(
-                { endpoint, p256dh, auth },
-                { onConflict: 'endpoint' }
-            )
-            .select();
+            .upsert({ endpoint, p256dh, auth, user_id: req.auth?.id || null }, { onConflict: 'endpoint' });
+
+        // Chưa chạy SQL thêm cột user_id → lưu theo cách cũ để push vẫn hoạt động
+        if (error && /user_id/.test(error.message || '')) {
+            ({ error } = await supabase
+                .from('push_subscriptions')
+                .upsert({ endpoint, p256dh, auth }, { onConflict: 'endpoint' }));
+        }
 
         if (error) throw error;
         res.status(201).json({ message: 'Đăng ký nhận thông báo đẩy thành công!' });
@@ -47,9 +55,9 @@ router.post('/subscribe', async (req, res) => {
 
 // API POST: Hủy đăng ký thiết bị (Unsubscribe)
 router.post('/unsubscribe', async (req, res) => {
-    const { endpoint } = req.body;
+    const endpoint = req.body?.endpoint;
 
-    if (!endpoint) {
+    if (typeof endpoint !== 'string' || !endpoint) {
         return res.status(400).json({ error: 'Thiếu thông số endpoint để huỷ đăng ký' });
     }
 

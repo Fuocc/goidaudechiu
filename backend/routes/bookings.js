@@ -3,6 +3,31 @@ const router = express.Router();
 const supabase = require('../supabaseClient');
 const webpush = require('web-push');
 const bookingRateLimiter = require('../middleware/rateLimiter');
+const { holdLimiter } = require('../middleware/security');
+const { safeWebhookFetch } = require('../lib/safeUrl');
+
+// ---- Kiểm tra dữ liệu đầu vào (dùng cho request từ landing page / chưa đăng nhập) ----
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
+const MAX_GUESTS = 10;
+const MAX_HOLD_MS = 10 * 60 * 1000;
+
+const isDateStr = (v) => typeof v === 'string' && DATE_RE.test(v) && !isNaN(new Date(v + 'T00:00:00').getTime());
+const isTimeStr = (v) => typeof v === 'string' && TIME_RE.test(v);
+const cleanText = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+
+function toGuestCount(v) {
+  const n = parseInt(v, 10);
+  if (!Number.isFinite(n) || n < 1) return 1;
+  return Math.min(n, MAX_GUESTS);
+}
+
+// Ngày đặt lịch hợp lệ cho khách tự đặt: từ hôm qua (lệch múi giờ) đến 120 ngày tới
+function isReasonableBookingDate(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00Z').getTime();
+  const now = Date.now();
+  return d >= now - 2 * 24 * 3600e3 && d <= now + 120 * 24 * 3600e3;
+}
 
 
 // Cấu hình thông số VAPID tiêu chuẩn cho web-push
@@ -264,7 +289,7 @@ router.get('/', async (req, res) => {
  * POST /api/bookings/hold
  * Create a temporary slot hold
  */
-router.post('/hold', async (req, res) => {
+router.post('/hold', holdLimiter, async (req, res) => {
   try {
     // Run cleanup first
     const broadcast = getBroadcast(req);
@@ -273,13 +298,17 @@ router.post('/hold', async (req, res) => {
     const {
       branch_id, service_id, num_guests,
       booking_date, start_time, hold_duration
-    } = req.body;
+    } = req.body || {};
 
     if (!branch_id || !booking_date || !start_time) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
+    if (typeof branch_id !== 'string' || (service_id && typeof service_id !== 'string') ||
+      !isDateStr(booking_date) || !isTimeStr(start_time) || !isReasonableBookingDate(booking_date)) {
+      return res.status(400).json({ error: 'Dữ liệu giữ chỗ không hợp lệ.' });
+    }
 
-    const guestCount = parseInt(num_guests) || 1;
+    const guestCount = toGuestCount(num_guests);
 
     // 1) Resolve service-like data (duration + price)
     let resolvedService = null;
@@ -481,7 +510,11 @@ router.post('/hold', async (req, res) => {
       const assignedBed = availableBeds[0];
       assignedBedIds.push(assignedBed.id);
 
-      const durationMs = parseInt(hold_duration) || (5 * 60 * 1000);
+      // Giới hạn thời gian giữ chỗ tối đa 10 phút (trước đây client tự đặt bao lâu cũng được → khóa slot vĩnh viễn)
+      const requestedMs = parseInt(hold_duration, 10);
+      const durationMs = Number.isFinite(requestedMs) && requestedMs > 0
+        ? Math.min(requestedMs, MAX_HOLD_MS)
+        : 5 * 60 * 1000;
       const expiresAt = Date.now() + durationMs;
 
       const insertPayload = {
@@ -533,9 +566,11 @@ router.delete('/hold', async (req, res) => {
       return res.status(400).json({ error: 'Missing hold_ids' });
     }
 
-    const holdIds = Array.isArray(holdIdsRaw)
+    const holdIds = (Array.isArray(holdIdsRaw)
       ? holdIdsRaw
-      : String(holdIdsRaw).split(',').map(id => id.trim());
+      : String(holdIdsRaw).split(',').map(id => id.trim()))
+      .filter(id => typeof id === 'string' && id)
+      .slice(0, MAX_GUESTS);
 
     const { error } = await supabase
       .from('bookings')
@@ -556,6 +591,106 @@ router.delete('/hold', async (req, res) => {
     res.json({ message: 'Holds cancelled successfully' });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/bookings/undo
+ * Hoàn tác các thao tác của AI chat. Body: { actions: [{ type, booking_ids, snapshot? }] }
+ *  - type 'create'                      → xóa các lịch vừa tạo (chỉ lịch tạo trong 24h và chưa hoàn thành)
+ *  - type 'update' | 'check_in' | 'cancel' → khôi phục toàn bộ các trường từ snapshot (kể cả status)
+ * Các action được hoàn tác theo thứ tự ngược (thao tác sau cùng hoàn tác trước).
+ */
+const UNDO_RESTORE_FIELDS = [
+  'service_id', 'employee_id', 'bed_id', 'branch_id', 'customer_id', 'temporary_name',
+  'num_guests', 'booking_date', 'start_time', 'end_time', 'status', 'total_price',
+  'notes', 'internal_note', 'group_booking_id'
+];
+const UNDO_VALID_STATUSES = ['pending', 'confirmed', 'arrived', 'completed', 'cancelled'];
+const UNDO_CREATE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+router.post('/undo', async (req, res) => {
+  try {
+    const actions = Array.isArray(req.body?.actions) ? req.body.actions : [];
+    if (actions.length === 0 || actions.length > 20) {
+      return res.status(400).json({ success: false, error: 'Không có thao tác hợp lệ để hoàn tác.' });
+    }
+
+    const broadcast = getBroadcast(req);
+    const restored = [];
+    const deleted = [];
+    const skipped = [];
+
+    for (const action of [...actions].reverse()) {
+      const ids = (Array.isArray(action?.booking_ids) ? action.booking_ids : [])
+        .filter(id => typeof id === 'string')
+        .slice(0, 50);
+      if (ids.length === 0) continue;
+
+      if (action.type === 'create') {
+        const { data: rows, error: fetchErr } = await supabase
+          .from('bookings')
+          .select('id, created_at, status')
+          .in('id', ids);
+        if (fetchErr) throw fetchErr;
+
+        const deletable = (rows || [])
+          .filter(r => Date.now() - new Date(r.created_at).getTime() < UNDO_CREATE_MAX_AGE_MS && r.status !== 'completed')
+          .map(r => r.id);
+        skipped.push(...ids.filter(id => !deletable.includes(id)));
+
+        if (deletable.length > 0) {
+          const { error: delErr } = await supabase.from('bookings').delete().in('id', deletable);
+          if (delErr) throw delErr;
+          deletable.forEach(id => broadcast('booking.deleted', { id }));
+          deleted.push(...deletable);
+        }
+      } else if (['update', 'check_in', 'cancel'].includes(action.type)) {
+        const snapshot = Array.isArray(action.snapshot) ? action.snapshot : [];
+        for (const row of snapshot) {
+          // Chỉ khôi phục những lịch thuộc đúng action này
+          if (!row || typeof row.id !== 'string' || !ids.includes(row.id)) continue;
+
+          const patch = {};
+          for (const field of UNDO_RESTORE_FIELDS) {
+            if (field in row) patch[field] = row[field];
+          }
+          if (patch.status && !UNDO_VALID_STATUSES.includes(patch.status)) delete patch.status;
+          if (Object.keys(patch).length === 0) continue;
+
+          const { data: updated, error: updErr } = await supabase
+            .from('bookings')
+            .update(patch)
+            .eq('id', row.id)
+            .select(`
+              *,
+              customers(name, phone),
+              services(name, duration_minutes, price, color),
+              employees(name),
+              beds(name),
+              branches(name)
+            `)
+            .maybeSingle();
+          if (updErr) throw updErr;
+
+          if (updated) {
+            broadcast('booking.updated', updated);
+            restored.push(row.id);
+          } else {
+            skipped.push(row.id); // lịch đã bị xóa hẳn
+          }
+        }
+      }
+    }
+
+    if (restored.length === 0 && deleted.length === 0) {
+      return res.status(409).json({ success: false, error: 'Lịch hẹn đã thay đổi hoặc không còn tồn tại, không thể hoàn tác.' });
+    }
+
+    res.json({ success: true, restored, deleted, skipped });
+  } catch (err) {
+    console.error('[undo] error:', err);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -706,6 +841,40 @@ router.put('/:id', async (req, res) => {
  */
 router.post('/', bookingRateLimiter, async (req, res) => {
   try {
+    // Khách tự đặt từ landing page (chưa đăng nhập) → CHỈ nhận đúng các field khách được phép gửi.
+    // Các field nội bộ (employee_id, temporary_name, customer_id, end_time, duration...) bị bỏ qua
+    // để người ngoài không tự chọn nhân viên, sửa hồ sơ khách khác hay đặt giờ kết thúc tùy ý.
+    if (!req.auth) {
+      const b = req.body || {};
+      const name = cleanText(b.customer_name, 80);
+      const phone = cleanText(b.customer_phone, 20);
+      const phoneDigits = phone.replace(/[\s().-]/g, '');
+
+      if (!name || !/^\+?\d{8,15}$/.test(phoneDigits)) {
+        return res.status(400).json({ error: 'Vui lòng nhập họ tên và số điện thoại hợp lệ.' });
+      }
+      if (typeof b.branch_id !== 'string' || (b.service_id && typeof b.service_id !== 'string') ||
+        !isDateStr(b.booking_date) || !isTimeStr(b.start_time) || !isReasonableBookingDate(b.booking_date)) {
+        return res.status(400).json({ error: 'Thông tin đặt lịch không hợp lệ.' });
+      }
+
+      const rawHoldIds = Array.isArray(b.hold_ids) ? b.hold_ids : (typeof b.hold_ids === 'string' ? [b.hold_ids] : []);
+      const holdIds = rawHoldIds.filter(id => typeof id === 'string' && id).slice(0, MAX_GUESTS);
+
+      req.body = {
+        branch_id: b.branch_id,
+        service_id: b.service_id || null,
+        num_guests: toGuestCount(b.num_guests),
+        customer_name: name,
+        customer_phone: phone,
+        customer_email: cleanText(b.customer_email, 120) || null,
+        booking_date: b.booking_date,
+        start_time: b.start_time,
+        notes: cleanText(b.notes, 500) || null,
+        hold_ids: holdIds.length ? holdIds : undefined
+      };
+    }
+
     const {
       branch_id, service_id, duration_minutes, num_guests,
       customer_name, customer_phone, customer_email,
@@ -717,7 +886,7 @@ router.post('/', bookingRateLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    const guestCount = parseInt(num_guests) || 1;
+    const guestCount = toGuestCount(num_guests);
 
     let isTemporary = false;
     let finalTemporaryName = temporary_name || null;
@@ -852,6 +1021,10 @@ router.post('/', bookingRateLimiter, async (req, res) => {
             internal_note: internalNote // clear the GIỮ CHỖ TẠM THỜI note!
           })
           .eq('id', id)
+          // Chỉ được "chốt" đúng lịch GIỮ CHỖ TẠM THỜI — trước đây truyền ID của bất kỳ lịch nào
+          // vào hold_ids là ghi đè được tên khách / trạng thái của lịch đó.
+          .eq('status', 'pending')
+          .like('internal_note', '[GIỮ CHỖ TẠM THỜI]%')
           .select(`
             *,
             customers(name, phone, email),
@@ -1263,12 +1436,14 @@ async function fireWebhooks(event, bookings) {
       };
 
       try {
-        await fetch(webhook.url, {
+        // safeWebhookFetch: chỉ gọi địa chỉ https công khai, timeout 5s (chống SSRF vào mạng nội bộ)
+        await safeWebhookFetch(webhook.url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
       } catch (err) {
+        console.warn(`[webhook] Gửi tới "${webhook.name}" thất bại:`, err.message);
       }
     }
   }
