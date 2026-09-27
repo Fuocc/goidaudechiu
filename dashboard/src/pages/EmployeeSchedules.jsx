@@ -185,14 +185,15 @@ function EmployeeSchedules() {
     }
   };
 
-  // NEW: create default schedules 10:00-22:00 for ALL employees for the next 30 days
+  // Tạo lịch mặc định 09:00-22:00 cho các nhân viên đang hiển thị trong 30 ngày tới.
+  // Chỉ tạo cho ngày CHƯA có lịch (skip_existing) → không ghi đè ngày nghỉ / ca đặc biệt đã xếp tay.
   const createDefaultSchedulesFor30Days = async () => {
     if (employees.length === 0) {
       alert('Chưa có nhân viên');
       return;
     }
 
-    if (!confirm('Tạo lịch mặc định 09:00 AM - 10:00 PM cho TẤT CẢ nhân viên trong 30 ngày tới?')) return;
+    if (!confirm('Tạo lịch mặc định 09:00 AM - 10:00 PM cho TẤT CẢ nhân viên trong 30 ngày tới?\n\nChỉ tạo cho những ngày chưa có lịch — ngày nghỉ và ca đã xếp trước sẽ được giữ nguyên.')) return;
 
     setCreatingDefault(true);
     try {
@@ -202,22 +203,31 @@ function EmployeeSchedules() {
         return toDateStr(d);
       });
 
-      // Create schedules for each employee (bulk per employee)
+      // Từng nhân viên một; 1 người lỗi vẫn chạy tiếp và báo lại tên
+      const failed = [];
       for (const emp of employees) {
-        await createBulkSchedule({
-          employee_id: emp.id,
-          dates,
-          start_time: '09:00',
-          end_time: '22:00',
-          is_day_off: false,
-          note: null
-        });
+        try {
+          await createBulkSchedule({
+            employee_id: emp.id,
+            dates,
+            start_time: '09:00',
+            end_time: '22:00',
+            is_day_off: false,
+            note: null,
+            skip_existing: true
+          });
+        } catch (err) {
+          console.error(`[schedules] Tạo lịch mặc định lỗi cho ${emp.name}:`, err);
+          failed.push(emp.name);
+        }
       }
 
       await loadData();
-      notify('Đã tạo lịch làm việc cho 30 ngày tới');
-    } catch (err) {
-      alert(err.message);
+      if (failed.length === 0) {
+        notify('Đã tạo lịch làm việc cho 30 ngày tới');
+      } else {
+        toast.error(`Không tạo được lịch cho: ${failed.join(', ')}. Vui lòng thử lại.`, { position: 'bottom-right' });
+      }
     } finally {
       setCreatingDefault(false);
     }

@@ -64,12 +64,14 @@ router.post('/', async (req, res) => {
 
 /**
  * POST /api/employee-schedules/bulk
- * Body: { employee_id, dates: ['2026-04-20', ...], start_time, end_time, is_day_off }
+ * Body: { employee_id, dates: ['2026-04-20', ...], start_time, end_time, is_day_off, skip_existing? }
  * Creates schedules for multiple dates at once
+ *  - Mặc định: ghi đè ngày đã có lịch (modal "Xếp lịch" cố ý sửa lịch).
+ *  - skip_existing: true → ngày đã có lịch (kể cả ngày nghỉ đã xếp tay) được giữ nguyên, chỉ tạo ngày còn trống.
  */
 router.post('/bulk', async (req, res) => {
   try {
-    const { employee_id, dates, start_time, end_time, is_day_off, note } = req.body;
+    const { employee_id, dates, start_time, end_time, is_day_off, note, skip_existing } = req.body;
 
     const records = dates.map(date => ({
       employee_id,
@@ -82,7 +84,7 @@ router.post('/bulk', async (req, res) => {
 
     const { data, error } = await supabase
       .from('employee_schedules')
-      .upsert(records, { onConflict: 'employee_id,date' })
+      .upsert(records, { onConflict: 'employee_id,date', ignoreDuplicates: skip_existing === true })
       .select('*, employees(name)');
 
     if (error) throw error;
