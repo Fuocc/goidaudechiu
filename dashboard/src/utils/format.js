@@ -7,6 +7,20 @@ export function getInitial(name, fallback = '', { upper = false } = {}) {
   return upper ? ch.toUpperCase() : ch;
 }
 
+// Chuẩn hóa tên khách: "c lan" → "Chị Lan", "a nam" → "Anh Nam", viết hoa chữ cái đầu mỗi từ
+export const normalizeName = (name) => {
+  if (!name) return '';
+  let cleaned = name.trim();
+  if (cleaned.toLowerCase().startsWith('c ')) {
+    cleaned = 'Chị ' + cleaned.substring(2);
+  } else if (cleaned.toLowerCase().startsWith('a ')) {
+    cleaned = 'Anh ' + cleaned.substring(2);
+  }
+  return cleaned.split(/\s+/)
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+};
+
 // Tên ngắn của chi nhánh để hiển thị trên chip/nhãn:
 // "CN1 ...", "Ý Ơi CN 2 - Hoàng Hoa Thám" → "CN 1", "CN 2"; tên không theo mẫu CN → phần trước " - ".
 export function shortBranchName(name) {

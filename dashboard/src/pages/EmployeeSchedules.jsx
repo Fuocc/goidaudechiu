@@ -4,6 +4,8 @@ import { getEmployees, getEmployeeSchedules, createBulkSchedule, deleteEmployeeS
 import { toast } from 'react-toastify'
 import { TableSkeleton, MobileCardSkeleton } from '../components/ui/Skeleton';
 import { notifyError } from '../utils/notify';
+import { useIsMobile } from '../hooks/useIsMobile';
+import { toDateStr } from '../utils/time';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useModalA11y } from '../hooks/useModalA11y';
 import { DEFAULT_SHIFT } from '../config/business';
@@ -20,10 +22,6 @@ function getWeekDates(date) {
     dd.setDate(monday.getDate() + i);
     return dd;
   });
-}
-
-function toDateStr(d) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 const formatTime12h = (t) => {
@@ -59,12 +57,7 @@ function EmployeeSchedules() {
   const loadSeqRef = useRef(0);
 
   // Responsive
-  const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 768);
-  useEffect(() => {
-    const h = () => setIsMobile(window.innerWidth <= 768);
-    window.addEventListener('resize', h);
-    return () => window.removeEventListener('resize', h);
-  }, []);
+  const isMobile = useIsMobile();
 
   const weekDates = useMemo(() => getWeekDates(currentDate), [currentDate]);
 

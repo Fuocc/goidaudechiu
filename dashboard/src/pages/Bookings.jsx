@@ -25,124 +25,22 @@ import { clickableProps } from '../utils/a11y';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useModalA11y } from '../hooks/useModalA11y';
 import { useAppUI } from '../context/AppUIContext';
+import { WEEKDAY_MIN_OPEN_MINUTES, WALK_IN_CUSTOMER_NAME } from '../config/business';
+import { useIsMobile, MOBILE_BREAKPOINT } from '../hooks/useIsMobile';
 import {
-  CALENDAR_OPEN_HOUR, CALENDAR_CLOSE_HOUR, WEEKDAY_MIN_OPEN_MINUTES, LOGICAL_DAY_CUTOFF,
-  WALK_IN_CUSTOMER_NAME, PLACEHOLDER_SERVICE_NAME
-} from '../config/business';
+  OPEN_HOUR, CLOSE_HOUR, HOURS, ROW_HEIGHT, toDateStr, timeToMinutes, normalize, normalizeName,
+  WALK_IN_NORMALIZED, PLACEHOLDER_NORMALIZED, getBookingColor, formatPrice, formatTime,
+  getLogicalDate, formatDateVietnamese, convertYToTime, calculateEndTime
+} from './bookings/helpers';
 import '../styles/bookings.css';
-// ---- Helpers ----
-const OPEN_HOUR = CALENDAR_OPEN_HOUR;
-const CLOSE_HOUR = CALENDAR_CLOSE_HOUR;
-const HOURS = Array.from({ length: CLOSE_HOUR - OPEN_HOUR }, (_, i) => OPEN_HOUR + i);
-
-function toDateStr(d) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-function timeToMinutes(t) {
-  if (!t) return 0;
-  // Handle AM/PM if present
-  let timeStr = t.toLowerCase();
-  let isPM = timeStr.includes('pm');
-  let isAM = timeStr.includes('am');
-
-  // Clean string to get HH:mm
-  let cleanTime = timeStr.replace(/am|pm/g, '').trim();
-  let [h, m] = cleanTime.split(':').map(Number);
-
-  if (isPM && h < 12) h += 12;
-  if (isAM && h === 12) h = 0;
-
-  return (h || 0) * 60 + (m || 0);
-}
-
-const STATUS_COLORS = {
-  confirmed: { bg: '#e6f4ec', border: '#0d8a3f', text: '#0d8a3f' },
-  pending: { bg: '#fef3e2', border: '#e67e22', text: '#e67e22' },
-  completed: { bg: '#eff6ff', border: '#2563eb', text: '#2563eb' }
-};
-
-const normalize = (str) => (str || '').normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-const WALK_IN_NORMALIZED = normalize(WALK_IN_CUSTOMER_NAME);       // 'khach la'
-const PLACEHOLDER_NORMALIZED = normalize(PLACEHOLDER_SERVICE_NAME); // 'giu cho'
-
-
-const getBookingColor = (booking) => {
-  if (booking.status === 'pending' && booking.internal_note) {
-    return STATUS_COLORS.pending.bg;
-  }
-
-  const name = normalize(booking.temporary_name || booking.customers?.name || '');
-  if (name === WALK_IN_NORMALIZED) {
-    return '#F1F1EF'; // Grey
-  }
-
-  return booking.services?.color || '#EDF4EB';
-};
-
-const formatPrice = (v) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(v || 0);
-const formatTime = (t) => {
-  if (!t) return '-';
-  const cleanTime = t.substring(0, 5);
-  const [hStr, mStr] = cleanTime.split(':');
-  const h = parseInt(hStr);
-  if (isNaN(h)) return cleanTime;
-  const period = h < 12 ? 'AM' : 'PM';
-  let h12 = h % 12;
-  if (h12 === 0) h12 = 12;
-  return `${String(h12).padStart(2)}:${mStr} ${period}`;
-};
-
-
-const normalizeName = (name) => {
-  if (!name) return '';
-  let cleaned = name.trim();
-  if (cleaned.toLowerCase().startsWith('c ')) {
-    cleaned = 'Chị ' + cleaned.substring(2);
-  } else if (cleaned.toLowerCase().startsWith('a ')) {
-    cleaned = 'Anh ' + cleaned.substring(2);
-  }
-  return cleaned.split(/\s+/)
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-    .join(' ');
-};
-
-const getLogicalDate = () => {
-  const d = new Date();
-  const { hour, minute } = LOGICAL_DAY_CUTOFF;
-  if (d.getHours() > hour || (d.getHours() === hour && d.getMinutes() >= minute)) {
-    d.setDate(d.getDate() + 1);
-  }
-  return d;
-};
-
-const formatDateVietnamese = (date) => {
-  const days = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
-  const dayName = days[date.getDay()];
-  const d = date.getDate();
-  const m = date.getMonth() + 1;
-  const y = date.getFullYear();
-
-  return (
-    <>
-      {dayName}, {d}/{m} <span style={{ color: '#A8A29E' }}>{y}</span>
-    </>
-  );
-};
 
 function Bookings() {
   const confirmDialog = useConfirm();
   // Responsive: detect mobile for PWA
-  const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 768);
-
-  useEffect(() => {
-    const handleResize = () => setIsMobile(window.innerWidth <= 768);
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
+  const isMobile = useIsMobile();
 
   // Mobile mở mặc định ở list view, desktop ở calendar view (vẫn đổi được bằng nút toggle)
-  const [viewMode, setViewMode] = useState(() => (window.innerWidth <= 768 ? 'list' : 'calendar')); // 'calendar' | 'list'
+  const [viewMode, setViewMode] = useState(() => (window.innerWidth <= MOBILE_BREAKPOINT ? 'list' : 'calendar')); // 'calendar' | 'list'
 
   const [currentDate, setCurrentDate] = useState(getLogicalDate());
 
@@ -573,16 +471,6 @@ function Bookings() {
   };
 
   // --- Drag-to-create helpers ---
-  const ROW_HEIGHT = 25; // pixels per 15-min slot
-  const SNAP_MINUTES = 15;
-
-  const convertYToTime = (y) => {
-    const totalMins = (y / ROW_HEIGHT) * SNAP_MINUTES;
-    const hours = Math.floor(totalMins / 60) + OPEN_HOUR;
-    const mins = Math.floor(totalMins % 60);
-    return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
-  };
-
   const handleDragStart = (e, emp) => {
     // Don't start drag if clicking on a booking card
     if (e.target.closest('.cal-booking-card')) return;
@@ -793,15 +681,6 @@ function Bookings() {
   const bookModalRef = useModalA11y(modalOpen, handleBookModalEscape);
   const dragConfirmRef = useModalA11y(!!dragConfirm, () => setDragConfirm(null));
 
-
-  const calculateEndTime = (startTime, duration) => {
-    if (!startTime || startTime === '--:--' || !duration) return '--:--';
-    const [h, m] = startTime.split(':').map(Number);
-    const totalMinutes = h * 60 + m + duration;
-    const endH = String(Math.floor(totalMinutes / 60)).padStart(2, '0');
-    const endM = String(totalMinutes % 60).padStart(2, '0');
-    return `${endH}:${endM}`;
-  };
 
   const handleBookFormServiceChange = (service) => {
     if (!service) {

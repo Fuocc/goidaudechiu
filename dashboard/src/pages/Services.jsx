@@ -4,6 +4,7 @@ import { getServices, createService, updateService, deleteService } from '../api
 import { toast } from 'react-toastify';
 import { TableSkeleton, MobileCardSkeleton } from '../components/ui/Skeleton';
 import { notifyError } from '../utils/notify';
+import { useIsMobile } from '../hooks/useIsMobile';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useModalA11y } from '../hooks/useModalA11y';
 import { clickableProps } from '../utils/a11y';
@@ -32,12 +33,7 @@ function Services() {
   const categoryRef = useRef(null);
 
   // Responsive
-  const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 768);
-  useEffect(() => {
-    const h = () => setIsMobile(window.innerWidth <= 768);
-    window.addEventListener('resize', h);
-    return () => window.removeEventListener('resize', h);
-  }, []);
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     loadServices();

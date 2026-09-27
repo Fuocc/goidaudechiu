@@ -4,6 +4,7 @@ import { getEmployees, createEmployee, updateEmployee, deleteEmployee, getBranch
 import { toast } from 'react-toastify';
 import { TableSkeleton, MobileCardSkeleton } from '../components/ui/Skeleton';
 import { notifyError } from '../utils/notify';
+import { useIsMobile } from '../hooks/useIsMobile';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useModalA11y } from '../hooks/useModalA11y';
 import '../styles/employees.css';
@@ -112,12 +113,7 @@ function Employees() {
   const [form, setForm] = useState({ name: '', phone: '', branch_id: '', is_active: true });
 
   // Responsive
-  const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 768);
-  useEffect(() => {
-    const h = () => setIsMobile(window.innerWidth <= 768);
-    window.addEventListener('resize', h);
-    return () => window.removeEventListener('resize', h);
-  }, []);
+  const isMobile = useIsMobile();
 
   const notify = (msg) => {
     toast.success(msg, {

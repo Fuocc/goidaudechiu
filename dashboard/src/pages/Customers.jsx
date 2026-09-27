@@ -6,24 +6,12 @@ import { getCustomersPage, createCustomer, updateCustomer, deleteCustomer } from
 import { toast } from 'react-toastify';
 import { TableSkeleton, MobileCardSkeleton } from '../components/ui/Skeleton';
 import { notifyError } from '../utils/notify';
+import { useIsMobile } from '../hooks/useIsMobile';
+import { normalizeName } from '../utils/format';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useModalA11y } from '../hooks/useModalA11y';
 
 import noteIcon from '../assets/note-icon.svg';
-
-
-const normalizeName = (name) => {
-  if (!name) return '';
-  let cleaned = name.trim();
-  if (cleaned.toLowerCase().startsWith('c ')) {
-    cleaned = 'Chị ' + cleaned.substring(2);
-  } else if (cleaned.toLowerCase().startsWith('a ')) {
-    cleaned = 'Anh ' + cleaned.substring(2);
-  }
-  return cleaned.split(/\s+/)
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-    .join(' ');
-};
 
 function Customers() {
   const confirmDialog = useConfirm();
@@ -48,12 +36,7 @@ function Customers() {
   const [itemsPerPage, setItemsPerPage] = useState(10);
 
   // Responsive
-  const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 768);
-  useEffect(() => {
-    const h = () => setIsMobile(window.innerWidth <= 768);
-    window.addEventListener('resize', h);
-    return () => window.removeEventListener('resize', h);
-  }, []);
+  const isMobile = useIsMobile();
 
   const notify = (msg) => {
     toast.success(msg, {
