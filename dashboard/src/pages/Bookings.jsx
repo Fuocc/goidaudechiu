@@ -380,7 +380,8 @@ function Bookings() {
       const colRect = dragInfo.columnEl.getBoundingClientRect();
       const rawY = e.clientY - colRect.top;
       const snappedY = Math.max(dragInfo.startY, Math.ceil(rawY / 25) * 25);
-      setDragInfo(prev => prev ? { ...prev, currentY: snappedY } : null);
+      // Chỉ cập nhật khi sang ô mới (trả về prev → không render lại)
+      setDragInfo(prev => (prev && prev.currentY !== snappedY ? { ...prev, currentY: snappedY } : prev));
     };
 
     const handleMouseUp = () => {
@@ -422,7 +423,12 @@ function Bookings() {
         const rect = targetCol.getBoundingClientRect();
         const rawY = e.clientY - rect.top;
         const snappedY = Math.floor(rawY / ROW_HEIGHT) * ROW_HEIGHT;
-        setCardDrag(prev => prev ? { ...prev, currentCol: targetCol, currentTop: snappedY } : null);
+        // Chỉ cập nhật khi sang cột / ô mới (trả về prev → không render lại)
+        setCardDrag(prev => (
+          prev && (prev.currentCol !== targetCol || prev.currentTop !== snappedY)
+            ? { ...prev, currentCol: targetCol, currentTop: snappedY }
+            : prev
+        ));
       }
     };
 
@@ -645,14 +651,16 @@ function Bookings() {
     if (!gridRect) return;
     const rawY = e.clientY - rect.top;
     const snappedY = Math.floor(rawY / ROW_HEIGHT) * ROW_HEIGHT;
+    const colLeft = rect.left - gridRect.left;
+    const colWidth = rect.width;
 
-    setHoverInfo({
-      staffId: emp.id,
-      y: snappedY,
-      colLeft: rect.left - gridRect.left,
-      colWidth: rect.width,
-      time: convertYToTime(snappedY)
-    });
+    // Chỉ cập nhật khi chuột sang ô 15 phút / cột khác. Trả về `prev` → React bỏ qua render,
+    // tránh render lại cả lưới lịch ở mỗi pixel rê chuột.
+    setHoverInfo(prev => (
+      prev && prev.staffId === emp.id && prev.y === snappedY && prev.colLeft === colLeft && prev.colWidth === colWidth
+        ? prev
+        : { staffId: emp.id, y: snappedY, colLeft, colWidth, time: convertYToTime(snappedY) }
+    ));
   };
 
   // --- Card drag-and-drop: start ---
@@ -1282,6 +1290,20 @@ function Bookings() {
   const todayStr = toDateStr(new Date());
   const isToday = toDateStr(currentDate) === todayStr;
 
+  // Lịch theo từng nhân viên cho lưới lịch — tính lại chỉ khi danh sách lịch đổi (trước đây lọc lại cho
+  // mọi cột ở mỗi lần render). Cùng điều kiện cũ: khớp employee_id HOẶC employees.id; giữ nguyên thứ tự.
+  const bookingsByEmployee = useMemo(() => {
+    const map = new Map();
+    for (const b of bookings) {
+      const ids = new Set([b.employee_id, b.employees?.id].filter(Boolean));
+      for (const id of ids) {
+        if (!map.has(id)) map.set(id, []);
+        map.get(id).push(b);
+      }
+    }
+    return map;
+  }, [bookings]);
+
   // Mobile list view: gộp các lịch cùng group_booking_id (khách đi nhóm) thành 1 card
   const mobileListItems = useMemo(() => {
     const groups = new Map();
@@ -1563,7 +1585,7 @@ function Bookings() {
                   const branchOpenMin = isWeekday ? Math.max(baseBranchOpenMin, WEEKDAY_MIN_OPEN_MINUTES) : baseBranchOpenMin;
                   const branchCloseMin = branchDaySchedule?.close ? timeToMinutes(branchDaySchedule.close) : CLOSE_HOUR * 60;
 
-                  return employees.map(emp => {
+                  return employees.map((emp, empIndex) => {
                     const empSched = employeeSchedules.find(s => s.employee_id === emp.id);
                     let isAvailable = empSched && !empSched.is_day_off && branchIsOpen;
 
@@ -1585,7 +1607,7 @@ function Bookings() {
                     return (
                       <div
                         key={emp.id}
-                        className={`cal-staff-column ${isAvailable ? 'available' : 'unavailable'} ${employees.indexOf(emp) === 0 ? 'is-first-staff' : ''}`}
+                        className={`cal-staff-column ${isAvailable ? 'available' : 'unavailable'} ${empIndex === 0 ? 'is-first-staff' : ''}`}
                         data-staff-id={emp.id}
                         data-staff-name={emp.name}
                         style={{
@@ -1670,7 +1692,7 @@ function Bookings() {
                           return (
                             <div ref={nowLineRef} className={`cal-now-line ${hideTriangle ? 'hide-triangle' : ''}`} style={{ top: `${nowY}px` }}>
                               {/* We only show badge on the first column for cleaner UI */}
-                              {employees.indexOf(emp) === 0 && (
+                              {empIndex === 0 && (
                                 <div className="cal-now-badge">
                                   {(() => {
                                     const h = now.getHours();
@@ -1686,7 +1708,7 @@ function Bookings() {
                         })()}
 
                         {/* Bookings for this staff */}
-                        {bookings.filter(b => (b.employee_id === emp.id || b.employees?.id === emp.id)).map(b => {
+                        {(bookingsByEmployee.get(emp.id) || []).map(b => {
                           const startMin = timeToMinutes(b.start_time);
                           const endMin = timeToMinutes(b.end_time);
                           const top = (startMin - OPEN_HOUR * 60) / 60 * 100;
