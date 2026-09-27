@@ -23,6 +23,7 @@ import { isHoldBooking, isSpamWarningBooking, bookingStatusLabel } from '../util
 import { describeError } from '../utils/notify';
 import { clickableProps } from '../utils/a11y';
 import { useConfirm } from '../components/ConfirmDialog';
+import { useModalA11y } from '../hooks/useModalA11y';
 import {
   CALENDAR_OPEN_HOUR, CALENDAR_CLOSE_HOUR, WEEKDAY_MIN_OPEN_MINUTES, LOGICAL_DAY_CUTOFF,
   WALK_IN_CUSTOMER_NAME, PLACEHOLDER_SERVICE_NAME
@@ -196,6 +197,7 @@ function Bookings() {
   const moreMenuRef = useRef(null);
   const searchTimeoutRef = useRef(null);
   const searchSeqRef = useRef(0);
+  const bookFormInitialRef = useRef(''); // form lúc mở modal tạo lịch (JSON) — so sánh để biết đã sửa chưa
   const gridRef = useRef(null);
   const nowLineRef = useRef(null);
 
@@ -729,7 +731,7 @@ function Bookings() {
 
   // ---- Booking Modal Logic ----
   const openBookingModal = (preDate, preEmployee, preStartTime, preEndTime) => {
-    setBookForm({
+    const initialForm = {
       branch_id: filterBranch || (branches[0]?.id || ''),
       service_id: '', num_guests: 1,
       customer_id: '',
@@ -741,7 +743,9 @@ function Bookings() {
       start_time: preStartTime || '--:--',
       end_time: preEndTime || '--:--',
       notes: ''
-    });
+    };
+    setBookForm(initialForm);
+    bookFormInitialRef.current = JSON.stringify(initialForm); // để biết form đã bị sửa chưa khi đóng
     setCustomerView('default');
     setSelectedService(null);
     setModalOpen(true);
@@ -754,7 +758,7 @@ function Bookings() {
     const service = services.find(s => s.id === detailEdit.service_id);
     // const employee = employees.find(e => e.id === detailEdit.employee_id);
 
-    setBookForm({
+    const initialForm = {
       branch_id: detailEdit.branch_id,
       service_id: detailEdit.service_id,
       num_guests: 1,
@@ -770,7 +774,9 @@ function Bookings() {
       start_time: detailEdit.start_time,
       end_time: detailEdit.end_time,
       notes: detailEdit.notes || ''
-    });
+    };
+    setBookForm(initialForm);
+    bookFormInitialRef.current = JSON.stringify(initialForm);
 
     setCustomerView('selected');
 
@@ -779,6 +785,41 @@ function Bookings() {
     setModalOpen(true);
     setShowDetailMore(false);
   };
+
+  // ---- Đóng modal (Esc / bấm ra ngoài) ----
+  const clearSuggestions = () => setSearchSuggestions({ type: null, data: [], loading: false });
+
+  // Đóng popover bên trong trước (lịch chọn ngày, gợi ý tìm kiếm, menu "..."), rồi mới đóng modal
+  const closeInnerPopover = () => {
+    if (showCalendar) { setShowCalendar(false); return true; }
+    if (searchSuggestions.type) { clearSuggestions(); return true; }
+    if (showDetailMore) { setShowDetailMore(false); return true; }
+    return false;
+  };
+
+  const handleDetailModalEscape = () => {
+    if (!closeInnerPopover()) setDetailModal(null);
+  };
+
+  // Modal tạo lịch: form đã bị sửa → hỏi trước khi bỏ (bấm ra ngoài / Esc). Nút X vẫn đóng ngay.
+  const requestCloseBookModal = async () => {
+    const dirty = JSON.stringify(bookForm) !== bookFormInitialRef.current;
+    if (dirty && !(await confirmDialog({
+      message: 'Lịch đang nhập chưa được lưu. Bỏ lịch này?',
+      confirmText: 'Bỏ lịch',
+      cancelText: 'Tiếp tục nhập',
+      danger: true
+    }))) return;
+    setModalOpen(false);
+  };
+
+  const handleBookModalEscape = () => {
+    if (!closeInnerPopover()) requestCloseBookModal();
+  };
+
+  const detailModalRef = useModalA11y(!!detailModal, handleDetailModalEscape);
+  const bookModalRef = useModalA11y(modalOpen, handleBookModalEscape);
+  const dragConfirmRef = useModalA11y(!!dragConfirm, () => setDragConfirm(null));
 
 
   const calculateEndTime = (startTime, duration) => {
@@ -1917,7 +1958,7 @@ function Bookings() {
       {/* Booking Detail Modal */}
       {detailModal && (
         <div className="modal-overlay" onClick={() => setDetailModal(null)}>
-          <div className="modal modal-viewing max-w-480" onClick={e => e.stopPropagation()}>
+          <div className="modal modal-viewing max-w-480" ref={detailModalRef} onClick={e => e.stopPropagation()}>
             <div className="modal-header modal-header-clean">
               <h3 className="modal-title-lg">Chi tiết</h3>
               <button className="modal-close" aria-label="Đóng" onClick={() => setDetailModal(null)}>
@@ -2342,8 +2383,8 @@ function Bookings() {
       {/* Create Booking Modal */}
       {
         modalOpen && (
-          <div className="modal-overlay" onClick={() => setModalOpen(false)}>
-            <div className="modal modal-max-480" onClick={e => e.stopPropagation()}>
+          <div className="modal-overlay" onClick={requestCloseBookModal}>
+            <div className="modal modal-max-480" ref={bookModalRef} onClick={e => e.stopPropagation()}>
               <div className="modal-header">
                 <h3>Lịch mới</h3>
                 <button className="modal-close" aria-label="Đóng" onClick={() => setModalOpen(false)}>
@@ -2642,7 +2683,7 @@ function Bookings() {
       {/* Drag & Drop Confirmation Popup */}
       {dragConfirm && (
         <div className="modal-overlay drag-confirm-overlay" onClick={handleDragCancel}>
-          <div className="drag-confirm-popup" onClick={e => e.stopPropagation()}>
+          <div className="drag-confirm-popup" ref={dragConfirmRef} onClick={e => e.stopPropagation()}>
             <div className="drag-confirm-header">
               <h3 className="drag-confirm-title">Xác nhận thay đổi?</h3>
               <button className="modal-close" aria-label="Đóng" onClick={handleDragCancel}>

@@ -5,6 +5,7 @@ import { toast } from 'react-toastify';
 import { TableSkeleton, MobileCardSkeleton } from '../components/ui/Skeleton';
 import { notifyError } from '../utils/notify';
 import { useConfirm } from '../components/ConfirmDialog';
+import { useModalA11y } from '../hooks/useModalA11y';
 import '../styles/employees.css';
 
 function EmployeeTable({ title, employees, loading, isMobile, openEdit, handleDelete, emptyTitle, emptyText, showBranchColumn }) {
@@ -192,6 +193,8 @@ function Employees() {
   const validBranchIds = new Set(branches.map(b => b.id));
   const unassignedEmployees = employees.filter(e => !validBranchIds.has(e.branch_id));
 
+  const modalRef = useModalA11y(modalOpen, () => setModalOpen(false));
+
   return (
     <div>
       <div className="page-header">
@@ -235,7 +238,7 @@ function Employees() {
 
       {modalOpen && (
         <div className="modal-overlay" onClick={() => setModalOpen(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
+          <div className="modal" ref={modalRef} onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3>{editing ? 'Sửa nhân viên' : 'Thêm nhân viên'}</h3>
               <button className="modal-close" aria-label="Đóng" onClick={() => setModalOpen(false)}>

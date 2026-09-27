@@ -5,6 +5,7 @@ import { toast } from 'react-toastify';
 import { TableSkeleton, MobileCardSkeleton } from '../components/ui/Skeleton';
 import { notifyError } from '../utils/notify';
 import { useConfirm } from '../components/ConfirmDialog';
+import { useModalA11y } from '../hooks/useModalA11y';
 import { clickableProps } from '../utils/a11y';
 import { SERVICE_CATEGORIES as CATEGORIES, SERVICE_COLORS as COLORS } from '../config/business';
 import '../styles/services.css';
@@ -137,6 +138,13 @@ function Services() {
 
   const isFormValid = form.name && form.price >= 0 && form.duration_minutes >= 0;
 
+  // Esc: đóng bảng chọn màu / nhóm đang mở trước, rồi mới đóng modal
+  const modalRef = useModalA11y(modalOpen, () => {
+    if (showColorPicker) setShowColorPicker(false);
+    else if (showCategoryDropdown) setShowCategoryDropdown(false);
+    else setModalOpen(false);
+  });
+
   return (
     <div>
       <div className="page-header">
@@ -245,7 +253,7 @@ function Services() {
 
       {modalOpen && (
         <div className="modal-overlay" onClick={() => setModalOpen(false)}>
-          <div className="modal service-modal" onClick={e => e.stopPropagation()}>
+          <div className="modal service-modal" ref={modalRef} onClick={e => e.stopPropagation()}>
             <div className="modal-header service-modal-header">
               <h3 className="service-modal-title">{editing ? 'Sửa dịch vụ' : 'Thêm dịch vụ'}</h3>
               <button className="modal-close" aria-label="Đóng" onClick={() => setModalOpen(false)}>

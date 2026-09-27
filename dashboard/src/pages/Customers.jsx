@@ -7,6 +7,7 @@ import { toast } from 'react-toastify';
 import { TableSkeleton, MobileCardSkeleton } from '../components/ui/Skeleton';
 import { notifyError } from '../utils/notify';
 import { useConfirm } from '../components/ConfirmDialog';
+import { useModalA11y } from '../hooks/useModalA11y';
 
 import noteIcon from '../assets/note-icon.svg';
 
@@ -160,6 +161,8 @@ function Customers() {
   const totalPages = Math.max(1, Math.ceil(total / itemsPerPage));
   const emptyTitle = query ? 'Không tìm thấy khách hàng phù hợp' : 'Chưa có khách hàng';
   const emptyText = query ? 'Thử tìm bằng tên khác hoặc số điện thoại' : 'Khách hàng sẽ được thêm tự động khi đặt lịch';
+
+  const modalRef = useModalA11y(modalOpen, () => setModalOpen(false));
 
   return (
     <div>
@@ -321,7 +324,7 @@ function Customers() {
       {/* Modal */}
       {modalOpen && (
         <div className="modal-overlay" onClick={() => setModalOpen(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
+          <div className="modal" ref={modalRef} onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3>{editingCustomer ? 'Sửa khách hàng' : 'Thêm khách hàng'}</h3>
               <button className="modal-close" aria-label="Đóng" onClick={() => setModalOpen(false)}>

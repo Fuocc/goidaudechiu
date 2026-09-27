@@ -5,6 +5,7 @@ import { toast } from 'react-toastify'
 import { TableSkeleton, MobileCardSkeleton } from '../components/ui/Skeleton';
 import { notifyError } from '../utils/notify';
 import { useConfirm } from '../components/ConfirmDialog';
+import { useModalA11y } from '../hooks/useModalA11y';
 import { DEFAULT_SHIFT } from '../config/business';
 import '../styles/schedules.css';
 
@@ -238,6 +239,8 @@ function EmployeeSchedules() {
   const weekLabel = `${weekDates[0].getDate()}/${weekDates[0].getMonth() + 1} – ${weekDates[6].getDate()}/${weekDates[6].getMonth() + 1}/${weekDates[6].getFullYear()}`;
   const todayStr = toDateStr(new Date());
 
+  const modalRef = useModalA11y(modalOpen, () => setModalOpen(false));
+
   return (
     <div className="schedules-page">
       <div className="page-header">
@@ -396,7 +399,7 @@ function EmployeeSchedules() {
       {/* Schedule Modal */}
       {modalOpen && (
         <div className="modal-overlay" onClick={() => setModalOpen(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
+          <div className="modal" ref={modalRef} onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3>Xếp lịch làm việc</h3>
               <button className="modal-close" aria-label="Đóng" onClick={() => setModalOpen(false)}>

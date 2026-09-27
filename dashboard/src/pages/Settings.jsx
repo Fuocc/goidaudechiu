@@ -9,6 +9,7 @@ import { toast } from 'react-toastify';
 import { getInitial } from '../utils/format';
 import { notifyError } from '../utils/notify';
 import { useConfirm } from '../components/ConfirmDialog';
+import { useModalA11y } from '../hooks/useModalA11y';
 import { clickableProps } from '../utils/a11y';
 import '../styles/webhooks.css';
 import '../styles/settings.css';
@@ -249,6 +250,8 @@ function Settings() {
   };
 
   const isTourModified = JSON.stringify(tourStaff.map(s => s.id)) !== JSON.stringify(initialTourOrder);
+
+  const webhookModalRef = useModalA11y(webhookModalOpen, () => setWebhookModalOpen(false));
 
   if (loading && activeTab === 'general') {
     return (
@@ -525,7 +528,7 @@ function Settings() {
       {/* Webhook Modal */}
       {webhookModalOpen && (
         <div className="modal-overlay" onClick={() => setWebhookModalOpen(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
+          <div className="modal" ref={webhookModalRef} onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3>{editingWebhook ? 'Sửa Webhook' : 'Thêm Webhook'}</h3>
               <button className="modal-close" aria-label="Đóng" onClick={() => setWebhookModalOpen(false)}>

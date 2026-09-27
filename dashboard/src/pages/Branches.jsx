@@ -6,6 +6,7 @@ import { CardSkeleton } from '../components/ui/Skeleton';
 import { notifyError } from '../utils/notify';
 import { toast } from 'react-toastify';
 import { useConfirm } from '../components/ConfirmDialog';
+import { useModalA11y } from '../hooks/useModalA11y';
 import { DEFAULT_OPENING_HOURS, DEFAULT_DAY_HOURS, DISPLAY_FALLBACK_DAY_HOURS } from '../config/business';
 import '../styles/branches.css';
 
@@ -133,6 +134,8 @@ function Branches() {
     }
   };
 
+  const modalRef = useModalA11y(modalOpen, () => setModalOpen(false));
+
   return (
     <div>
       <div className="page-header">
@@ -212,7 +215,7 @@ function Branches() {
       {
         modalOpen && (
           <div className="modal-overlay" onClick={() => setModalOpen(false)}>
-            <div className="modal branch-modal" onClick={e => e.stopPropagation()}>
+            <div className="modal branch-modal" ref={modalRef} onClick={e => e.stopPropagation()}>
               <div className="modal-header">
                 <h3>{editing ? 'Sửa chi nhánh' : 'Thêm chi nhánh'}</h3>
                 <button className="modal-close" aria-label="Đóng" onClick={() => setModalOpen(false)}>

@@ -201,3 +201,8 @@
   white-space: pre-line;
   line-height: 1.5;
 }
+
+/* Khung modal nhận focus bằng code (useModalA11y) — không cần viền focus quanh cả khung */
+[data-modal-a11y]:focus {
+  outline: none;
+}
