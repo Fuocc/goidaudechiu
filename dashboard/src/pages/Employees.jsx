@@ -4,6 +4,7 @@ import { getEmployees, createEmployee, updateEmployee, deleteEmployee, getBranch
 import { toast } from 'react-toastify';
 import { TableSkeleton, MobileCardSkeleton } from '../components/ui/Skeleton';
 import { notifyError } from '../utils/notify';
+import { useConfirm } from '../components/ConfirmDialog';
 import '../styles/employees.css';
 
 function EmployeeTable({ title, employees, loading, isMobile, openEdit, handleDelete, emptyTitle, emptyText, showBranchColumn }) {
@@ -101,6 +102,7 @@ function EmployeeTable({ title, employees, loading, isMobile, openEdit, handleDe
 }
 
 function Employees() {
+  const confirmDialog = useConfirm();
   const [employees, setEmployees] = useState([]);
   const [branches, setBranches] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -173,17 +175,17 @@ function Employees() {
       setModalOpen(false);
       loadEmployees();
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     }
   };
 
   const handleDelete = async (id) => {
-    if (!confirm('Bạn có chắc muốn vô hiệu hóa nhân viên này?')) return;
+    if (!(await confirmDialog({ message: 'Bạn có chắc muốn vô hiệu hóa nhân viên này?', confirmText: 'Vô hiệu hóa', danger: true }))) return;
     try {
       await deleteEmployee(id);
       loadEmployees();
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     }
   };
 

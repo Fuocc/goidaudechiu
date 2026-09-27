@@ -6,6 +6,7 @@ import { getCustomersPage, createCustomer, updateCustomer, deleteCustomer } from
 import { toast } from 'react-toastify';
 import { TableSkeleton, MobileCardSkeleton } from '../components/ui/Skeleton';
 import { notifyError } from '../utils/notify';
+import { useConfirm } from '../components/ConfirmDialog';
 
 import noteIcon from '../assets/note-icon.svg';
 
@@ -24,6 +25,7 @@ const normalizeName = (name) => {
 };
 
 function Customers() {
+  const confirmDialog = useConfirm();
   const [customers, setCustomers] = useState([]); // chỉ khách của trang hiện tại (phân trang ở server)
   const [total, setTotal] = useState(0);
   const [limited, setLimited] = useState(false); // kết quả tìm kiếm bị giới hạn 20 dòng
@@ -134,19 +136,19 @@ function Customers() {
       setModalOpen(false);
       loadCustomers();
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     }
   };
 
   const handleDelete = async (id) => {
-    if (!confirm('Bạn có chắc muốn xóa khách hàng này?')) return;
+    if (!(await confirmDialog({ message: 'Bạn có chắc muốn xóa khách hàng này?', confirmText: 'Xóa', danger: true }))) return;
     try {
       await deleteCustomer(id);
       notify('Đã xóa thành công');
       if (editingCustomer?.id === id) setModalOpen(false); // xóa từ trong modal → đóng modal
       loadCustomers();
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     }
   };
 

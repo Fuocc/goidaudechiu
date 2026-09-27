@@ -22,6 +22,7 @@ import { getInitial } from '../utils/format';
 import { isHoldBooking, isSpamWarningBooking, bookingStatusLabel } from '../utils/booking';
 import { describeError } from '../utils/notify';
 import { clickableProps } from '../utils/a11y';
+import { useConfirm } from '../components/ConfirmDialog';
 import {
   CALENDAR_OPEN_HOUR, CALENDAR_CLOSE_HOUR, WEEKDAY_MIN_OPEN_MINUTES, LOGICAL_DAY_CUTOFF,
   WALK_IN_CUSTOMER_NAME, PLACEHOLDER_SERVICE_NAME
@@ -128,6 +129,7 @@ const formatDateVietnamese = (date) => {
 };
 
 function Bookings() {
+  const confirmDialog = useConfirm();
   // Responsive: detect mobile for PWA
   const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 768);
 
@@ -587,14 +589,14 @@ function Bookings() {
   };
 
   const handleCancel = async (id) => {
-    if (!confirm('Bạn có chắc muốn hủy lịch hẹn này?')) return;
+    if (!(await confirmDialog({ message: 'Bạn có chắc muốn hủy lịch hẹn này?', confirmText: 'Hủy lịch', cancelText: 'Không', danger: true }))) return;
     try {
       await deleteBooking(id);
       notify('Đã hủy lịch hẹn thành công!');
       loadBookings();
       setDetailModal(null);
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     }
   };
 
@@ -688,7 +690,13 @@ function Bookings() {
       const list = (err.data.conflicts || [])
         .map(c => `• ${c.customer_name}: ${formatTime(c.start_time)} - ${formatTime(c.end_time)}`)
         .join('\n');
-      if (!window.confirm(`Nhân viên đã có lịch trùng giờ:\n${list}\n\nVẫn lưu?`)) return null;
+      const keepSaving = await confirmDialog({
+        title: 'Trùng lịch',
+        message: `Nhân viên đã có lịch trùng giờ:\n${list}\n\nVẫn lưu?`,
+        confirmText: 'Vẫn lưu',
+        cancelText: 'Không lưu'
+      });
+      if (!keepSaving) return null;
       return await updateBooking(id, { ...payload, allow_conflict: true });
     }
   };
@@ -710,7 +718,7 @@ function Bookings() {
         loadBookings();
       }
     } catch (err) {
-      alert('Lỗi: ' + err.message);
+      toast.error('Lỗi: ' + err.message);
     }
     setDragConfirm(null);
   };
@@ -985,7 +993,7 @@ function Bookings() {
 
     const missing = Object.entries(required).filter(([_, val]) => !val).map(([label]) => label);
     if (missing.length > 0) {
-      alert('Vui lòng điền các thông tin bắt buộc: ' + missing.join(', '));
+      toast.warn('Vui lòng điền các thông tin bắt buộc: ' + missing.join(', '));
       return;
     }
 
@@ -1002,7 +1010,7 @@ function Bookings() {
             finalEndTime = calculateEndTime(bookForm.start_time, placeholder.duration_minutes || 0);
           }
         } else {
-          alert('Vui lòng chọn dịch vụ hoặc tạo dịch vụ "Giữ chỗ" để tiếp tục.');
+          toast.warn('Vui lòng chọn dịch vụ hoặc tạo dịch vụ "Giữ chỗ" để tiếp tục.');
           setIsCreating(false);
           return;
         }
@@ -1029,7 +1037,7 @@ function Bookings() {
       setModalOpen(false);
       loadBookings();
     } catch (err) {
-      alert('Lỗi: ' + err.message);
+      toast.error('Lỗi: ' + err.message);
     } finally {
       setIsCreating(false);
     }
@@ -1039,7 +1047,7 @@ function Bookings() {
     if (!detailModal || !detailEdit) return;
 
     if (!detailEdit.service_id || !detailEdit.branch_id || !detailEdit.start_time || !detailEdit.employee_id) {
-      alert('Vui lòng chọn đầy đủ: dịch vụ, chi nhánh, giờ, nhân viên');
+      toast.warn('Vui lòng chọn đầy đủ: dịch vụ, chi nhánh, giờ, nhân viên');
       return;
     }
 
@@ -1092,7 +1100,7 @@ function Bookings() {
 
       setDetailModal(null);
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     } finally {
       setDetailSaving(false);
     }
@@ -1225,7 +1233,7 @@ function Bookings() {
       loadBookings();
     } catch (err) {
 
-      alert('Không thể tắt cảnh báo: ' + err.message);
+      toast.error('Không thể tắt cảnh báo: ' + err.message);
     }
   };
 
@@ -2048,7 +2056,7 @@ function Bookings() {
                                   today.setHours(0, 0, 0, 0);
 
                                   if (selectedDate < today) {
-                                    alert('Không thể chọn ngày trong quá khứ');
+                                    toast.warn('Không thể chọn ngày trong quá khứ');
                                     return;
                                   }
 
@@ -2431,7 +2439,7 @@ function Bookings() {
                                   today.setHours(0, 0, 0, 0);
 
                                   if (selectedDate < today) {
-                                    alert('Không thể chọn ngày trong quá khứ');
+                                    toast.warn('Không thể chọn ngày trong quá khứ');
                                     return;
                                   }
 

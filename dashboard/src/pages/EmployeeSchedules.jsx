@@ -4,6 +4,7 @@ import { getEmployees, getEmployeeSchedules, createBulkSchedule, deleteEmployeeS
 import { toast } from 'react-toastify'
 import { TableSkeleton, MobileCardSkeleton } from '../components/ui/Skeleton';
 import { notifyError } from '../utils/notify';
+import { useConfirm } from '../components/ConfirmDialog';
 import { DEFAULT_SHIFT } from '../config/business';
 import '../styles/schedules.css';
 
@@ -39,6 +40,7 @@ const formatTime12h = (t) => {
 const DAY_NAMES = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
 
 function EmployeeSchedules() {
+  const confirmDialog = useConfirm();
   const [currentDate, setCurrentDate] = useState(new Date());
   const [employees, setEmployees] = useState([]);
   const [schedules, setSchedules] = useState([]);
@@ -154,7 +156,7 @@ function EmployeeSchedules() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (scheduleForm.selectedDays.length === 0) {
-      alert('Vui lòng chọn ít nhất 1 ngày');
+      toast.warn('Vui lòng chọn ít nhất 1 ngày');
       return;
     }
     try {
@@ -170,18 +172,18 @@ function EmployeeSchedules() {
       notify(`Thêm lịch làm thành công`);
       loadData();
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     }
   };
 
   const handleDeleteSchedule = async (id) => {
-    if (!confirm('Xóa lịch này?')) return;
+    if (!(await confirmDialog({ message: 'Xóa lịch này?', confirmText: 'Xóa', danger: true }))) return;
     try {
       await deleteEmployeeSchedule(id);
       notify(`Xóa lịch làm thành công`);
       loadData();
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     }
   };
 
@@ -189,11 +191,11 @@ function EmployeeSchedules() {
   // Chỉ tạo cho ngày CHƯA có lịch (skip_existing) → không ghi đè ngày nghỉ / ca đặc biệt đã xếp tay.
   const createDefaultSchedulesFor30Days = async () => {
     if (employees.length === 0) {
-      alert('Chưa có nhân viên');
+      toast.warn('Chưa có nhân viên');
       return;
     }
 
-    if (!confirm('Tạo lịch mặc định 09:00 AM - 10:00 PM cho TẤT CẢ nhân viên trong 30 ngày tới?\n\nChỉ tạo cho những ngày chưa có lịch — ngày nghỉ và ca đã xếp trước sẽ được giữ nguyên.')) return;
+    if (!(await confirmDialog({ message: 'Tạo lịch mặc định 09:00 AM - 10:00 PM cho TẤT CẢ nhân viên trong 30 ngày tới?\n\nChỉ tạo cho những ngày chưa có lịch — ngày nghỉ và ca đã xếp trước sẽ được giữ nguyên.', confirmText: 'Tạo lịch' }))) return;
 
     setCreatingDefault(true);
     try {

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { toast } from 'react-toastify';
 import { request } from '../api';
 
 // Sau khi đăng ký thất bại, không tự động thử lại trong khoảng thời gian này
@@ -148,7 +149,7 @@ export function useWebPush() {
       setError(err.message);
       console.warn('[push] Đăng ký nhận thông báo lỗi:', err.message);
       if (!silent) {
-        alert('Đăng ký nhận thông báo lỗi: ' + err.message);
+        toast.error('Đăng ký nhận thông báo lỗi: ' + err.message);
       }
       return { ok: false, error: err.message };
     } finally {

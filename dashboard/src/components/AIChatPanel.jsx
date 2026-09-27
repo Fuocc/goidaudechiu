@@ -6,6 +6,8 @@ import geminiLogo from '../assets/gemini-logo.svg';
 import { Tooltip } from '../components/ui/tooltip';
 import { PLACEHOLDER_SERVICE_NAME } from '../config/business';
 import { clickableProps } from '../utils/a11y';
+import { useConfirm } from './ConfirmDialog';
+import { toast } from 'react-toastify';
 
 const BRANCH_STORAGE_KEY = 'yoi_ai_branch';
 const CHAT_STORAGE_KEY = 'yoi_ai_chat_messages';
@@ -25,6 +27,7 @@ function getActionTitle(actions) {
 }
 
 function AIChatPanel({ onClose, currentBranchId }) {
+  const confirmDialog = useConfirm();
   const [messages, setMessages] = useState(() => {
     try {
       const saved = localStorage.getItem(CHAT_STORAGE_KEY) || localStorage.getItem(LEGACY_CHAT_STORAGE_KEY);
@@ -296,7 +299,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
       window.dispatchEvent(new CustomEvent('refresh-bookings'));
     } catch (err) {
       console.error('Undo booking error:', err);
-      alert(`Không thể hoàn tác đặt lịch: ${err.message}`);
+      toast.error(`Không thể hoàn tác đặt lịch: ${err.message}`);
     } finally {
       setUndoLoadingId(null);
     }
@@ -545,8 +548,9 @@ function AIChatPanel({ onClose, currentBranchId }) {
                       <div className='option-divider' style={{ backgroundColor: '#E7E5E4', margin: '8px auto', height: 1, width: 'calc(100% - 16px)' }}>
                       </div>
                       <button
-                        onClick={() => {
-                          if (window.confirm('Bạn có chắc chắn muốn xóa toàn bộ lịch sử chat?')) {
+                        type="button"
+                        onClick={async () => {
+                          if (await confirmDialog({ message: 'Bạn có chắc chắn muốn xóa toàn bộ lịch sử chat?', confirmText: 'Xóa', danger: true })) {
                             const welcomeMsg = [
                               {
                                 id: 'welcome',

@@ -8,11 +8,13 @@ import {
 import { toast } from 'react-toastify';
 import { getInitial } from '../utils/format';
 import { notifyError } from '../utils/notify';
+import { useConfirm } from '../components/ConfirmDialog';
 import { clickableProps } from '../utils/a11y';
 import '../styles/webhooks.css';
 import '../styles/settings.css';
 
 function Settings() {
+  const confirmDialog = useConfirm();
   const [activeTab, setActiveTab] = useState('general'); // 'general', 'webhooks', or 'tour'
 
   // General Settings State
@@ -125,7 +127,7 @@ function Settings() {
   };
 
   const handleDeleteWebhook = async (id) => {
-    if (!confirm('Xóa webhook này?')) return;
+    if (!(await confirmDialog({ message: 'Xóa webhook này?', confirmText: 'Xóa', danger: true }))) return;
     try {
       await deleteWebhook(id);
       toast.success('Xóa webhook thành công!');

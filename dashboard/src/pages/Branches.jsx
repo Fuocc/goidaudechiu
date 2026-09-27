@@ -4,6 +4,8 @@ import { FiPlus, FiEdit2, FiTrash2, FiMapPin } from 'react-icons/fi';
 import { getBranches, createBranch, updateBranch, deleteBranch } from '../api';
 import { CardSkeleton } from '../components/ui/Skeleton';
 import { notifyError } from '../utils/notify';
+import { toast } from 'react-toastify';
+import { useConfirm } from '../components/ConfirmDialog';
 import { DEFAULT_OPENING_HOURS, DEFAULT_DAY_HOURS, DISPLAY_FALLBACK_DAY_HOURS } from '../config/business';
 import '../styles/branches.css';
 
@@ -30,6 +32,7 @@ function formatTime12hCompact(timeStr) {
 }
 
 function Branches() {
+  const confirmDialog = useConfirm();
   const [branches, setBranches] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
@@ -70,7 +73,7 @@ function Branches() {
     if (!file) return;
 
     if (file.size > 1024 * 1024) {
-      alert("Dung lượng ảnh phải dưới 1MB!");
+      toast.warn("Dung lượng ảnh phải dưới 1MB!");
       return;
     }
 
@@ -114,19 +117,19 @@ function Branches() {
       setModalOpen(false);
       loadBranches();
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     } finally {
       setSaving(false);
     }
   };
 
   const handleDelete = async (id) => {
-    if (!confirm('Bạn có chắc muốn xóa chi nhánh này? Điều này có thể ảnh hưởng đến nhân viên và giường thuộc chi nhánh.')) return;
+    if (!(await confirmDialog({ message: 'Bạn có chắc muốn xóa chi nhánh này? Điều này có thể ảnh hưởng đến nhân viên và giường thuộc chi nhánh.', confirmText: 'Xóa', danger: true }))) return;
     try {
       await deleteBranch(id);
       loadBranches();
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     }
   };
 

@@ -4,11 +4,13 @@ import { getServices, createService, updateService, deleteService } from '../api
 import { toast } from 'react-toastify';
 import { TableSkeleton, MobileCardSkeleton } from '../components/ui/Skeleton';
 import { notifyError } from '../utils/notify';
+import { useConfirm } from '../components/ConfirmDialog';
 import { clickableProps } from '../utils/a11y';
 import { SERVICE_CATEGORIES as CATEGORIES, SERVICE_COLORS as COLORS } from '../config/business';
 import '../styles/services.css';
 
 function Services() {
+  const confirmDialog = useConfirm();
   const [services, setServices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
@@ -117,19 +119,19 @@ function Services() {
       setModalOpen(false);
       loadServices();
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     }
   };
 
   const handleDelete = async (id) => {
-    if (!confirm('Bạn có chắc muốn vô hiệu hóa dịch vụ này?')) return;
+    if (!(await confirmDialog({ message: 'Bạn có chắc muốn vô hiệu hóa dịch vụ này?', confirmText: 'Vô hiệu hóa', danger: true }))) return;
     try {
       await deleteService(id);
       setModalOpen(false);
       toast.success('Đã vô hiệu hóa dịch vụ');
       loadServices();
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     }
   };
 
