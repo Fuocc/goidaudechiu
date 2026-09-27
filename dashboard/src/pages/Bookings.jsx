@@ -1,5 +1,5 @@
-import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
-import { FiPlus, FiChevronLeft, FiChevronRight, FiCalendar, FiList, FiMoreVertical, FiX, FiAlertTriangle } from 'react-icons/fi';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { FiPlus, FiChevronLeft, FiChevronRight, FiCalendar, FiMoreVertical, FiX, FiAlertTriangle } from 'react-icons/fi';
 import { toast } from 'react-toastify';
 import TimePickerInput from '../components/TimePickerInput';
 
@@ -21,25 +21,11 @@ import BranchDropdown from '../components/BranchDropdown';
 import { getInitial } from '../utils/format';
 import { isHoldBooking, isSpamWarningBooking } from '../utils/booking';
 import { describeError } from '../utils/notify';
-// import '../styles/timepicker.css';
 import '../styles/bookings.css';
 // ---- Helpers ----
 const OPEN_HOUR = 9;
 const CLOSE_HOUR = 23;
 const HOURS = Array.from({ length: CLOSE_HOUR - OPEN_HOUR }, (_, i) => OPEN_HOUR + i);
-
-function getWeekDates(date) {
-  const d = new Date(date);
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1); // Monday start
-  const monday = new Date(d);
-  monday.setDate(diff);
-  return Array.from({ length: 7 }, (_, i) => {
-    const dd = new Date(monday);
-    dd.setDate(monday.getDate() + i);
-    return dd;
-  });
-}
 
 function toDateStr(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -61,15 +47,6 @@ function timeToMinutes(t) {
 
   return (h || 0) * 60 + (m || 0);
 }
-
-const DAY_NAMES = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
-
-const timeToPixels = (t) => {
-  if (!t) return 0;
-  const startMins = OPEN_HOUR * 60;
-  const currentMins = timeToMinutes(t);
-  return ((currentMins - startMins) / 60) * 100;
-};
 
 const STATUS_COLORS = {
   confirmed: { bg: '#e6f4ec', border: '#0d8a3f', text: '#0d8a3f' },
@@ -142,7 +119,7 @@ const formatDateVietnamese = (date) => {
   );
 };
 
-function Bookings({ data }) {
+function Bookings() {
   // Responsive: detect mobile for PWA
   const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 768);
 
@@ -154,7 +131,6 @@ function Bookings({ data }) {
 
   // Mobile mở mặc định ở list view, desktop ở calendar view (vẫn đổi được bằng nút toggle)
   const [viewMode, setViewMode] = useState(() => (window.innerWidth <= 768 ? 'list' : 'calendar')); // 'calendar' | 'list'
-  const effectiveViewMode = viewMode;
 
   const [currentDate, setCurrentDate] = useState(getLogicalDate());
 
@@ -173,48 +149,12 @@ function Bookings({ data }) {
       // loadBookings tải lại cả lịch hẹn + nhân viên (AI có thể đổi tour trực).
       loadBookingsRef.current?.();
     };
-    const handleEditDraftEvent = (e) => {
-      const { draft, matched } = e.detail;
-      handleEditDraft(draft, matched);
-    };
 
     window.addEventListener('refresh-bookings', handleRefresh);
-    window.addEventListener('edit-booking-draft', handleEditDraftEvent);
     return () => {
       window.removeEventListener('refresh-bookings', handleRefresh);
-      window.removeEventListener('edit-booking-draft', handleEditDraftEvent);
     };
-  }, [services, employees]);
-
-  const handleEditDraft = (draft, matched) => {
-    const matchedService = services.find(s => s.id === draft.service_id);
-    const matchedEmployee = employees.find(e => e.id === draft.employee_id);
-
-    setBookForm({
-      branch_id: draft.branch_id || filterBranch || (branches[0]?.id || ''),
-      service_id: draft.service_id || '',
-      num_guests: 1,
-      customer_id: '',
-      customer_name: draft.temporary_name || '',
-      customer_phone: '',
-      customer_email: '',
-      service_search: matchedService ? matchedService.name : '',
-      employee_search: matchedEmployee ? matchedEmployee.name : '',
-      employee_id: draft.employee_id || '',
-      booking_date: draft.booking_date || toDateStr(new Date()),
-      start_time: draft.start_time ? draft.start_time.substring(0, 5) : '--:--',
-      end_time: draft.end_time ? draft.end_time.substring(0, 5) : '--:--',
-      notes: draft.notes || ''
-    });
-
-    if (matchedService) {
-      setSelectedService(matchedService);
-    }
-
-    setCustomerView('default');
-    setBookStep(1);
-    setModalOpen(true);
-  };
+  }, []);
 
   // Booking modal state
   const [modalOpen, setModalOpen] = useState(false);
@@ -222,32 +162,25 @@ function Bookings({ data }) {
   const [detailEdit, setDetailEdit] = useState(null);
   const [detailSaving, setDetailSaving] = useState(false);
   const [detailCustomerView, setDetailCustomerView] = useState('selected'); // 'selected', 'searching', 'creating'
-  const [employeesByBranch, setEmployeesByBranch] = useState([]); // for dropdown in detail edit
   const [bookForm, setBookForm] = useState({
     branch_id: '', service_id: '', num_guests: 1,
     customer_name: '', customer_phone: '', customer_email: '',
     booking_date: '', start_time: '', notes: ''
   });
-  const [availSlots, setAvailSlots] = useState([]);
-  const [bookStep, setBookStep] = useState(1);
   const [selectedService, setSelectedService] = useState(null);
-  const [slotsLoading, setSlotsLoading] = useState(false);
   const [searchSuggestions, setSearchSuggestions] = useState({ type: null, data: [], loading: false });
   const [customerView, setCustomerView] = useState('default'); // 'default', 'searching', 'selected', 'creating'
   const [showCalendar, setShowCalendar] = useState(false);
   const [detailTab, setDetailTab] = useState('schedule'); // 'schedule' or 'customer'
   const [employeeSchedules, setEmployeeSchedules] = useState([]);
   const [showDetailMore, setShowDetailMore] = useState(false);
-  const [isDuplicating, setIsDuplicating] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   // Drag-and-drop reorder state
   const [cardDrag, setCardDrag] = useState(null); // { booking, startCol, startTop }
-  const [cardDragClone, setCardDragClone] = useState(null);
   const [dragConfirm, setDragConfirm] = useState(null); // { booking, fromStaff, fromTime, toStaff, toTime, toStaffId, newDate, newStart, newEnd }
   // Drag-to-create state
   const [dragInfo, setDragInfo] = useState(null); // { startY, currentY, staffId, staffName, columnEl }
   const [hoverInfo, setHoverInfo] = useState(null); // { staffId, y, colLeft, colWidth }
-  const [bufferTime, setBufferTime] = useState(15);
   const [sysSettings, setSysSettings] = useState({});
   const calendarRef = useRef(null);
   const moreMenuRef = useRef(null);
@@ -256,36 +189,11 @@ function Bookings({ data }) {
   const gridRef = useRef(null);
   const nowLineRef = useRef(null);
 
-  const weekDates = useMemo(() => getWeekDates(currentDate), [currentDate]);
-
-  const bodyRef = useRef(null);
-  const [scrollbarWidth, setScrollbarWidth] = useState(0);
-
   const notify = (msg) => {
     toast.success(msg || "Cập nhật thành công", {
       position: "bottom-right"
     });
   };
-
-  useLayoutEffect(() => {
-    if (!bodyRef.current) return;
-
-    const calculate = () => {
-      const el = bodyRef.current;
-      const width = el.offsetWidth - el.clientWidth;
-      setScrollbarWidth(width);
-    };
-
-    const observer = new ResizeObserver(() => {
-      calculate();
-    });
-
-    observer.observe(bodyRef.current);
-
-    calculate();
-
-    return () => observer.disconnect();
-  }, [data]);
 
   useEffect(() => {
     loadInitialData();
@@ -582,10 +490,6 @@ function Bookings({ data }) {
       setServices(s);
       setSysSettings(settingsData || {});
 
-      if (settingsData && settingsData.buffer_time) {
-        setBufferTime(parseInt(settingsData.buffer_time) || 0);
-      }
-
       if (b.length > 0 && !filterBranch) {
         setFilterBranch(b[0].id);
       }
@@ -822,12 +726,8 @@ function Bookings({ data }) {
       end_time: preEndTime || '--:--',
       notes: ''
     });
-    setBookStep(1);
     setCustomerView('default');
-    setAvailSlots([]);
-    setAvailSlots([]);
     setSelectedService(null);
-    setIsDuplicating(false);
     setModalOpen(true);
   };
 
@@ -859,7 +759,6 @@ function Bookings({ data }) {
     setCustomerView('selected');
 
     setSelectedService(service);
-    setIsDuplicating(true);
     setDetailModal(null);
     setModalOpen(true);
     setShowDetailMore(false);
@@ -891,7 +790,6 @@ function Bookings({ data }) {
         end_time: newEndTime
       };
     });
-    setAvailSlots([]);
   };
 
   const handleGenericSearch = (type, val, isDetail = false) => {
@@ -1220,25 +1118,6 @@ function Bookings({ data }) {
     setDetailCustomerView('selected');
     setDetailTab('schedule');
     setShowDetailMore(false);
-    loadEmployeesForDetail(booking.branch_id, booking.booking_date);
-  };
-
-  const loadEmployeesForDetail = async (branchId, date) => {
-    try {
-      const emps = await getEmployees(branchId);
-      const schedules = await getEmployeeSchedules({
-        date_from: date,
-        date_to: date
-      });
-      const availableIds = (schedules || [])
-        .filter(s => !s.is_day_off)
-        .map(s => s.employee_id);
-
-      setEmployeesByBranch((emps || []).filter(e => e.is_active && availableIds.includes(e.id)));
-    } catch (e) {
-
-      setEmployeesByBranch([]);
-    }
   };
 
   const checkStaffAvailability = async (empId, date, start, end) => {
@@ -1266,7 +1145,6 @@ function Bookings({ data }) {
 
   const handleDateChange = async (newDate) => {
     setDetailEdit(prev => ({ ...prev, booking_date: newDate }));
-    loadEmployeesForDetail(detailEdit.branch_id, newDate);
 
     const isAvail = await checkStaffAvailability(detailEdit.employee_id, newDate, detailEdit.start_time, detailEdit.end_time);
     if (!isAvail) {
@@ -1307,23 +1185,6 @@ function Bookings({ data }) {
     );
   }, [detailModal, detailEdit]);
 
-  const handleStatusUpdate = async (status) => {
-    if (!detailModal) return;
-    try {
-      setDetailSaving(true);
-      const { updateBookingStatus } = await import('../api'); // Assuming it exists or use updateBooking
-      // If updateBookingStatus doesn't exist, we can use updateBooking with just status
-      await updateBooking(detailModal.id, { status });
-      notify('Đã cập nhật trạng thái!');
-      setDetailModal(null);
-      loadBookings();
-    } catch (err) {
-      alert('Lỗi: ' + err.message);
-    } finally {
-      setDetailSaving(false);
-    }
-  };
-
   const handleDismissWarning = async (e, booking) => {
     if (e) {
       e.stopPropagation();
@@ -1361,55 +1222,6 @@ function Bookings({ data }) {
   };
 
 
-  // Date options
-  const dateOptions = [];
-  const today = new Date();
-  for (let i = 0; i < 60; i++) {
-    const d = new Date(today);
-    d.setDate(d.getDate() + i);
-    dateOptions.push({
-      value: toDateStr(d),
-      label: `${DAY_NAMES[d.getDay()]}, ${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`
-    });
-  }
-
-  // Get bookings for a specific day and hour
-  const getBookingsForSlot = (dateStr, hour) => {
-    return bookings.filter(b => {
-      if (b.booking_date !== dateStr) return false;
-      const startMin = timeToMinutes(b.start_time);
-      const endMin = timeToMinutes(b.end_time);
-      const slotStart = hour * 60;
-      const slotEnd = (hour + 1) * 60;
-      return startMin < slotEnd && endMin > slotStart;
-    });
-  };
-
-  // Calculate event position
-  const getEventStyle = (booking, hour) => {
-    const startMin = timeToMinutes(booking.start_time);
-    const endMin = timeToMinutes(booking.end_time);
-    const hourStart = hour * 60;
-    const hourEnd = (hour + 1) * 60;
-
-    const top = Math.max(0, startMin - hourStart);
-    const bottom = Math.min(60, endMin - hourStart);
-    const height = bottom - top;
-
-    // Only render in the first hour of the event
-    if (startMin < hourStart) return null;
-
-    const durationHours = (endMin - startMin) / 60;
-
-    return {
-      top: `${(top / 60) * 100}%`,
-      height: `${durationHours * 100}%`,
-      minHeight: `${Math.max(height / 60 * 100, 20)}%`
-    };
-  };
-
-  // Week header label
-  const weekLabel = `${weekDates[0].getDate()}/${weekDates[0].getMonth() + 1} – ${weekDates[6].getDate()}/${weekDates[6].getMonth() + 1}/${weekDates[6].getFullYear()}`;
   const todayStr = toDateStr(new Date());
   const isToday = toDateStr(currentDate) === todayStr;
 
@@ -1479,7 +1291,7 @@ function Bookings({ data }) {
             {!isMobile && (
               <div className="cal-view-toggle">
                 <Tooltip content="View Lịch">
-                <button className={`cal-view-btn${effectiveViewMode === 'calendar' ? ' active' : ''}`} onClick={() => setViewMode('calendar')}>
+                <button className={`cal-view-btn${viewMode === 'calendar' ? ' active' : ''}`} onClick={() => setViewMode('calendar')}>
                   <svg width="19" height="19" viewBox="0 0 19 19" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path d="M4.39984 0.916748H3.84984C2.82307 0.916748 2.30969 0.916748 1.91752 1.11657C1.57256 1.29234 1.29209 1.5728 1.11633 1.91777C0.916504 2.30994 0.916504 2.82332 0.916504 3.85008V14.4834C0.916504 15.5102 0.916504 16.0236 1.11633 16.4157C1.29209 16.7607 1.57256 17.0412 1.91752 17.2169C2.30969 17.4167 2.82307 17.4167 3.84984 17.4167H4.39984C5.4266 17.4167 5.93998 17.4167 6.33215 17.2169C6.67712 17.0412 6.95758 16.7607 7.13335 16.4157C7.33317 16.0236 7.33317 15.5102 7.33317 14.4834V3.85008C7.33317 2.82332 7.33317 2.30994 7.13335 1.91777C6.95758 1.5728 6.67712 1.29234 6.33215 1.11657C5.93998 0.916748 5.4266 0.916748 4.39984 0.916748Z" stroke="#D6D3D1" stroke-width="1.83333" stroke-linecap="round" stroke-linejoin="round" />
                     <path d="M14.4832 0.916748H13.9332C12.9064 0.916748 12.393 0.916748 12.0009 1.11657C11.6559 1.29234 11.3754 1.5728 11.1997 1.91777C10.9998 2.30994 10.9998 2.82332 10.9998 3.85008V14.4834C10.9998 15.5102 10.9998 16.0236 11.1997 16.4157C11.3754 16.7607 11.6559 17.0412 12.0009 17.2169C12.393 17.4167 12.9064 17.4167 13.9332 17.4167H14.4832C15.5099 17.4167 16.0233 17.4167 16.4155 17.2169C16.7605 17.0412 17.0409 16.7607 17.2167 16.4157C17.4165 16.0236 17.4165 15.5102 17.4165 14.4834V3.85008C17.4165 2.82332 17.4165 2.30994 17.2167 1.91777C17.0409 1.5728 16.7605 1.29234 16.4155 1.11657C16.0233 0.916748 15.5099 0.916748 14.4832 0.916748Z" stroke="#D6D3D1" stroke-width="1.83333" stroke-linecap="round" stroke-linejoin="round" />
@@ -1488,7 +1300,7 @@ function Bookings({ data }) {
                 </Tooltip>
 
                 <Tooltip content="View List">
-                <button className={`cal-view-btn${effectiveViewMode === 'list' ? ' active' : ''}`} onClick={() => setViewMode('list')}>
+                <button className={`cal-view-btn${viewMode === 'list' ? ' active' : ''}`} onClick={() => setViewMode('list')}>
                   <svg width="19" height="19" viewBox="0 0 19 19" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path d="M14.4832 7.33342C15.5099 7.33342 16.0233 7.33342 16.4155 7.13359C16.7604 6.95783 17.0409 6.67736 17.2167 6.3324C17.4165 5.94023 17.4165 5.42684 17.4165 4.40008V3.85008C17.4165 2.82332 17.4165 2.30994 17.2167 1.91777C17.0409 1.5728 16.7605 1.29234 16.4155 1.11657C16.0233 0.916749 15.5099 0.916749 14.4832 0.916749L3.84984 0.916748C2.82307 0.916748 2.30969 0.916748 1.91752 1.11657C1.57256 1.29234 1.29209 1.5728 1.11633 1.91777C0.916504 2.30994 0.916504 2.82332 0.916504 3.85008L0.916504 4.40008C0.916504 5.42684 0.916504 5.94023 1.11633 6.3324C1.29209 6.67736 1.57256 6.95783 1.91752 7.13359C2.30969 7.33341 2.82307 7.33341 3.84984 7.33341L14.4832 7.33342Z" stroke="#D6D3D1" stroke-width="1.83333" stroke-linecap="round" stroke-linejoin="round" />
                     <path d="M14.4832 17.4167C15.5099 17.4167 16.0233 17.4167 16.4155 17.2169C16.7604 17.0412 17.0409 16.7607 17.2167 16.4157C17.4165 16.0236 17.4165 15.5102 17.4165 14.4834V13.9334C17.4165 12.9067 17.4165 12.3933 17.2167 12.0011C17.0409 11.6561 16.7605 11.3757 16.4155 11.1999C16.0233 11.0001 15.5099 11.0001 14.4832 11.0001L3.84984 11.0001C2.82307 11.0001 2.30969 11.0001 1.91752 11.1999C1.57256 11.3757 1.29209 11.6561 1.11633 12.0011C0.916504 12.3933 0.916504 12.9067 0.916504 13.9334L0.916504 14.4834C0.916504 15.5102 0.916504 16.0236 1.11633 16.4157C1.29209 16.7607 1.57256 17.0412 1.91752 17.2169C2.30969 17.4167 2.82307 17.4167 3.84984 17.4167H14.4832Z" stroke="#D6D3D1" stroke-width="1.83333" stroke-linecap="round" stroke-linejoin="round" />
@@ -1542,7 +1354,7 @@ function Bookings({ data }) {
             </div>
             <div className="cal-view-toggle">
               <Tooltip content="View Lịch">
-                <button className={`cal-view-btn${effectiveViewMode === 'calendar' ? ' active' : ''}`} onClick={() => setViewMode('calendar')}>
+                <button className={`cal-view-btn${viewMode === 'calendar' ? ' active' : ''}`} onClick={() => setViewMode('calendar')}>
                   <svg width="19" height="19" viewBox="0 0 19 19" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path d="M4.39984 0.916748H3.84984C2.82307 0.916748 2.30969 0.916748 1.91752 1.11657C1.57256 1.29234 1.29209 1.5728 1.11633 1.91777C0.916504 2.30994 0.916504 2.82332 0.916504 3.85008V14.4834C0.916504 15.5102 0.916504 16.0236 1.11633 16.4157C1.29209 16.7607 1.57256 17.0412 1.91752 17.2169C2.30969 17.4167 2.82307 17.4167 3.84984 17.4167H4.39984C5.4266 17.4167 5.93998 17.4167 6.33215 17.2169C6.67712 17.0412 6.95758 16.7607 7.13335 16.4157C7.33317 16.0236 7.33317 15.5102 7.33317 14.4834V3.85008C7.33317 2.82332 7.33317 2.30994 7.13335 1.91777C6.95758 1.5728 6.67712 1.29234 6.33215 1.11657C5.93998 0.916748 5.4266 0.916748 4.39984 0.916748Z" stroke="#D6D3D1" strokeWidth="1.83333" strokeLinecap="round" strokeLinejoin="round" />
                     <path d="M14.4832 0.916748H13.9332C12.9064 0.916748 12.393 0.916748 12.0009 1.11657C11.6559 1.29234 11.3754 1.5728 11.1997 1.91777C10.9998 2.30994 10.9998 2.82332 10.9998 3.85008V14.4834C10.9998 15.5102 10.9998 16.0236 11.1997 16.4157C11.3754 16.7607 11.6559 17.0412 12.0009 17.2169C12.393 17.4167 12.9064 17.4167 13.9332 17.4167H14.4832C15.5099 17.4167 16.0233 17.4167 16.4155 17.2169C16.7605 17.0412 17.0409 16.7607 17.2167 16.4157C17.4165 16.0236 17.4165 15.5102 17.4165 14.4834V3.85008C17.4165 2.82332 17.4165 2.30994 17.2167 1.91777C17.0409 1.5728 16.7605 1.29234 16.4155 1.11657C16.0233 0.916748 15.5099 0.916748 14.4832 0.916748Z" stroke="#D6D3D1" strokeWidth="1.83333" strokeLinecap="round" strokeLinejoin="round" />
@@ -1551,7 +1363,7 @@ function Bookings({ data }) {
               </Tooltip>
               
               <Tooltip content="View List">
-                <button className={`cal-view-btn${effectiveViewMode === 'list' ? ' active' : ''}`} onClick={() => setViewMode('list')}>
+                <button className={`cal-view-btn${viewMode === 'list' ? ' active' : ''}`} onClick={() => setViewMode('list')}>
                   <svg width="19" height="19" viewBox="0 0 19 19" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path d="M14.4832 7.33342C15.5099 7.33342 16.0233 7.33342 16.4155 7.13359C16.7604 6.95783 17.0409 6.67736 17.2167 6.3324C17.4165 5.94023 17.4165 5.42684 17.4165 4.40008V3.85008C17.4165 2.82332 17.4165 2.30994 17.2167 1.91777C17.0409 1.5728 16.7605 1.29234 16.4155 1.11657C16.0233 0.916749 15.5099 0.916749 14.4832 0.916749L3.84984 0.916748C2.82307 0.916748 2.30969 0.916748 1.91752 1.11657C1.57256 1.29234 1.29209 1.5728 1.11633 1.91777C0.916504 2.30994 0.916504 2.82332 0.916504 3.85008L0.916504 4.40008C0.916504 5.42684 0.916504 5.94023 1.11633 6.3324C1.29209 6.67736 1.57256 6.95783 1.91752 7.13359C2.30969 7.33341 2.82307 7.33341 3.84984 7.33341L14.4832 7.33342Z" stroke="#D6D3D1" strokeWidth="1.83333" strokeLinecap="round" strokeLinejoin="round" />
                     <path d="M14.4832 17.4167C15.5099 17.4167 16.0233 17.4167 16.4155 17.2169C16.7604 17.0412 17.0409 16.7607 17.2167 16.4157C17.4165 16.0236 17.4165 15.5102 17.4165 14.4834V13.9334C17.4165 12.9067 17.4165 12.3933 17.2167 12.0011C17.0409 11.6561 16.7605 11.3757 16.4155 11.1999C16.0233 11.0001 15.5099 11.0001 14.4832 11.0001L3.84984 11.0001C2.82307 11.0001 2.30969 11.0001 1.91752 11.1999C1.57256 11.3757 1.29209 11.6561 1.11633 12.0011C0.916504 12.3933 0.916504 12.9067 0.916504 13.9334L0.916504 14.4834C0.916504 15.5102 0.916504 16.0236 1.11633 16.4157C1.29209 16.7607 1.57256 17.0412 1.91752 17.2169C2.30969 17.4167 2.82307 17.4167 3.84984 17.4167H14.4832Z" stroke="#D6D3D1" strokeWidth="1.83333" strokeLinecap="round" strokeLinejoin="round" />
@@ -1561,7 +1373,7 @@ function Bookings({ data }) {
             </div>
           </div>
         </div>
-        {effectiveViewMode === 'calendar' && (
+        {viewMode === 'calendar' && (
           <div className="cal-staff-header-wrap">
             {/* Header row */}
             <div className="cal-staff-header"></div>
@@ -1590,7 +1402,7 @@ function Bookings({ data }) {
       </div>
 
       {/* Calendar View */}
-      {effectiveViewMode === 'calendar' ? (
+      {viewMode === 'calendar' ? (
         <div className="cal-scroll-wrapper">
           {loadError && !loading && (
             <div className="load-error-banner" role="alert">
@@ -1599,29 +1411,6 @@ function Bookings({ data }) {
               <button type="button" className="btn btn-sm btn-primary" onClick={handleRetryLoad}>Thử lại</button>
             </div>
           )}
-          {/* <div className="cal-staff-header-wrap">
-            <div className="cal-staff-header"></div>
-            {loading ? (
-              Array.from({ length: 3 }).map((_, idx) => (
-                <div key={`skeleton-hdr-${idx}`} className="cal-staff-header available">
-                  <div className="skeleton-shimmer-light" style={{ width: '80px', height: '16px', borderRadius: '4px' }} />
-                </div>
-              ))
-            ) : (
-              employees.map(emp => {
-                const empSched = employeeSchedules.find(s => s.employee_id === emp.id);
-                const isAvailable = empSched && !empSched.is_day_off;
-                return (
-                  <div
-                    key={emp.id}
-                    className={`cal-staff-header ${isAvailable ? 'available' : 'unavailable'}`}
-                  >
-                    {emp.name}
-                  </div>
-                );
-              })
-            )}
-          </div> */}
 
           <div className="cal-container">
 
@@ -2095,8 +1884,8 @@ function Bookings({ data }) {
                         </div>
                       )}
                       {internalNotes.map(note => (
-                        <div className="booking-card-mobile-footer">
-                          <div key={note} className="list-booking-note">{note}</div>
+                        <div key={note} className="booking-card-mobile-footer">
+                          <div className="list-booking-note">{note}</div>
                         </div>
                       ))}
                     </div>
@@ -2372,7 +2161,6 @@ function Bookings({ data }) {
                         onChange={e => {
                           const newBranchId = e.target.value;
                           setDetailEdit(f => ({ ...f, branch_id: newBranchId }));
-                          loadEmployeesForDetail(newBranchId, detailEdit.booking_date);
                         }}
                       >
                         {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}

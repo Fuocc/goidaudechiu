@@ -1,5 +1,3 @@
-import React from 'react';
-
 const TimePickerInput = ({ value, onChange }) => {
   const parts = (value || '').split(':');
   const h24 = parseInt(parts[0]);

@@ -36,7 +36,6 @@ const formatTime12h = (t) => {
 };
 
 const DAY_NAMES = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
-const DAY_FULL_NAMES = ['Chủ nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
 
 function EmployeeSchedules() {
   const [currentDate, setCurrentDate] = useState(new Date());

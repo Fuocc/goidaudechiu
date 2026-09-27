@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useUser, useAuth } from '@clerk/clerk-react';
 import { toast } from 'react-toastify';
 import '../styles/user-settings.css';
@@ -281,19 +281,6 @@ const UserSettings = () => {
           <button className="us-btn us-btn-outline" onClick={handleLogout}>
             <FiLogOut size={16} />
             <span>Đăng xuất</span>
-          </button>
-        </div>
-      </div>
-
-      {/* SECTION 4: Danger Zone */}
-      <div className="user-settings-section">
-        <h2 className="user-settings-title">Khu nguy hiểm</h2>
-        <div className="us-danger-content">
-          <div className="us-danger-text">
-            Xóa tài khoản vĩnh viễn, bạn sẽ không thể khôi phục lại được tài khoản này sau khi xóa.
-          </div>
-          <button className="us-btn us-btn-danger">
-            Xóa tài khoản
           </button>
         </div>
       </div>

@@ -102,20 +102,6 @@ const LogOutIcon = () => (
   </svg>
 );
 
-const SparkleIcon = () => (
-  <svg className="sparkle-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M12 0C12 6.627 17.373 12 24 12C17.373 12 12 17.373 12 24C12 17.373 6.627 12 0 12C6.627 12 12 6.627 12 0Z" fill="url(#sparkleGradient)" />
-    <defs>
-      <linearGradient id="sparkleGradient" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse">
-        <stop offset="0%" stopColor="#FFC72C" />
-        <stop offset="30%" stopColor="#FF5A5F" />
-        <stop offset="65%" stopColor="#8A3FFC" />
-        <stop offset="100%" stopColor="#00C2FF" />
-      </linearGradient>
-    </defs>
-  </svg>
-);
-
 function Sidebar({ user, onLogout }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [logoutMenuOpen, setLogoutMenuOpen] = useState(false);
@@ -323,22 +309,6 @@ function Sidebar({ user, onLogout }) {
 
   const unreadCount = notifications.filter(n => !n.read).length;
 
-  const [collapsedGroups, setCollapsedGroups] = useState({});
-
-  const isGroupExpanded = (groupKey, currentCollapsed = collapsedGroups) => {
-    if (currentCollapsed[groupKey] !== undefined) {
-      return currentCollapsed[groupKey];
-    }
-    return true; // Expand date groups by default for cleaner Day Dividers
-  };
-
-  const toggleGroup = (groupKey) => {
-    setCollapsedGroups(prev => ({
-      ...prev,
-      [groupKey]: !isGroupExpanded(groupKey, prev)
-    }));
-  };
-
   // Specification Rule 4: Flexible relative time note builder
   const formatRelativeTime = (createdAtStr) => {
     if (!createdAtStr) return '';
@@ -411,45 +381,6 @@ function Sidebar({ user, onLogout }) {
     ];
     const colorIndex = letter.charCodeAt(0) % colors.length;
     return { letter, ...colors[colorIndex] };
-  };
-
-  const getRelativeDateLabel = (dateStr) => {
-    if (!dateStr) return '';
-    const bookingDate = new Date(dateStr + 'T00:00:00');
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const tomorrow = new Date(today);
-    tomorrow.setDate(today.getDate() + 1);
-
-    const yesterday = new Date(today);
-    yesterday.setDate(today.getDate() - 1);
-
-    const bookingTime = bookingDate.getTime();
-    const todayTime = today.getTime();
-    const tomorrowTime = tomorrow.getTime();
-    const yesterdayTime = yesterday.getTime();
-
-    if (bookingTime === todayTime) {
-      return 'hôm nay';
-    } else if (bookingTime === tomorrowTime) {
-      return 'ngày mai';
-    } else if (bookingTime === yesterdayTime) {
-      return 'hôm qua';
-    } else {
-      const day = String(bookingDate.getDate()).padStart(2, '0');
-      const month = String(bookingDate.getMonth() + 1).padStart(2, '0');
-      return `ngày ${day}/${month}`;
-    }
-  };
-
-  const getNotifMessage = (n) => {
-    if (n.customerName) {
-      const dateLabel = getRelativeDateLabel(n.bookingDate);
-      const datePhrase = dateLabel ? ` vào ${dateLabel}` : '';
-      return `${n.customerName} vừa đặt lịch ${n.serviceName} tại ${n.branchName} lúc ${n.startTime?.substring(0, 5)}${datePhrase}`;
-    }
-    return n.message;
   };
 
   const getGroupedNotifications = () => {
@@ -666,19 +597,6 @@ function Sidebar({ user, onLogout }) {
   ];
 
   const sectionsToRender = isAdmin ? adminSections : staffSections;
-
-  // Mobile Bottom Navigation: max 4 items
-  const bottomNavItems = isAdmin
-    ? [
-      { path: '/', label: 'Lịch hẹn', icon: CalendarIcon },
-      { path: '/customers', label: 'Khách', icon: SmileIcon },
-      { path: '/schedules', label: 'Lịch NV', icon: ClockIcon },
-      { path: '/employees', label: 'Nhân viên', icon: UsersIcon },
-    ]
-    : [
-      { path: '/', label: 'Lịch hẹn', icon: CalendarIcon },
-      { path: '/customers', label: 'Khách', icon: SmileIcon },
-    ];
 
   const roleLabel = role === 'dev' ? 'Developer' : role === 'admin' ? 'Quản trị viên' : 'Nhân viên';
 
@@ -1060,7 +978,6 @@ function Sidebar({ user, onLogout }) {
 
                         // Special parsing for Rescheduled slots ("Dời lịch: 6:00 PM — từ 3:00 PM")
                         const reschedulePattern = /(dời lịch|đổi lịch):\s*\d{1,2}:\d{2}\s*(?:PM|AM)?\s*—\s*từ\s*\d{1,2}:\d{2}\s*(?:PM|AM)?/i;
-                        const hasRescheduleNote = reschedulePattern.test(n.notes || '') || reschedulePattern.test(n.internal_note || '') || reschedulePattern.test(n.title || '');
 
                         if (actionType === 'Dời lịch:') {
                           const match = (n.notes + ' ' + n.internal_note + ' ' + n.title).match(reschedulePattern);
