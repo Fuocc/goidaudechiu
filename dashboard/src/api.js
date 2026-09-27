@@ -30,10 +30,21 @@ export async function request(url, options = {}) {
   }
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Request failed' }));
-    throw new Error(err.error || 'Request failed');
+    const data = await res.json().catch(() => ({ error: 'Request failed' }));
+    const err = new Error(data?.error || 'Request failed');
+    // Giữ lại mã HTTP + body để nơi gọi xử lý riêng (VD 409 trùng lịch), message không đổi
+    err.status = res.status;
+    err.data = data;
+    throw err;
   }
   return res.json();
+}
+
+// Ghép query string, bỏ qua giá trị rỗng; URLSearchParams tự encode (&, #, +, dấu cách...)
+function withQuery(path, params = {}) {
+  const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '');
+  const query = new URLSearchParams(entries).toString();
+  return query ? `${path}?${query}` : path;
 }
 
 // Branches
@@ -49,19 +60,19 @@ export const updateService = (id, data) => request(`/services/${id}`, { method: 
 export const deleteService = (id) => request(`/services/${id}`, { method: 'DELETE' });
 
 // Employees
-export const getEmployees = (branchId) => request(`/employees${branchId ? `?branch_id=${branchId}` : ''}`);
+export const getEmployees = (branchId) => request(withQuery('/employees', { branch_id: branchId }));
 export const createEmployee = (data) => request('/employees', { method: 'POST', body: JSON.stringify(data) });
 export const updateEmployee = (id, data) => request(`/employees/${id}`, { method: 'PUT', body: JSON.stringify(data) });
 export const deleteEmployee = (id) => request(`/employees/${id}`, { method: 'DELETE' });
 
 // Customers
-export const getCustomers = (search) => request(`/customers${search ? `?search=${search}` : ''}`);
+export const getCustomers = (search) => request(withQuery('/customers', { search }));
 export const createCustomer = (data) => request('/customers', { method: 'POST', body: JSON.stringify(data) });
 export const updateCustomer = (id, data) => request(`/customers/${id}`, { method: 'PUT', body: JSON.stringify(data) });
 export const deleteCustomer = (id) => request(`/customers/${id}`, { method: 'DELETE' });
 
 // Beds
-export const getBeds = (branchId) => request(`/beds${branchId ? `?branch_id=${branchId}` : ''}`);
+export const getBeds = (branchId) => request(withQuery('/beds', { branch_id: branchId }));
 export const createBed = (data) => request('/beds', { method: 'POST', body: JSON.stringify(data) });
 export const updateBed = (id, data) => request(`/beds/${id}`, { method: 'PUT', body: JSON.stringify(data) });
 export const deleteBed = (id) => request(`/beds/${id}`, { method: 'DELETE' });
