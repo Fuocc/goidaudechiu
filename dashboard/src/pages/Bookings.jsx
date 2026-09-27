@@ -18,12 +18,13 @@ import { Tooltip } from '../components/ui/tooltip';
 import { DatePicker, parseDate } from "@chakra-ui/react"
 import { subscribeRealtime, REALTIME_RECONNECTED } from '../realtime';
 import BranchDropdown from '../components/BranchDropdown';
-import { getInitial } from '../utils/format';
+import { getInitial, shortBranchName } from '../utils/format';
 import { isHoldBooking, isSpamWarningBooking, bookingStatusLabel } from '../utils/booking';
 import { describeError } from '../utils/notify';
 import { clickableProps } from '../utils/a11y';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useModalA11y } from '../hooks/useModalA11y';
+import { useAppUI } from '../context/AppUIContext';
 import {
   CALENDAR_OPEN_HOUR, CALENDAR_CLOSE_HOUR, WEEKDAY_MIN_OPEN_MINUTES, LOGICAL_DAY_CUTOFF,
   WALK_IN_CUSTOMER_NAME, PLACEHOLDER_SERVICE_NAME
@@ -153,19 +154,16 @@ function Bookings() {
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(new Date());
   const loadBookingsRef = useRef(null);
+  const { bookingsRefreshKey, gotoTarget, clearGotoTarget } = useAppUI();
 
+  // AI chat vừa đổi lịch → tải lại. Bỏ qua lần mount đầu (trang tự tải) và các lần đã xử lý.
+  const handledRefreshKeyRef = useRef(bookingsRefreshKey);
   useEffect(() => {
-    const handleRefresh = () => {
-      // Gọi bản loadBookings MỚI NHẤT qua ref (effect này không chạy lại khi đổi ngày/chi nhánh → tránh tải nhầm ngày cũ).
-      // loadBookings tải lại cả lịch hẹn + nhân viên (AI có thể đổi tour trực).
-      loadBookingsRef.current?.();
-    };
-
-    window.addEventListener('refresh-bookings', handleRefresh);
-    return () => {
-      window.removeEventListener('refresh-bookings', handleRefresh);
-    };
-  }, []);
+    if (bookingsRefreshKey === handledRefreshKeyRef.current) return;
+    handledRefreshKeyRef.current = bookingsRefreshKey;
+    // Gọi bản loadBookings MỚI NHẤT qua ref; tải lại cả lịch hẹn + nhân viên (AI có thể đổi tour trực).
+    loadBookingsRef.current?.();
+  }, [bookingsRefreshKey]);
 
   // Booking modal state
   const [modalOpen, setModalOpen] = useState(false);
@@ -227,6 +225,8 @@ function Bookings() {
   const loadSeqRef = useRef(0);
   const refreshSeqRef = useRef(0);
   const [loadError, setLoadError] = useState(null);
+  // 'yyyy-mm-dd|branchId' của lần loadBookings gần nhất đã xong (dùng để biết khi nào nhảy tới lịch được)
+  const [loadedKey, setLoadedKey] = useState(null);
 
   // Ultra-fast helper to refresh ONLY bookings without refetching employees/settings/schedules.
   // This drastically reduces API calls from 4 to 1 per real-time event.
@@ -285,92 +285,48 @@ function Bookings() {
     };
   }, []); // Connect once on mount
 
-  // Effect to handle navigating/scrolling to a specific booking from a notification
+  // ---- Nhảy tới lịch khi bấm thông báo (target đến từ AppUIContext) ----
+  // Bước 1: chuyển sang đúng chi nhánh + ngày, giữ lại lịch cần tìm chờ dữ liệu của ngày đó tải xong.
+  const [pendingGoto, setPendingGoto] = useState(null); // { bookingId, key: 'yyyy-mm-dd|branchId' }
+  const suppressNowLineScrollRef = useRef(false);
   useEffect(() => {
-    const handleGotoBooking = (detail) => {
-      if (!detail || !detail.bookingId || !detail.bookingDate) return;
-
-      // 1. Switch to the correct branch if different
-      let targetBranchId = detail.branchId;
-      if (!targetBranchId && detail.branchName && branches.length > 0) {
-        const isCN1 = detail.branchName.includes('CN 1') || detail.branchName.includes('CN1');
-        const isCN2 = detail.branchName.includes('CN 2') || detail.branchName.includes('CN2');
-        const matched = branches.find(b => {
-          const name = b.name || '';
-          if (isCN1) return name.includes('CN 1') || name.includes('CN1');
-          if (isCN2) return name.includes('CN 2') || name.includes('CN2');
-          return name.toLowerCase().includes(detail.branchName.toLowerCase());
-        });
-        if (matched) {
-          targetBranchId = matched.id;
-        }
-      }
-
-      if (targetBranchId && targetBranchId !== filterBranchRef.current) {
-        setFilterBranch(targetBranchId);
-      }
-
-      // 2. Change the date of the calendar grid
-      const targetDate = new Date(detail.bookingDate + 'T00:00:00');
-      setCurrentDate(targetDate);
-
-      // 3. Wait for the state to update, the new date's bookings to load and the DOM to render
-      // We can poll the DOM for the booking card element
-      let attempts = 0;
-      const interval = setInterval(() => {
-        // Card gộp nhóm trên mobile chỉ mang id của lịch đầu → tìm thêm theo data-booking-ids
-        const cardEl = document.getElementById(`booking-card-${detail.bookingId}`)
-          || document.querySelector(`[data-booking-ids~="${detail.bookingId}"]`);
-        if (cardEl) {
-          clearInterval(interval);
-          // Scroll to the card
-          cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-
-          // Add highlighting class
-          cardEl.classList.add('highlight-appointment');
-
-          // Remove highlight after 3 seconds
-          setTimeout(() => {
-            cardEl.classList.remove('highlight-appointment');
-          }, 3000);
-        }
-        attempts++;
-        if (attempts > 60) { // Timeout after 6 seconds (60 * 100ms)
-          clearInterval(interval);
-        }
-      }, 100);
-    };
-
-    // Check sessionStorage on mount and when bookings are loaded
-    const checkSessionStorage = () => {
-      const stored = sessionStorage.getItem('goto_booking');
-      if (stored) {
-        try {
-          const detail = JSON.parse(stored);
-          sessionStorage.removeItem('goto_booking'); // Clear so we don't trigger again on subsequent renders
-          handleGotoBooking(detail);
-        } catch (e) {
-
-        }
-      }
-    };
-
-    // Listen to custom event
-    const onGotoEvent = (e) => {
-      handleGotoBooking(e.detail);
-    };
-
-    window.addEventListener('goto-booking', onGotoEvent);
-
-    // We also want to check sessionStorage when bookings array changes (which means loading has finished)
-    if (!loading && bookings.length > 0) {
-      checkSessionStorage();
+    if (!gotoTarget) return;
+    if (!gotoTarget.bookingId || !gotoTarget.bookingDate) {
+      clearGotoTarget();
+      return;
     }
+    let targetBranchId = gotoTarget.branchId;
+    if (!targetBranchId && gotoTarget.branchName) {
+      if (branches.length === 0) return; // chờ tải danh sách chi nhánh để dò theo tên
+      const wanted = shortBranchName(gotoTarget.branchName);
+      targetBranchId = branches.find(b => shortBranchName(b.name) === wanted)?.id;
+    }
+    const branchId = targetBranchId || filterBranchRef.current;
+    if (branchId && branchId !== filterBranchRef.current) setFilterBranch(branchId);
 
-    return () => {
-      window.removeEventListener('goto-booking', onGotoEvent);
-    };
-  }, [loading, bookings, branches]);
+    suppressNowLineScrollRef.current = true; // không tự cuộn tới vạch "bây giờ" đè lên việc cuộn tới lịch
+    setLoadedKey(null); // chờ lần tải MỚI của ngày/chi nhánh đích, không dùng dữ liệu đang hiển thị
+    setCurrentDate(new Date(gotoTarget.bookingDate + 'T00:00:00'));
+    setPendingGoto({ bookingId: gotoTarget.bookingId, key: `${gotoTarget.bookingDate}|${branchId || ''}` });
+    clearGotoTarget();
+  }, [gotoTarget, branches, clearGotoTarget]);
+
+  // Bước 2: dữ liệu của đúng ngày/chi nhánh đã tải và hiển thị → cuộn tới lịch + tô sáng 3 giây
+  useEffect(() => {
+    if (!pendingGoto || loading || loadedKey !== pendingGoto.key) return;
+    const { bookingId } = pendingGoto;
+    setPendingGoto(null);
+    // Thẻ gộp nhóm trên mobile chỉ mang id của lịch đầu → tìm thêm theo data-booking-ids
+    const cardEl = document.getElementById(`booking-card-${bookingId}`)
+      || document.querySelector(`[data-booking-ids~="${bookingId}"]`);
+    if (!cardEl) {
+      toast.info('Không tìm thấy lịch hẹn này trên màn hình (có thể đã bị hủy hoặc đổi sang ngày khác).');
+      return;
+    }
+    cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    cardEl.classList.add('highlight-appointment');
+    setTimeout(() => cardEl.classList.remove('highlight-appointment'), 3000);
+  }, [pendingGoto, loading, loadedKey, bookings]);
 
   // --- Drag-to-create: global mousemove/mouseup ---
   useEffect(() => {
@@ -508,8 +464,9 @@ function Bookings() {
       setServices(s);
       setSysSettings(settingsData || {});
 
-      if (b.length > 0 && !filterBranch) {
-        setFilterBranch(b[0].id);
+      // Dùng dạng hàm: nếu trong lúc chờ đã chọn chi nhánh (VD bấm thông báo) thì không ghi đè về chi nhánh đầu
+      if (b.length > 0) {
+        setFilterBranch(prev => prev || b[0].id);
       }
     } catch (err) {
       console.error('[bookings] Không tải được chi nhánh/dịch vụ:', err);
@@ -554,6 +511,7 @@ function Bookings() {
 
       setEmployees(sortedEmployees);
       setEmployeeSchedules(schedulesData);
+      setLoadedKey(`${dayStr}|${filterBranch || ''}`);
     } catch (err) {
       if (seq !== loadSeqRef.current) return;
       console.error('[bookings] Không tải được lịch hẹn:', err);
@@ -562,6 +520,7 @@ function Bookings() {
       setEmployees([]);
       setEmployeeSchedules([]);
       setLoadError(describeError(err));
+      setLoadedKey(`${toDateStr(currentDate)}|${filterBranch || ''}`);
     } finally {
       if (seq === loadSeqRef.current) setLoading(false);
     }
@@ -578,6 +537,11 @@ function Bookings() {
     setCurrentDate(getLogicalDate());
   };
   useEffect(() => {
+    // Đang nhảy tới một lịch từ thông báo → để việc cuộn tới lịch đó quyết định vị trí
+    if (suppressNowLineScrollRef.current) {
+      suppressNowLineScrollRef.current = false;
+      return;
+    }
     if (toDateStr(currentDate) === todayStr) {
       const timer = setTimeout(() => {
         nowLineRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });

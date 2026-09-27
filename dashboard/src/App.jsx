@@ -17,6 +17,7 @@ import Sidebar from './components/Sidebar';
 import UserSettings from './pages/UserSettings';
 import ErrorBoundary from './components/ErrorBoundary';
 import { ConfirmProvider } from './components/ConfirmDialog';
+import { AppUIProvider } from './context/AppUIContext';
 import { setAuthTokenGetter } from './api';
 
 const VALID_ROLES = ['staff', 'admin', 'dev'];
@@ -67,37 +68,39 @@ function App() {
 
   return (
     <ConfirmProvider>
-      <div className="app-layout">
-        <Sidebar user={user} onLogout={handleLogout} />
-        <div className="main-content">
-          <div className="page-content">
-            <ErrorBoundary resetKey={location.pathname}>
-              <Routes>
-                <Route path="/" element={<Bookings />} />
-                <Route path="/customers" element={<Customers />} />
-                <Route path="/user-settings" element={<UserSettings />} />
-
-                {isAdmin && (
-                  <>
-                    <Route path="/employees" element={<Employees />} />
-                    <Route path="/services" element={<Services />} />
-                    <Route path="/branches" element={<Branches />} />
-                    <Route path="/schedules" element={<EmployeeSchedules />} />
-                    <Route path="/settings" element={<Settings />} />
-                    <Route path="/share-link" element={<ShareLink />} />
-                  </>
-                )}
-                <Route path="*" element={<Navigate to="/" replace />} />
-              </Routes>
-            </ErrorBoundary>
+      <AppUIProvider>
+        <div className="app-layout">
+          <Sidebar user={user} onLogout={handleLogout} />
+          <div className="main-content">
+            <div className="page-content">
+              <ErrorBoundary resetKey={location.pathname}>
+                <Routes>
+                  <Route path="/" element={<Bookings />} />
+                  <Route path="/customers" element={<Customers />} />
+                  <Route path="/user-settings" element={<UserSettings />} />
+  
+                  {isAdmin && (
+                    <>
+                      <Route path="/employees" element={<Employees />} />
+                      <Route path="/services" element={<Services />} />
+                      <Route path="/branches" element={<Branches />} />
+                      <Route path="/schedules" element={<EmployeeSchedules />} />
+                      <Route path="/settings" element={<Settings />} />
+                      <Route path="/share-link" element={<ShareLink />} />
+                    </>
+                  )}
+                  <Route path="*" element={<Navigate to="/" replace />} />
+                </Routes>
+              </ErrorBoundary>
+            </div>
           </div>
+          <ToastContainer
+            position="bottom-right"
+            hideProgressBar={false}
+            autoClose={2500}
+          />
         </div>
-        <ToastContainer
-          position="bottom-right"
-          hideProgressBar={false}
-          autoClose={2500}
-        />
-      </div>
+      </AppUIProvider>
     </ConfirmProvider>
   );
 }

@@ -15,6 +15,7 @@ import { isHoldBooking } from '../utils/booking';
 import { EMPLOYEE_AVATAR_OVERRIDES, CUSTOMER_AVATAR_COLORS } from '../config/business';
 import { shortBranchName } from '../utils/format';
 import { clickableProps } from '../utils/a11y';
+import { useAppUI } from '../context/AppUIContext';
 
 // ---- Custom Inline SVG Icons with stroke="currentColor" ----
 const CalendarIcon = () => (
@@ -112,14 +113,8 @@ function Sidebar({ user, onLogout }) {
   const navigate = useNavigate();
 
   const [aiChatOpen, setAiChatOpen] = useState(false);
-
-  useEffect(() => {
-    const handleToggle = () => {
-      setAiChatOpen(prev => !prev);
-    };
-    window.addEventListener('toggle-ai-chat', handleToggle);
-    return () => window.removeEventListener('toggle-ai-chat', handleToggle);
-  }, []);
+  const toggleAiChat = () => setAiChatOpen(prev => !prev);
+  const { gotoBooking } = useAppUI();
 
   const profileRef = useRef(null);
   const popoverRef = useRef(null);
@@ -509,20 +504,13 @@ function Sidebar({ user, onLogout }) {
     closePanel();
 
     if (n.bookingId && n.bookingDate) {
-      sessionStorage.setItem('goto_booking', JSON.stringify({
+      // Trang Lịch hẹn đọc target từ context (kể cả khi được mở sau, lúc đang ở trang khác)
+      gotoBooking({
         bookingId: n.bookingId,
         bookingDate: n.bookingDate,
-        branchId: n.branchId
-      }));
-
-      const event = new CustomEvent('goto-booking', {
-        detail: {
-          bookingId: n.bookingId,
-          bookingDate: n.bookingDate,
-          branchId: n.branchId
-        }
+        branchId: n.branchId,
+        branchName: n.branchName
       });
-      window.dispatchEvent(event);
 
       if (location.pathname !== '/') {
         navigate('/');
@@ -646,7 +634,7 @@ function Sidebar({ user, onLogout }) {
               onClick={(e) => {
                 e.preventDefault();
                 closePanel();
-                window.dispatchEvent(new CustomEvent('toggle-ai-chat'));
+                toggleAiChat();
               }}
             >
               <img src={geminiLogo} alt="AI"/>
@@ -1092,7 +1080,7 @@ function Sidebar({ user, onLogout }) {
         onClick={(e) => {
           e.preventDefault();
           closePanel();
-          window.dispatchEvent(new CustomEvent('toggle-ai-chat'));
+          toggleAiChat();
         }}
         title="Trợ lý AI (Ý Chatbot)"
         aria-label="Mở trợ lý AI"

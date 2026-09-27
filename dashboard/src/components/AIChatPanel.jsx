@@ -7,6 +7,7 @@ import { Tooltip } from '../components/ui/tooltip';
 import { PLACEHOLDER_SERVICE_NAME } from '../config/business';
 import { clickableProps } from '../utils/a11y';
 import { useConfirm } from './ConfirmDialog';
+import { useAppUI } from '../context/AppUIContext';
 import { toast } from 'react-toastify';
 
 const BRANCH_STORAGE_KEY = 'yoi_ai_branch';
@@ -28,6 +29,7 @@ function getActionTitle(actions) {
 
 function AIChatPanel({ onClose, currentBranchId }) {
   const confirmDialog = useConfirm();
+  const { refreshBookings } = useAppUI();
   const [messages, setMessages] = useState(() => {
     try {
       const saved = localStorage.getItem(CHAT_STORAGE_KEY) || localStorage.getItem(LEGACY_CHAT_STORAGE_KEY);
@@ -246,7 +248,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
     setMessages(prev => [...prev, aiMsg].slice(-50));
     
     // Trigger calendars to refresh data
-    window.dispatchEvent(new CustomEvent('refresh-bookings'));
+    refreshBookings();
 
   } catch (err) {
     console.error('AI Command Error:', err);
@@ -295,8 +297,8 @@ function AIChatPanel({ onClose, currentBranchId }) {
       // Đánh dấu `undone` ngay trên tin nhắn (được lưu localStorage) → tải lại trang nút Hoàn tác không hiện lại
       setMessages(prev => [...prev.map(m => (m.id === messageId ? { ...m, undone: true } : m)), ...newMsgs].slice(-50));
 
-      // Dispatch global refresh-bookings event
-      window.dispatchEvent(new CustomEvent('refresh-bookings'));
+      // Trang Lịch hẹn tải lại
+      refreshBookings();
     } catch (err) {
       console.error('Undo booking error:', err);
       toast.error(`Không thể hoàn tác đặt lịch: ${err.message}`);
