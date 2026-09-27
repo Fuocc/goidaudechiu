@@ -33,12 +33,13 @@ const ACCESS_RULES = [
   { method: 'GET', path: new RegExp(`^/customers(/${ID})?$`), role: 'staff' },
   { method: 'POST', path: /^\/customers$/, role: 'staff' },
   { method: 'PUT', path: new RegExp(`^/customers/${ID}$`), role: 'staff' },
-  { method: 'DELETE', path: new RegExp(`^/customers/${ID}$`), role: 'staff' },
+  // DELETE /customers/:id không nằm trong bảng → mặc định chỉ admin (xóa hồ sơ khách là thao tác không hoàn tác được)
   { method: 'GET', path: new RegExp(`^/employees(/${ID})?$`), role: 'staff' },
   { method: 'GET', path: /^\/employee-schedules$/, role: 'staff' },
   { method: 'GET', path: /^\/beds$/, role: 'staff' },
   { method: 'GET', path: /^\/settings$/, role: 'staff' },
   { method: 'POST', path: /^\/notifications\/(subscribe|unsubscribe)$/, role: 'staff' },
+  { method: 'PUT', path: /^\/notifications\/preferences$/, role: 'staff' },
   { method: '*', path: /^\/notifications\/dashboard(\/.*)?$/, role: 'staff' },
 
   // ---- Dev ----

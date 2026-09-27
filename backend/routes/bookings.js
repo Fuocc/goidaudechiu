@@ -6,6 +6,7 @@ const bookingRateLimiter = require('../middleware/rateLimiter');
 const { holdLimiter } = require('../middleware/security');
 const { safeWebhookFetch } = require('../lib/safeUrl');
 const { sortByTourOrder } = require('../lib/tourOrder');
+const { UNDO_RESTORE_FIELDS, UNDO_MAX_AGE_MS, fingerprintRow, verifyUndoAction } = require('../lib/undoToken');
 
 // ---- Kiểm tra dữ liệu đầu vào (dùng cho request từ landing page / chưa đăng nhập) ----
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -223,7 +224,13 @@ async function notifyNewBooking(bookingData) {
       branch_id: bookingData.branch_id
     });
 
-    uniqueSubs.forEach(sub => {
+    // Bỏ các thiết bị đã tắt thông báo của chi nhánh này (cột muted_branch_ids; chưa có cột → gửi hết như cũ).
+    // Lọc ở server chứ không ở service worker: SW đăng ký userVisibleOnly nên nhận push là phải hiện thông báo.
+    const recipients = uniqueSubs.filter(sub =>
+      !(bookingData.branch_id && Array.isArray(sub.muted_branch_ids) && sub.muted_branch_ids.includes(bookingData.branch_id))
+    );
+
+    recipients.forEach(sub => {
       const pushConfig = {
         endpoint: sub.endpoint,
         keys: {
@@ -252,6 +259,11 @@ function getBroadcast(req) {
 
 // Normalize Vietnamese diacritics for Latin search
 const normalize = (str) => (str || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+// Lịch giữ chỗ tạm thời (POST /hold) — cùng điều kiện với các truy vấn LIKE '[GIỮ CHỖ TẠM THỜI]%' bên dưới
+const HOLD_NOTE_PREFIX = '[GIỮ CHỖ TẠM THỜI]';
+const isHoldBooking = (b) =>
+  b?.status === 'pending' && typeof b.internal_note === 'string' && b.internal_note.startsWith(HOLD_NOTE_PREFIX);
 
 /**
  * GET /api/bookings
@@ -591,24 +603,26 @@ router.delete('/hold', async (req, res) => {
 
 /**
  * POST /api/bookings/undo
- * Hoàn tác các thao tác của AI chat. Body: { actions: [{ type, booking_ids, snapshot? }] }
+ * Hoàn tác các thao tác của AI chat. Body: { actions: [{ type, booking_ids, snapshot?, after, iat, uid, sig }] }
+ * Action phải do chính server ký lúc AI thực hiện (xem lib/undoToken.js) — client không tự tạo/sửa được.
  *  - type 'create'                      → xóa các lịch vừa tạo (chỉ lịch tạo trong 24h và chưa hoàn thành)
  *  - type 'update' | 'check_in' | 'cancel' → khôi phục toàn bộ các trường từ snapshot (kể cả status)
+ * Lịch đã bị thay đổi sau thao tác của AI (dấu vân tay khác `after`) sẽ bị bỏ qua, không ghi đè.
  * Các action được hoàn tác theo thứ tự ngược (thao tác sau cùng hoàn tác trước).
  */
-const UNDO_RESTORE_FIELDS = [
-  'service_id', 'employee_id', 'bed_id', 'branch_id', 'customer_id', 'temporary_name',
-  'num_guests', 'booking_date', 'start_time', 'end_time', 'status', 'total_price',
-  'notes', 'internal_note', 'group_booking_id'
-];
 const UNDO_VALID_STATUSES = ['pending', 'confirmed', 'arrived', 'completed', 'cancelled'];
-const UNDO_CREATE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 router.post('/undo', async (req, res) => {
   try {
     const actions = Array.isArray(req.body?.actions) ? req.body.actions : [];
     if (actions.length === 0 || actions.length > 20) {
       return res.status(400).json({ success: false, error: 'Không có thao tác hợp lệ để hoàn tác.' });
+    }
+
+    // Kiểm tra chữ ký của tất cả action trước khi ghi bất cứ thứ gì
+    for (const action of actions) {
+      const check = verifyUndoAction(action, req.auth?.id);
+      if (!check.ok) return res.status(400).json({ success: false, error: check.error });
     }
 
     const broadcast = getBroadcast(req);
@@ -622,16 +636,26 @@ router.post('/undo', async (req, res) => {
         .slice(0, 50);
       if (ids.length === 0) continue;
 
-      if (action.type === 'create') {
-        const { data: rows, error: fetchErr } = await supabase
-          .from('bookings')
-          .select('id, created_at, status')
-          .in('id', ids);
-        if (fetchErr) throw fetchErr;
+      // Trạng thái hiện tại của các lịch — so với dấu vân tay `after` lúc AI vừa thực hiện
+      const { data: currentRows, error: fetchErr } = await supabase
+        .from('bookings')
+        .select('*')
+        .in('id', ids);
+      if (fetchErr) throw fetchErr;
+      const currentById = new Map((currentRows || []).map(r => [r.id, r]));
+      const unchangedSinceAction = (id) => {
+        const current = currentById.get(id);
+        return !!current && fingerprintRow(current) === action.after[id];
+      };
 
-        const deletable = (rows || [])
-          .filter(r => Date.now() - new Date(r.created_at).getTime() < UNDO_CREATE_MAX_AGE_MS && r.status !== 'completed')
-          .map(r => r.id);
+      if (action.type === 'create') {
+        const deletable = ids.filter(id => {
+          const r = currentById.get(id);
+          return r
+            && unchangedSinceAction(id)
+            && Date.now() - new Date(r.created_at).getTime() < UNDO_MAX_AGE_MS
+            && r.status !== 'completed';
+        });
         skipped.push(...ids.filter(id => !deletable.includes(id)));
 
         if (deletable.length > 0) {
@@ -645,6 +669,11 @@ router.post('/undo', async (req, res) => {
         for (const row of snapshot) {
           // Chỉ khôi phục những lịch thuộc đúng action này
           if (!row || typeof row.id !== 'string' || !ids.includes(row.id)) continue;
+          // Đã có người sửa lịch sau thao tác của AI (hoặc đã hoàn tác rồi) → không ghi đè
+          if (!unchangedSinceAction(row.id)) {
+            skipped.push(row.id);
+            continue;
+          }
 
           const patch = {};
           for (const field of UNDO_RESTORE_FIELDS) {
@@ -737,6 +766,11 @@ router.put('/:id', async (req, res) => {
 
     if (bkErr || !booking) return res.status(404).json({ error: 'Booking not found' });
 
+    // Lịch giữ chỗ tạm thời do khách đang đặt online: không cho sửa (xóa internal_note sẽ làm job dọn giữ chỗ bỏ sót)
+    if (isHoldBooking(booking)) {
+      return res.status(409).json({ error: 'Đây là lịch giữ chỗ tạm thời của khách đang đặt online, không thể chỉnh sửa.' });
+    }
+
     // 2) Load service (duration/price)
     const { data: service, error: svcErr } = await supabase
       .from('services')
@@ -781,6 +815,72 @@ router.put('/:id', async (req, res) => {
     // NOTE: total_price in your create flow is stored as service.price (not * num_guests)
     const total_price = service.price || 0;
 
+    // 5.1) Chặn trùng giờ với lịch khác của cùng nhân viên (kéo-thả / sửa chi tiết).
+    // Chỉ kiểm tra khi NV/ngày/giờ thật sự đổi → sửa ghi chú, tắt cảnh báo trên lịch vốn đã chồng nhau vẫn lưu được.
+    // Dashboard có thể gửi allow_conflict: true sau khi người dùng xác nhận "Vẫn lưu".
+    const targetDate = booking_date !== undefined ? booking_date : booking.booking_date;
+    const placementChanged = employee_id !== booking.employee_id
+      || targetDate !== booking.booking_date
+      || timeToMinutes(start_time) !== timeToMinutes(String(booking.start_time || '0:0'))
+      || timeToMinutes(end_time) !== timeToMinutes(String(booking.end_time || '0:0'));
+    if (placementChanged && req.body.allow_conflict !== true) {
+      const { data: sameDay, error: sameDayErr } = await supabase
+        .from('bookings')
+        .select('id, start_time, end_time, temporary_name, customers(name)')
+        .eq('employee_id', employee_id)
+        .eq('booking_date', targetDate)
+        .neq('status', 'cancelled')
+        .neq('id', req.params.id);
+      if (sameDayErr) throw sameDayErr;
+
+      const newStart = timeToMinutes(start_time);
+      const newEnd = timeToMinutes(end_time);
+      const conflicts = (sameDay || []).filter(b =>
+        b.start_time && b.end_time &&
+        timeToMinutes(String(b.start_time)) < newEnd && newStart < timeToMinutes(String(b.end_time))
+      );
+      if (conflicts.length > 0) {
+        return res.status(409).json({
+          code: 'BOOKING_CONFLICT',
+          error: 'Nhân viên đã có lịch trùng giờ',
+          conflicts: conflicts.map(c => ({
+            id: c.id,
+            customer_name: c.temporary_name || c.customers?.name || 'Khách',
+            start_time: String(c.start_time).substring(0, 5),
+            end_time: String(c.end_time).substring(0, 5)
+          }))
+        });
+      }
+    }
+
+    // 5.2) (Tùy chọn) cập nhật hồ sơ khách trong CÙNG request — trước đây dashboard gọi 2 request riêng,
+    // request thứ 2 lỗi thì dữ liệu chỉ cập nhật một nửa. Làm khách trước (hay lỗi nhất, VD trùng SĐT);
+    // nếu cập nhật lịch ở bước 6 lỗi thì ghi lại thông tin khách cũ.
+    let customerRollback = null;
+    const customerUpdate = req.body.customer_update;
+    const finalCustomerId = customer_id !== undefined ? customer_id : booking.customer_id;
+    if (customerUpdate && typeof customerUpdate === 'object' && finalCustomerId) {
+      const { data: oldCustomer, error: oldCustErr } = await supabase
+        .from('customers')
+        .select('id, name, phone, email, habits')
+        .eq('id', finalCustomerId)
+        .single();
+      if (oldCustErr || !oldCustomer) return res.status(404).json({ error: 'Customer not found' });
+
+      // Cùng cách ghi với PUT /customers/:id
+      const { name, phone, email, habits } = customerUpdate;
+      const { error: custErr } = await supabase
+        .from('customers')
+        .update({ name, phone, email, habits: habits || null })
+        .eq('id', finalCustomerId);
+      if (custErr) return res.status(400).json({ error: `Không cập nhật được thông tin khách: ${custErr.message}` });
+
+      customerRollback = {
+        id: oldCustomer.id,
+        data: { name: oldCustomer.name, phone: oldCustomer.phone, email: oldCustomer.email, habits: oldCustomer.habits }
+      };
+    }
+
     // 6) Update
     const { data: updated, error: upErr } = await supabase
       .from('bookings')
@@ -808,7 +908,13 @@ router.put('/:id', async (req, res) => {
       `)
       .single();
 
-    if (upErr) throw upErr;
+    if (upErr) {
+      if (customerRollback) {
+        const { error: rbErr } = await supabase.from('customers').update(customerRollback.data).eq('id', customerRollback.id);
+        if (rbErr) console.error('[bookings PUT] Không hoàn lại được thông tin khách:', rbErr.message);
+      }
+      throw upErr;
+    }
 
     // Broadcast SSE for live dashboard updates
     const broadcast = getBroadcast(req);

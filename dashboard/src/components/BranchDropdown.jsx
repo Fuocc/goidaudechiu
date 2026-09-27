@@ -1,7 +1,8 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FiCheck, FiPlus } from 'react-icons/fi';
 import { HiOutlineSelector } from 'react-icons/hi';
+import { clickableProps } from '../utils/a11y';
 import '../styles/BranchDropdown.css';
 
 export default function BranchDropdown({ branches, value, onChange }) {
@@ -35,6 +36,11 @@ export default function BranchDropdown({ branches, value, onChange }) {
     return fallbacks[idx % fallbacks.length] || fallbacks[0];
   };
 
+  const goAddBranch = () => {
+    setIsOpen(false);
+    navigate('/branches?action=add');
+  };
+
   return (
     <div className="branch-dropdown-container" ref={dropdownRef}>
       <button
@@ -60,13 +66,15 @@ export default function BranchDropdown({ branches, value, onChange }) {
           <div className="branch-dropdown-list">
             {branches.map((b) => {
               const isSelected = b.id === value;
+              const selectBranch = () => {
+                onChange(b.id);
+                setIsOpen(false);
+              };
               return (
                 <div
                   key={b.id}
-                  onClick={() => {
-                    onChange(b.id);
-                    setIsOpen(false);
-                  }}
+                  onClick={selectBranch}
+                  {...clickableProps(selectBranch)}
                   className={`branch-dropdown-item ${isSelected ? 'selected' : ''}`}
                 >
                   <img
@@ -85,10 +93,8 @@ export default function BranchDropdown({ branches, value, onChange }) {
           <div className="branch-dropdown-divider" />
 
           <div
-            onClick={() => {
-              setIsOpen(false);
-              navigate('/branches?action=add');
-            }}
+            onClick={goAddBranch}
+            {...clickableProps(goAddBranch)}
             className="branch-dropdown-add"
           >
             <FiPlus size={20} className="add-icon" />

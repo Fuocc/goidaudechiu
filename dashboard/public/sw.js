@@ -8,37 +8,10 @@ self.addEventListener('activate', function (event) {
   event.waitUntil(clients.claim());
 });
 
-// Hàm hỗ trợ đọc cấu hình từ IndexedDB
-function getPreferenceFromDB() {
-  return new Promise((resolve) => {
-    const request = indexedDB.open('yoi_settings_db', 1);
-    
-    request.onupgradeneeded = function(e) {
-      const db = e.target.result;
-      if (!db.objectStoreNames.contains('prefs')) {
-        db.createObjectStore('prefs');
-      }
-    };
-
-    request.onsuccess = function(e) {
-      const db = e.target.result;
-      if (!db.objectStoreNames.contains('prefs')) {
-        resolve(null);
-        return;
-      }
-      const transaction = db.transaction(['prefs'], 'readonly');
-      const store = transaction.objectStore('prefs');
-      const getReq = store.get('notifications');
-      
-      getReq.onsuccess = function() { resolve(getReq.result); };
-      getReq.onerror = function() { resolve(null); };
-    };
-
-    request.onerror = function() { resolve(null); };
-  });
-}
-
-// Lắng nghe sự kiện đẩy (Push Event) từ Server gửi tới
+// Lắng nghe sự kiện đẩy (Push Event) từ Server gửi tới.
+// Lọc theo chi nhánh đã được làm ở server (push_subscriptions.muted_branch_ids): đăng ký với userVisibleOnly
+// nên mọi push nhận được đều PHẢI hiện thông báo, không được bỏ qua ở đây (Chrome sẽ hiện thông báo mặc định
+// và có thể thu hồi quyền push).
 self.addEventListener('push', function (event) {
   event.waitUntil((async () => {
     let data = { title: 'Ý Ơi Spa', body: 'Bạn có một thông báo mới từ hệ thống!' };
@@ -50,13 +23,6 @@ self.addEventListener('push', function (event) {
       data = { title: 'Ý Ơi Spa', body: event.data.text() };
     }
   }
-
-    // --- Lọc thông báo dựa trên cài đặt chi nhánh ---
-    if (data.branch_id) {
-      const prefs = await getPreferenceFromDB() || { branch1: true, branch2: true };
-      if (data.branch_id === 1 && !prefs.branch1) return;
-      if (data.branch_id === 2 && !prefs.branch2) return;
-    }
 
     const options = {
       body: data.body,

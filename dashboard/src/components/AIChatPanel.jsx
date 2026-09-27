@@ -4,8 +4,15 @@ import { request } from '../api';
 import '../styles/ai-chat.css';
 import geminiLogo from '../assets/gemini-logo.svg';
 import { Tooltip } from '../components/ui/tooltip';
+import { PLACEHOLDER_SERVICE_NAME } from '../config/business';
+import { clickableProps } from '../utils/a11y';
+import { useConfirm } from './ConfirmDialog';
+import { useAppUI } from '../context/AppUIContext';
+import { toast } from 'react-toastify';
 
 const BRANCH_STORAGE_KEY = 'yoi_ai_branch';
+const CHAT_STORAGE_KEY = 'yoi_ai_chat_messages';
+const LEGACY_CHAT_STORAGE_KEY = 'chatlgbt_messages'; // tên cũ — đọc một lần để không mất lịch sử chat
 
 // Tiêu đề thẻ kết quả dựa trên các thao tác THỰC SỰ đã thay đổi lịch (backend trả về `actions`)
 function getActionTitle(actions) {
@@ -21,9 +28,11 @@ function getActionTitle(actions) {
 }
 
 function AIChatPanel({ onClose, currentBranchId }) {
+  const confirmDialog = useConfirm();
+  const { refreshBookings } = useAppUI();
   const [messages, setMessages] = useState(() => {
     try {
-      const saved = localStorage.getItem('chatlgbt_messages');
+      const saved = localStorage.getItem(CHAT_STORAGE_KEY) || localStorage.getItem(LEGACY_CHAT_STORAGE_KEY);
       if (saved) {
         return JSON.parse(saved);
       }
@@ -60,7 +69,6 @@ function AIChatPanel({ onClose, currentBranchId }) {
   // States for Custom UI and Actions
   const [isBranchSelectOpen, setIsBranchSelectOpen] = useState(false);
   const [replyingTo, setReplyingTo] = useState(null); // { bookingId, label }
-  const [undoneMessages, setUndoneMessages] = useState([]); // List of message IDs whose bookings were undone
   const [undoLoadingId, setUndoLoadingId] = useState(null); // Message ID currently performing undo
 
   const branchDropdownRef = useRef(null);
@@ -104,7 +112,8 @@ function AIChatPanel({ onClose, currentBranchId }) {
   // Save chat history to localStorage
   useEffect(() => {
     try {
-      localStorage.setItem('chatlgbt_messages', JSON.stringify(messages));
+      localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(messages));
+      localStorage.removeItem(LEGACY_CHAT_STORAGE_KEY); // đã chuyển sang khóa mới
     } catch (e) {
       console.error('Failed to save chat history', e);
     }
@@ -194,7 +203,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
         reply_to_booking_ids: replyContextIds,
         // Chỉ gửi hội thoại thật (bỏ tin lỗi / hoàn tác / chào) để AI không bị nhiễu ngữ cảnh
         conversation_history: messages
-          .filter(m => m.id !== 'welcome' && !m.isError && !m.isUndoSuccess && m.text)
+          .filter(m => m.id !== 'welcome' && !m.isError && !m.isUndoSuccess && !m.isUndoNote && m.text)
           .slice(-10)
           .map(m => ({
             role: m.sender === 'user' ? 'user' : 'model',
@@ -227,7 +236,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
     // Auto-set replyingTo if checked-in a "Giữ chỗ" booking
     const checkIn = actions.find(a => a.type === 'check_in');
     if (checkIn && data.tool_result?.bookings) {
-      const hasGiuCho = data.tool_result.bookings.some(b => b?.services?.name === 'Giữ chỗ');
+      const hasGiuCho = data.tool_result.bookings.some(b => b?.services?.name === PLACEHOLDER_SERVICE_NAME);
       if (hasGiuCho) {
         setReplyingTo({
           bookingIds: checkIn.booking_ids,
@@ -239,7 +248,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
     setMessages(prev => [...prev, aiMsg].slice(-50));
     
     // Trigger calendars to refresh data
-    window.dispatchEvent(new CustomEvent('refresh-bookings'));
+    refreshBookings();
 
   } catch (err) {
     console.error('AI Command Error:', err);
@@ -262,29 +271,37 @@ function AIChatPanel({ onClose, currentBranchId }) {
     setUndoLoadingId(msg.id);
     const messageId = msg.id;
     try {
-      await request('/bookings/undo', {
+      const result = await request('/bookings/undo', {
         method: 'POST',
         body: JSON.stringify({ actions: msg.actions })
       });
 
-      // Track as undone
-      setUndoneMessages(prev => [...prev, messageId]);
-
       // Append a system message confirming the undo
-      const aiMsg = {
+      const newMsgs = [{
         id: (Date.now() + 2).toString(),
         sender: 'ai',
         text: 'Hoàn tác đặt lịch thành công!',
         isUndoSuccess: true,
         time: getNowTime()
-      };
-      setMessages(prev => [...prev, aiMsg].slice(-50));
+      }];
+      const skippedCount = Array.isArray(result?.skipped) ? result.skipped.length : 0;
+      if (skippedCount > 0) {
+        newMsgs.push({
+          id: (Date.now() + 3).toString(),
+          sender: 'ai',
+          text: `Có ${skippedCount} lịch đã được chỉnh sửa sau thao tác của AI nên được giữ nguyên, không hoàn tác.`,
+          isUndoNote: true,
+          time: getNowTime()
+        });
+      }
+      // Đánh dấu `undone` ngay trên tin nhắn (được lưu localStorage) → tải lại trang nút Hoàn tác không hiện lại
+      setMessages(prev => [...prev.map(m => (m.id === messageId ? { ...m, undone: true } : m)), ...newMsgs].slice(-50));
 
-      // Dispatch global refresh-bookings event
-      window.dispatchEvent(new CustomEvent('refresh-bookings'));
+      // Trang Lịch hẹn tải lại
+      refreshBookings();
     } catch (err) {
       console.error('Undo booking error:', err);
-      alert(`Không thể hoàn tác đặt lịch: ${err.message}`);
+      toast.error(`Không thể hoàn tác đặt lịch: ${err.message}`);
     } finally {
       setUndoLoadingId(null);
     }
@@ -322,7 +339,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
         ) : (
           <div className="ai-chat-messages">
             {messages.map((msg) => {
-              const isUndone = undoneMessages.includes(msg.id);
+              const isUndone = !!msg.undone;
               return (
                 <div key={msg.id} className={`ai-chat-message-row ${msg.sender} ${isUndone ? 'undone' : ''}`}>
                   {/* Welcome message */}
@@ -511,15 +528,17 @@ function AIChatPanel({ onClose, currentBranchId }) {
                     const shortName = parts[0] || b.name;
                     const address = parts[1] || '';
                     const isActive = b.id === selectedBranch;
+                    const chooseBranch = () => {
+                      setSelectedBranch(b.id);
+                      try { localStorage.setItem(BRANCH_STORAGE_KEY, b.id); } catch (e) { /* ignore */ }
+                      setIsBranchSelectOpen(false);
+                    };
                     return (
                       <div
                         key={b.id}
                         className={`custom-branch-option ${isActive ? 'active' : ''}`}
-                        onClick={() => {
-                          setSelectedBranch(b.id);
-                          try { localStorage.setItem(BRANCH_STORAGE_KEY, b.id); } catch (e) { /* ignore */ }
-                          setIsBranchSelectOpen(false);
-                        }}
+                        onClick={chooseBranch}
+                        {...clickableProps(chooseBranch)}
                       >
                         <div className="branch-option-short">{shortName}</div>
                         {address && <div className="branch-option-address">{address}</div>}
@@ -531,8 +550,9 @@ function AIChatPanel({ onClose, currentBranchId }) {
                       <div className='option-divider' style={{ backgroundColor: '#E7E5E4', margin: '8px auto', height: 1, width: 'calc(100% - 16px)' }}>
                       </div>
                       <button
-                        onClick={() => {
-                          if (window.confirm('Bạn có chắc chắn muốn xóa toàn bộ lịch sử chat?')) {
+                        type="button"
+                        onClick={async () => {
+                          if (await confirmDialog({ message: 'Bạn có chắc chắn muốn xóa toàn bộ lịch sử chat?', confirmText: 'Xóa', danger: true })) {
                             const welcomeMsg = [
                               {
                                 id: 'welcome',
@@ -543,8 +563,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
                             ];
                             setMessages(welcomeMsg);
                             setReplyingTo(null);
-                            setUndoneMessages([]);
-                            localStorage.removeItem('chatlgbt_messages');
+                            localStorage.removeItem(CHAT_STORAGE_KEY);
                           }
                         }}
                         style={{
@@ -570,7 +589,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
               )}
             </div>
 
-            <button type="submit" className="ai-chat-arrow-btn" disabled={!inputText.trim() || loading}>
+            <button type="submit" className="ai-chat-arrow-btn" aria-label="Gửi" disabled={!inputText.trim() || loading}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="12" y1="19" x2="12" y2="5"></line>
                 <polyline points="5 12 12 5 19 12"></polyline>

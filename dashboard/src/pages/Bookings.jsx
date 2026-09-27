@@ -1,157 +1,41 @@
-import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
-import { FiPlus, FiChevronLeft, FiChevronRight, FiCalendar, FiList, FiMoreVertical, FiX, FiAlertTriangle } from 'react-icons/fi';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { toast } from 'react-toastify';
-import TimePickerInput from '../components/TimePickerInput';
 
 import {
   getBookingsRange, createBooking, updateBooking, deleteBooking,
-  getBranches, getServices, getEmployees, getCustomers, updateCustomer, getEmployeeSchedules,
+  getBranches, getServices, getEmployees, getCustomers, getEmployeeSchedules,
   getSettings
 } from '../api';
 
-import userIcon from '../assets/user-icon.svg';
-import shopIcon from '../assets/shop-icon.svg';
-import clockIcon from '../assets/clock-icon.svg';
-import noteIcon from '../assets/note-icon.svg';
-
-import { Tooltip } from '../components/ui/tooltip';
-import { DatePicker, parseDate } from "@chakra-ui/react"
-import { subscribeRealtime } from '../realtime';
-import BranchDropdown from '../components/BranchDropdown';
-// import '../styles/timepicker.css';
+import { subscribeRealtime, REALTIME_RECONNECTED } from '../realtime';
+import { shortBranchName } from '../utils/format';
+import { isHoldBooking } from '../utils/booking';
+import { describeError } from '../utils/notify';
+import { useConfirm } from '../components/ConfirmDialog';
+import { useModalA11y } from '../hooks/useModalA11y';
+import { useAppUI } from '../context/AppUIContext';
+import { WALK_IN_CUSTOMER_NAME } from '../config/business';
+import { useIsMobile, MOBILE_BREAKPOINT } from '../hooks/useIsMobile';
+import {
+  OPEN_HOUR, ROW_HEIGHT, toDateStr, timeToMinutes, normalize, normalizeName,
+  WALK_IN_NORMALIZED, PLACEHOLDER_NORMALIZED, formatTime,
+  getLogicalDate, convertYToTime, calculateEndTime
+} from './bookings/helpers';
+import BookingToolbar from './bookings/BookingToolbar';
+import CalendarView from './bookings/CalendarView';
+import BookingListView from './bookings/BookingListView';
+import BookingDetailModal from './bookings/BookingDetailModal';
+import CreateBookingModal from './bookings/CreateBookingModal';
+import DragConfirmDialog from './bookings/DragConfirmDialog';
 import '../styles/bookings.css';
-// ---- Helpers ----
-const OPEN_HOUR = 9;
-const CLOSE_HOUR = 23;
-const HOURS = Array.from({ length: CLOSE_HOUR - OPEN_HOUR }, (_, i) => OPEN_HOUR + i);
 
-function getWeekDates(date) {
-  const d = new Date(date);
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1); // Monday start
-  const monday = new Date(d);
-  monday.setDate(diff);
-  return Array.from({ length: 7 }, (_, i) => {
-    const dd = new Date(monday);
-    dd.setDate(monday.getDate() + i);
-    return dd;
-  });
-}
-
-function toDateStr(d) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-function timeToMinutes(t) {
-  if (!t) return 0;
-  // Handle AM/PM if present
-  let timeStr = t.toLowerCase();
-  let isPM = timeStr.includes('pm');
-  let isAM = timeStr.includes('am');
-
-  // Clean string to get HH:mm
-  let cleanTime = timeStr.replace(/am|pm/g, '').trim();
-  let [h, m] = cleanTime.split(':').map(Number);
-
-  if (isPM && h < 12) h += 12;
-  if (isAM && h === 12) h = 0;
-
-  return (h || 0) * 60 + (m || 0);
-}
-
-const DAY_NAMES = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
-
-const timeToPixels = (t) => {
-  if (!t) return 0;
-  const startMins = OPEN_HOUR * 60;
-  const currentMins = timeToMinutes(t);
-  return ((currentMins - startMins) / 60) * 100;
-};
-
-const STATUS_COLORS = {
-  confirmed: { bg: '#e6f4ec', border: '#0d8a3f', text: '#0d8a3f' },
-  pending: { bg: '#fef3e2', border: '#e67e22', text: '#e67e22' },
-  completed: { bg: '#eff6ff', border: '#2563eb', text: '#2563eb' }
-};
-
-const normalize = (str) => (str || '').normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-
-
-const getBookingColor = (booking) => {
-  if (booking.status === 'pending' && booking.internal_note) {
-    return STATUS_COLORS.pending.bg;
-  }
-
-  const name = normalize(booking.temporary_name || booking.customers?.name || '');
-  if (name === 'khach la') {
-    return '#F1F1EF'; // Grey
-  }
-
-  return booking.services?.color || '#EDF4EB';
-};
-
-const formatPrice = (v) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(v || 0);
-const formatTime = (t) => {
-  if (!t) return '-';
-  const cleanTime = t.substring(0, 5);
-  const [hStr, mStr] = cleanTime.split(':');
-  const h = parseInt(hStr);
-  if (isNaN(h)) return cleanTime;
-  const period = h < 12 ? 'AM' : 'PM';
-  let h12 = h % 12;
-  if (h12 === 0) h12 = 12;
-  return `${String(h12).padStart(2)}:${mStr} ${period}`;
-};
-
-
-const normalizeName = (name) => {
-  if (!name) return '';
-  let cleaned = name.trim();
-  if (cleaned.toLowerCase().startsWith('c ')) {
-    cleaned = 'Chị ' + cleaned.substring(2);
-  } else if (cleaned.toLowerCase().startsWith('a ')) {
-    cleaned = 'Anh ' + cleaned.substring(2);
-  }
-  return cleaned.split(/\s+/)
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-    .join(' ');
-};
-
-const getLogicalDate = () => {
-  const d = new Date();
-  if (d.getHours() > 22 || (d.getHours() === 22 && d.getMinutes() >= 15)) {
-    d.setDate(d.getDate() + 1);
-  }
-  return d;
-};
-
-const formatDateVietnamese = (date) => {
-  const days = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
-  const dayName = days[date.getDay()];
-  const d = date.getDate();
-  const m = date.getMonth() + 1;
-  const y = date.getFullYear();
-
-  return (
-    <>
-      {dayName}, {d}/{m} <span style={{ color: '#A8A29E' }}>{y}</span>
-    </>
-  );
-};
-
-function Bookings({ data }) {
+function Bookings() {
+  const confirmDialog = useConfirm();
   // Responsive: detect mobile for PWA
-  const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 768);
-
-  useEffect(() => {
-    const handleResize = () => setIsMobile(window.innerWidth <= 768);
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
+  const isMobile = useIsMobile();
 
   // Mobile mở mặc định ở list view, desktop ở calendar view (vẫn đổi được bằng nút toggle)
-  const [viewMode, setViewMode] = useState(() => (window.innerWidth <= 768 ? 'list' : 'calendar')); // 'calendar' | 'list'
-  const effectiveViewMode = viewMode;
+  const [viewMode, setViewMode] = useState(() => (window.innerWidth <= MOBILE_BREAKPOINT ? 'list' : 'calendar')); // 'calendar' | 'list'
 
   const [currentDate, setCurrentDate] = useState(getLogicalDate());
 
@@ -163,55 +47,16 @@ function Bookings({ data }) {
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(new Date());
   const loadBookingsRef = useRef(null);
+  const { bookingsRefreshKey, gotoTarget, clearGotoTarget } = useAppUI();
 
+  // AI chat vừa đổi lịch → tải lại. Bỏ qua lần mount đầu (trang tự tải) và các lần đã xử lý.
+  const handledRefreshKeyRef = useRef(bookingsRefreshKey);
   useEffect(() => {
-    const handleRefresh = () => {
-      // Gọi bản loadBookings MỚI NHẤT qua ref (effect này không chạy lại khi đổi ngày/chi nhánh → tránh tải nhầm ngày cũ).
-      // loadBookings tải lại cả lịch hẹn + nhân viên (AI có thể đổi tour trực).
-      loadBookingsRef.current?.();
-    };
-    const handleEditDraftEvent = (e) => {
-      const { draft, matched } = e.detail;
-      handleEditDraft(draft, matched);
-    };
-
-    window.addEventListener('refresh-bookings', handleRefresh);
-    window.addEventListener('edit-booking-draft', handleEditDraftEvent);
-    return () => {
-      window.removeEventListener('refresh-bookings', handleRefresh);
-      window.removeEventListener('edit-booking-draft', handleEditDraftEvent);
-    };
-  }, [services, employees]);
-
-  const handleEditDraft = (draft, matched) => {
-    const matchedService = services.find(s => s.id === draft.service_id);
-    const matchedEmployee = employees.find(e => e.id === draft.employee_id);
-
-    setBookForm({
-      branch_id: draft.branch_id || filterBranch || (branches[0]?.id || ''),
-      service_id: draft.service_id || '',
-      num_guests: 1,
-      customer_id: '',
-      customer_name: draft.temporary_name || '',
-      customer_phone: '',
-      customer_email: '',
-      service_search: matchedService ? matchedService.name : '',
-      employee_search: matchedEmployee ? matchedEmployee.name : '',
-      employee_id: draft.employee_id || '',
-      booking_date: draft.booking_date || toDateStr(new Date()),
-      start_time: draft.start_time ? draft.start_time.substring(0, 5) : '--:--',
-      end_time: draft.end_time ? draft.end_time.substring(0, 5) : '--:--',
-      notes: draft.notes || ''
-    });
-
-    if (matchedService) {
-      setSelectedService(matchedService);
-    }
-
-    setCustomerView('default');
-    setBookStep(1);
-    setModalOpen(true);
-  };
+    if (bookingsRefreshKey === handledRefreshKeyRef.current) return;
+    handledRefreshKeyRef.current = bookingsRefreshKey;
+    // Gọi bản loadBookings MỚI NHẤT qua ref; tải lại cả lịch hẹn + nhân viên (AI có thể đổi tour trực).
+    loadBookingsRef.current?.();
+  }, [bookingsRefreshKey]);
 
   // Booking modal state
   const [modalOpen, setModalOpen] = useState(false);
@@ -219,69 +64,39 @@ function Bookings({ data }) {
   const [detailEdit, setDetailEdit] = useState(null);
   const [detailSaving, setDetailSaving] = useState(false);
   const [detailCustomerView, setDetailCustomerView] = useState('selected'); // 'selected', 'searching', 'creating'
-  const [employeesByBranch, setEmployeesByBranch] = useState([]); // for dropdown in detail edit
   const [bookForm, setBookForm] = useState({
     branch_id: '', service_id: '', num_guests: 1,
     customer_name: '', customer_phone: '', customer_email: '',
     booking_date: '', start_time: '', notes: ''
   });
-  const [availSlots, setAvailSlots] = useState([]);
-  const [bookStep, setBookStep] = useState(1);
   const [selectedService, setSelectedService] = useState(null);
-  const [slotsLoading, setSlotsLoading] = useState(false);
   const [searchSuggestions, setSearchSuggestions] = useState({ type: null, data: [], loading: false });
   const [customerView, setCustomerView] = useState('default'); // 'default', 'searching', 'selected', 'creating'
   const [showCalendar, setShowCalendar] = useState(false);
   const [detailTab, setDetailTab] = useState('schedule'); // 'schedule' or 'customer'
   const [employeeSchedules, setEmployeeSchedules] = useState([]);
   const [showDetailMore, setShowDetailMore] = useState(false);
-  const [isDuplicating, setIsDuplicating] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   // Drag-and-drop reorder state
   const [cardDrag, setCardDrag] = useState(null); // { booking, startCol, startTop }
-  const [cardDragClone, setCardDragClone] = useState(null);
   const [dragConfirm, setDragConfirm] = useState(null); // { booking, fromStaff, fromTime, toStaff, toTime, toStaffId, newDate, newStart, newEnd }
   // Drag-to-create state
   const [dragInfo, setDragInfo] = useState(null); // { startY, currentY, staffId, staffName, columnEl }
   const [hoverInfo, setHoverInfo] = useState(null); // { staffId, y, colLeft, colWidth }
-  const [bufferTime, setBufferTime] = useState(15);
   const [sysSettings, setSysSettings] = useState({});
   const calendarRef = useRef(null);
   const moreMenuRef = useRef(null);
   const searchTimeoutRef = useRef(null);
+  const searchSeqRef = useRef(0);
+  const bookFormInitialRef = useRef(''); // form lúc mở modal tạo lịch (JSON) — so sánh để biết đã sửa chưa
   const gridRef = useRef(null);
   const nowLineRef = useRef(null);
-
-  const weekDates = useMemo(() => getWeekDates(currentDate), [currentDate]);
-
-  const bodyRef = useRef(null);
-  const [scrollbarWidth, setScrollbarWidth] = useState(0);
 
   const notify = (msg) => {
     toast.success(msg || "Cập nhật thành công", {
       position: "bottom-right"
     });
   };
-
-  useLayoutEffect(() => {
-    if (!bodyRef.current) return;
-
-    const calculate = () => {
-      const el = bodyRef.current;
-      const width = el.offsetWidth - el.clientWidth;
-      setScrollbarWidth(width);
-    };
-
-    const observer = new ResizeObserver(() => {
-      calculate();
-    });
-
-    observer.observe(bodyRef.current);
-
-    calculate();
-
-    return () => observer.disconnect();
-  }, [data]);
 
   useEffect(() => {
     loadInitialData();
@@ -299,6 +114,13 @@ function Bookings({ data }) {
     filterBranchRef.current = filterBranch;
   }, [filterBranch]);
 
+  // Chống race condition: chỉ nhận kết quả của lần gọi mới nhất (bấm đổi ngày liên tục → response về lệch thứ tự)
+  const loadSeqRef = useRef(0);
+  const refreshSeqRef = useRef(0);
+  const [loadError, setLoadError] = useState(null);
+  // 'yyyy-mm-dd|branchId' của lần loadBookings gần nhất đã xong (dùng để biết khi nào nhảy tới lịch được)
+  const [loadedKey, setLoadedKey] = useState(null);
+
   // Ultra-fast helper to refresh ONLY bookings without refetching employees/settings/schedules.
   // This drastically reduces API calls from 4 to 1 per real-time event.
   const refreshBookingsOnly = async () => {
@@ -306,11 +128,15 @@ function Bookings({ data }) {
     const dateStr = toDateStr(currentDateRef.current);
     if (!branchId) return;
 
+    const seq = ++refreshSeqRef.current;
     try {
       const bookingsData = await getBookingsRange(dateStr, dateStr, branchId);
+      // Bỏ kết quả nếu đã có lần làm mới sau, hoặc người dùng vừa chuyển ngày/chi nhánh trong lúc chờ
+      if (seq !== refreshSeqRef.current || branchId !== filterBranchRef.current || dateStr !== toDateStr(currentDateRef.current)) return;
       setBookings(bookingsData.filter(b => b.status !== 'cancelled'));
     } catch (err) {
-
+      // Lỗi khi làm mới nền: giữ nguyên dữ liệu đang hiển thị, không làm phiền người dùng
+      console.warn('[bookings] Làm mới realtime lỗi:', err?.message);
     }
   };
 
@@ -341,7 +167,9 @@ function Bookings({ data }) {
       'booking.updated': scheduleRefresh,
       'booking.deleted': scheduleRefresh,
       'booking.hold': scheduleRefresh,
-      'booking.hold_released': scheduleRefresh
+      'booking.hold_released': scheduleRefresh,
+      // Kết nối realtime bị đứt rồi nối lại → các sự kiện trong lúc đứt đã lỡ → tải lại lịch
+      [REALTIME_RECONNECTED]: scheduleRefresh
     });
 
     return () => {
@@ -350,92 +178,48 @@ function Bookings({ data }) {
     };
   }, []); // Connect once on mount
 
-  // Effect to handle navigating/scrolling to a specific booking from a notification
+  // ---- Nhảy tới lịch khi bấm thông báo (target đến từ AppUIContext) ----
+  // Bước 1: chuyển sang đúng chi nhánh + ngày, giữ lại lịch cần tìm chờ dữ liệu của ngày đó tải xong.
+  const [pendingGoto, setPendingGoto] = useState(null); // { bookingId, key: 'yyyy-mm-dd|branchId' }
+  const suppressNowLineScrollRef = useRef(false);
   useEffect(() => {
-    const handleGotoBooking = (detail) => {
-      if (!detail || !detail.bookingId || !detail.bookingDate) return;
-
-      // 1. Switch to the correct branch if different
-      let targetBranchId = detail.branchId;
-      if (!targetBranchId && detail.branchName && branches.length > 0) {
-        const isCN1 = detail.branchName.includes('CN 1') || detail.branchName.includes('CN1');
-        const isCN2 = detail.branchName.includes('CN 2') || detail.branchName.includes('CN2');
-        const matched = branches.find(b => {
-          const name = b.name || '';
-          if (isCN1) return name.includes('CN 1') || name.includes('CN1');
-          if (isCN2) return name.includes('CN 2') || name.includes('CN2');
-          return name.toLowerCase().includes(detail.branchName.toLowerCase());
-        });
-        if (matched) {
-          targetBranchId = matched.id;
-        }
-      }
-
-      if (targetBranchId && targetBranchId !== filterBranchRef.current) {
-        setFilterBranch(targetBranchId);
-      }
-
-      // 2. Change the date of the calendar grid
-      const targetDate = new Date(detail.bookingDate + 'T00:00:00');
-      setCurrentDate(targetDate);
-
-      // 3. Wait for the state to update, the new date's bookings to load and the DOM to render
-      // We can poll the DOM for the booking card element
-      let attempts = 0;
-      const interval = setInterval(() => {
-        // Card gộp nhóm trên mobile chỉ mang id của lịch đầu → tìm thêm theo data-booking-ids
-        const cardEl = document.getElementById(`booking-card-${detail.bookingId}`)
-          || document.querySelector(`[data-booking-ids~="${detail.bookingId}"]`);
-        if (cardEl) {
-          clearInterval(interval);
-          // Scroll to the card
-          cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-
-          // Add highlighting class
-          cardEl.classList.add('highlight-appointment');
-
-          // Remove highlight after 3 seconds
-          setTimeout(() => {
-            cardEl.classList.remove('highlight-appointment');
-          }, 3000);
-        }
-        attempts++;
-        if (attempts > 60) { // Timeout after 6 seconds (60 * 100ms)
-          clearInterval(interval);
-        }
-      }, 100);
-    };
-
-    // Check sessionStorage on mount and when bookings are loaded
-    const checkSessionStorage = () => {
-      const stored = sessionStorage.getItem('goto_booking');
-      if (stored) {
-        try {
-          const detail = JSON.parse(stored);
-          sessionStorage.removeItem('goto_booking'); // Clear so we don't trigger again on subsequent renders
-          handleGotoBooking(detail);
-        } catch (e) {
-
-        }
-      }
-    };
-
-    // Listen to custom event
-    const onGotoEvent = (e) => {
-      handleGotoBooking(e.detail);
-    };
-
-    window.addEventListener('goto-booking', onGotoEvent);
-
-    // We also want to check sessionStorage when bookings array changes (which means loading has finished)
-    if (!loading && bookings.length > 0) {
-      checkSessionStorage();
+    if (!gotoTarget) return;
+    if (!gotoTarget.bookingId || !gotoTarget.bookingDate) {
+      clearGotoTarget();
+      return;
     }
+    let targetBranchId = gotoTarget.branchId;
+    if (!targetBranchId && gotoTarget.branchName) {
+      if (branches.length === 0) return; // chờ tải danh sách chi nhánh để dò theo tên
+      const wanted = shortBranchName(gotoTarget.branchName);
+      targetBranchId = branches.find(b => shortBranchName(b.name) === wanted)?.id;
+    }
+    const branchId = targetBranchId || filterBranchRef.current;
+    if (branchId && branchId !== filterBranchRef.current) setFilterBranch(branchId);
 
-    return () => {
-      window.removeEventListener('goto-booking', onGotoEvent);
-    };
-  }, [loading, bookings, branches]);
+    suppressNowLineScrollRef.current = true; // không tự cuộn tới vạch "bây giờ" đè lên việc cuộn tới lịch
+    setLoadedKey(null); // chờ lần tải MỚI của ngày/chi nhánh đích, không dùng dữ liệu đang hiển thị
+    setCurrentDate(new Date(gotoTarget.bookingDate + 'T00:00:00'));
+    setPendingGoto({ bookingId: gotoTarget.bookingId, key: `${gotoTarget.bookingDate}|${branchId || ''}` });
+    clearGotoTarget();
+  }, [gotoTarget, branches, clearGotoTarget]);
+
+  // Bước 2: dữ liệu của đúng ngày/chi nhánh đã tải và hiển thị → cuộn tới lịch + tô sáng 3 giây
+  useEffect(() => {
+    if (!pendingGoto || loading || loadedKey !== pendingGoto.key) return;
+    const { bookingId } = pendingGoto;
+    setPendingGoto(null);
+    // Thẻ gộp nhóm trên mobile chỉ mang id của lịch đầu → tìm thêm theo data-booking-ids
+    const cardEl = document.getElementById(`booking-card-${bookingId}`)
+      || document.querySelector(`[data-booking-ids~="${bookingId}"]`);
+    if (!cardEl) {
+      toast.info('Không tìm thấy lịch hẹn này trên màn hình (có thể đã bị hủy hoặc đổi sang ngày khác).');
+      return;
+    }
+    cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    cardEl.classList.add('highlight-appointment');
+    setTimeout(() => cardEl.classList.remove('highlight-appointment'), 3000);
+  }, [pendingGoto, loading, loadedKey, bookings]);
 
   // --- Drag-to-create: global mousemove/mouseup ---
   useEffect(() => {
@@ -445,7 +229,8 @@ function Bookings({ data }) {
       const colRect = dragInfo.columnEl.getBoundingClientRect();
       const rawY = e.clientY - colRect.top;
       const snappedY = Math.max(dragInfo.startY, Math.ceil(rawY / 25) * 25);
-      setDragInfo(prev => prev ? { ...prev, currentY: snappedY } : null);
+      // Chỉ cập nhật khi sang ô mới (trả về prev → không render lại)
+      setDragInfo(prev => (prev && prev.currentY !== snappedY ? { ...prev, currentY: snappedY } : prev));
     };
 
     const handleMouseUp = () => {
@@ -487,7 +272,12 @@ function Bookings({ data }) {
         const rect = targetCol.getBoundingClientRect();
         const rawY = e.clientY - rect.top;
         const snappedY = Math.floor(rawY / ROW_HEIGHT) * ROW_HEIGHT;
-        setCardDrag(prev => prev ? { ...prev, currentCol: targetCol, currentTop: snappedY } : null);
+        // Chỉ cập nhật khi sang cột / ô mới (trả về prev → không render lại)
+        setCardDrag(prev => (
+          prev && (prev.currentCol !== targetCol || prev.currentTop !== snappedY)
+            ? { ...prev, currentCol: targetCol, currentTop: snappedY }
+            : prev
+        ));
       }
     };
 
@@ -567,20 +357,20 @@ function Bookings({ data }) {
       setServices(s);
       setSysSettings(settingsData || {});
 
-      if (settingsData && settingsData.buffer_time) {
-        setBufferTime(parseInt(settingsData.buffer_time) || 0);
-      }
-
-      if (b.length > 0 && !filterBranch) {
-        setFilterBranch(b[0].id);
+      // Dùng dạng hàm: nếu trong lúc chờ đã chọn chi nhánh (VD bấm thông báo) thì không ghi đè về chi nhánh đầu
+      if (b.length > 0) {
+        setFilterBranch(prev => prev || b[0].id);
       }
     } catch (err) {
-
+      console.error('[bookings] Không tải được chi nhánh/dịch vụ:', err);
+      setLoadError(describeError(err));
     }
   };
 
   const loadBookings = async () => {
+    const seq = ++loadSeqRef.current;
     setLoading(true);
+    setLoadError(null);
     try {
       const dayStr = toDateStr(currentDate);
       // Fetch bookings, employees, schedules AND latest settings
@@ -590,6 +380,8 @@ function Bookings({ data }) {
         getEmployeeSchedules({ date_from: dayStr, date_to: dayStr }),
         getSettings()
       ]);
+
+      if (seq !== loadSeqRef.current) return; // đã đổi ngày/chi nhánh → bỏ kết quả cũ
 
       setSysSettings(settingsData || {});
       setBookings(bookingsData.filter(b => b.status !== 'cancelled'));
@@ -612,19 +404,37 @@ function Bookings({ data }) {
 
       setEmployees(sortedEmployees);
       setEmployeeSchedules(schedulesData);
+      setLoadedKey(`${dayStr}|${filterBranch || ''}`);
     } catch (err) {
-
+      if (seq !== loadSeqRef.current) return;
+      console.error('[bookings] Không tải được lịch hẹn:', err);
+      // Không để lại dữ liệu của ngày/chi nhánh trước dưới tiêu đề mới → xóa và hiện thông báo lỗi + nút thử lại
+      setBookings([]);
+      setEmployees([]);
+      setEmployeeSchedules([]);
+      setLoadError(describeError(err));
+      setLoadedKey(`${toDateStr(currentDate)}|${filterBranch || ''}`);
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   };
   loadBookingsRef.current = loadBookings;
+
+  const handleRetryLoad = () => {
+    if (branches.length === 0) loadInitialData();
+    loadBookings();
+  };
 
   // Navigation
   const goToday = () => {
     setCurrentDate(getLogicalDate());
   };
   useEffect(() => {
+    // Đang nhảy tới một lịch từ thông báo → để việc cuộn tới lịch đó quyết định vị trí
+    if (suppressNowLineScrollRef.current) {
+      suppressNowLineScrollRef.current = false;
+      return;
+    }
     if (toDateStr(currentDate) === todayStr) {
       const timer = setTimeout(() => {
         nowLineRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -644,28 +454,18 @@ function Bookings({ data }) {
   };
 
   const handleCancel = async (id) => {
-    if (!confirm('Bạn có chắc muốn hủy lịch hẹn này?')) return;
+    if (!(await confirmDialog({ message: 'Bạn có chắc muốn hủy lịch hẹn này?', confirmText: 'Hủy lịch', cancelText: 'Không', danger: true }))) return;
     try {
       await deleteBooking(id);
       notify('Đã hủy lịch hẹn thành công!');
       loadBookings();
       setDetailModal(null);
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     }
   };
 
   // --- Drag-to-create helpers ---
-  const ROW_HEIGHT = 25; // pixels per 15-min slot
-  const SNAP_MINUTES = 15;
-
-  const convertYToTime = (y) => {
-    const totalMins = (y / ROW_HEIGHT) * SNAP_MINUTES;
-    const hours = Math.floor(totalMins / 60) + OPEN_HOUR;
-    const mins = Math.floor(totalMins % 60);
-    return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
-  };
-
   const handleDragStart = (e, emp) => {
     // Don't start drag if clicking on a booking card
     if (e.target.closest('.cal-booking-card')) return;
@@ -698,14 +498,16 @@ function Bookings({ data }) {
     if (!gridRect) return;
     const rawY = e.clientY - rect.top;
     const snappedY = Math.floor(rawY / ROW_HEIGHT) * ROW_HEIGHT;
+    const colLeft = rect.left - gridRect.left;
+    const colWidth = rect.width;
 
-    setHoverInfo({
-      staffId: emp.id,
-      y: snappedY,
-      colLeft: rect.left - gridRect.left,
-      colWidth: rect.width,
-      time: convertYToTime(snappedY)
-    });
+    // Chỉ cập nhật khi chuột sang ô 15 phút / cột khác. Trả về `prev` → React bỏ qua render,
+    // tránh render lại cả lưới lịch ở mỗi pixel rê chuột.
+    setHoverInfo(prev => (
+      prev && prev.staffId === emp.id && prev.y === snappedY && prev.colLeft === colLeft && prev.colWidth === colWidth
+        ? prev
+        : { staffId: emp.id, y: snappedY, colLeft, colWidth, time: convertYToTime(snappedY) }
+    ));
   };
 
   // --- Card drag-and-drop: start ---
@@ -714,8 +516,7 @@ function Bookings({ data }) {
     e.preventDefault();
 
     // Disable drag/click for guest slot holds
-    const isHold = booking.status === 'pending' && booking.internal_note && booking.internal_note.includes('GIỮ CHỖ TẠM THỜI');
-    if (isHold) return;
+    if (isHoldBooking(booking)) return;
 
     const card = e.currentTarget;
     const col = card.closest('.cal-staff-column');
@@ -736,11 +537,32 @@ function Bookings({ data }) {
     });
   };
 
+  // PUT lịch; nếu backend báo trùng giờ (409 BOOKING_CONFLICT) → hỏi "Vẫn lưu?" rồi gửi lại kèm allow_conflict.
+  // Trả về lịch đã lưu, hoặc null nếu người dùng chọn không lưu.
+  const updateBookingConfirmingConflict = async (id, payload) => {
+    try {
+      return await updateBooking(id, payload);
+    } catch (err) {
+      if (err?.status !== 409 || err.data?.code !== 'BOOKING_CONFLICT') throw err;
+      const list = (err.data.conflicts || [])
+        .map(c => `• ${c.customer_name}: ${formatTime(c.start_time)} - ${formatTime(c.end_time)}`)
+        .join('\n');
+      const keepSaving = await confirmDialog({
+        title: 'Trùng lịch',
+        message: `Nhân viên đã có lịch trùng giờ:\n${list}\n\nVẫn lưu?`,
+        confirmText: 'Vẫn lưu',
+        cancelText: 'Không lưu'
+      });
+      if (!keepSaving) return null;
+      return await updateBooking(id, { ...payload, allow_conflict: true });
+    }
+  };
+
   const handleDragConfirm = async () => {
     if (!dragConfirm) return;
     try {
       const bk = dragConfirm.booking;
-      await updateBooking(bk.id, {
+      const saved = await updateBookingConfirmingConflict(bk.id, {
         service_id: bk.service_id || bk.services?.id,
         branch_id: bk.branch_id || bk.branches?.id,
         employee_id: dragConfirm.toStaffId,
@@ -748,10 +570,12 @@ function Bookings({ data }) {
         end_time: dragConfirm.newEnd,
         booking_date: dragConfirm.newDate
       });
-      notify('Đã cập nhật lịch hẹn!');
-      loadBookings();
+      if (saved) {
+        notify('Đã cập nhật lịch hẹn!');
+        loadBookings();
+      }
     } catch (err) {
-      alert('Lỗi: ' + err.message);
+      toast.error('Lỗi: ' + err.message);
     }
     setDragConfirm(null);
   };
@@ -762,7 +586,7 @@ function Bookings({ data }) {
 
   // ---- Booking Modal Logic ----
   const openBookingModal = (preDate, preEmployee, preStartTime, preEndTime) => {
-    setBookForm({
+    const initialForm = {
       branch_id: filterBranch || (branches[0]?.id || ''),
       service_id: '', num_guests: 1,
       customer_id: '',
@@ -774,13 +598,11 @@ function Bookings({ data }) {
       start_time: preStartTime || '--:--',
       end_time: preEndTime || '--:--',
       notes: ''
-    });
-    setBookStep(1);
+    };
+    setBookForm(initialForm);
+    bookFormInitialRef.current = JSON.stringify(initialForm); // để biết form đã bị sửa chưa khi đóng
     setCustomerView('default');
-    setAvailSlots([]);
-    setAvailSlots([]);
     setSelectedService(null);
-    setIsDuplicating(false);
     setModalOpen(true);
   };
 
@@ -791,7 +613,7 @@ function Bookings({ data }) {
     const service = services.find(s => s.id === detailEdit.service_id);
     // const employee = employees.find(e => e.id === detailEdit.employee_id);
 
-    setBookForm({
+    const initialForm = {
       branch_id: detailEdit.branch_id,
       service_id: detailEdit.service_id,
       num_guests: 1,
@@ -807,26 +629,53 @@ function Bookings({ data }) {
       start_time: detailEdit.start_time,
       end_time: detailEdit.end_time,
       notes: detailEdit.notes || ''
-    });
+    };
+    setBookForm(initialForm);
+    bookFormInitialRef.current = JSON.stringify(initialForm);
 
     setCustomerView('selected');
 
     setSelectedService(service);
-    setIsDuplicating(true);
     setDetailModal(null);
     setModalOpen(true);
     setShowDetailMore(false);
   };
 
+  // ---- Đóng modal (Esc / bấm ra ngoài) ----
+  const clearSuggestions = () => setSearchSuggestions({ type: null, data: [], loading: false });
 
-  const calculateEndTime = (startTime, duration) => {
-    if (!startTime || startTime === '--:--' || !duration) return '--:--';
-    const [h, m] = startTime.split(':').map(Number);
-    const totalMinutes = h * 60 + m + duration;
-    const endH = String(Math.floor(totalMinutes / 60)).padStart(2, '0');
-    const endM = String(totalMinutes % 60).padStart(2, '0');
-    return `${endH}:${endM}`;
+  // Đóng popover bên trong trước (lịch chọn ngày, gợi ý tìm kiếm, menu "..."), rồi mới đóng modal
+  const closeInnerPopover = () => {
+    if (showCalendar) { setShowCalendar(false); return true; }
+    if (searchSuggestions.type) { clearSuggestions(); return true; }
+    if (showDetailMore) { setShowDetailMore(false); return true; }
+    return false;
   };
+
+  const handleDetailModalEscape = () => {
+    if (!closeInnerPopover()) setDetailModal(null);
+  };
+
+  // Modal tạo lịch: form đã bị sửa → hỏi trước khi bỏ (bấm ra ngoài / Esc). Nút X vẫn đóng ngay.
+  const requestCloseBookModal = async () => {
+    const dirty = JSON.stringify(bookForm) !== bookFormInitialRef.current;
+    if (dirty && !(await confirmDialog({
+      message: 'Lịch đang nhập chưa được lưu. Bỏ lịch này?',
+      confirmText: 'Bỏ lịch',
+      cancelText: 'Tiếp tục nhập',
+      danger: true
+    }))) return;
+    setModalOpen(false);
+  };
+
+  const handleBookModalEscape = () => {
+    if (!closeInnerPopover()) requestCloseBookModal();
+  };
+
+  const detailModalRef = useModalA11y(!!detailModal, handleDetailModalEscape);
+  const bookModalRef = useModalA11y(modalOpen, handleBookModalEscape);
+  const dragConfirmRef = useModalA11y(!!dragConfirm, () => setDragConfirm(null));
+
 
   const handleBookFormServiceChange = (service) => {
     if (!service) {
@@ -844,7 +693,6 @@ function Bookings({ data }) {
         end_time: newEndTime
       };
     });
-    setAvailSlots([]);
   };
 
   const handleGenericSearch = (type, val, isDetail = false) => {
@@ -869,6 +717,7 @@ function Bookings({ data }) {
 
     setSearchSuggestions(prev => ({ ...prev, type, loading: true }));
     searchTimeoutRef.current = setTimeout(async () => {
+      const seq = ++searchSeqRef.current;
       try {
         let results = [];
         if (type === 'customer') {
@@ -939,9 +788,12 @@ function Bookings({ data }) {
             return idxA - idxB;
           }).filter(e => normalize(e.name).includes(searchVal));
         }
+        // Gõ tiếp trong lúc chờ → đã có lượt tìm mới hơn, bỏ kết quả cũ (tránh gợi ý nhảy về từ khóa cũ)
+        if (seq !== searchSeqRef.current) return;
         setSearchSuggestions({ type, data: results, loading: false });
       } catch (err) {
-
+        if (seq !== searchSeqRef.current) return;
+        console.warn('[bookings] Tìm gợi ý lỗi:', err?.message);
         setSearchSuggestions(prev => ({ ...prev, loading: false }));
       }
     }, 300);
@@ -1009,8 +861,8 @@ function Bookings({ data }) {
 
     if (!finalCustomerName && !finalCustomerId) {
       try {
-        const allCustomers = await getCustomers('Khách lạ');
-        const khachLa = allCustomers.find(c => normalize(c.name).includes('khach la'));
+        const allCustomers = await getCustomers(WALK_IN_CUSTOMER_NAME);
+        const khachLa = allCustomers.find(c => normalize(c.name).includes(WALK_IN_NORMALIZED));
         if (khachLa) {
           finalCustomerId = khachLa.id;
           finalCustomerName = khachLa.name;
@@ -1028,7 +880,7 @@ function Bookings({ data }) {
 
     const missing = Object.entries(required).filter(([_, val]) => !val).map(([label]) => label);
     if (missing.length > 0) {
-      alert('Vui lòng điền các thông tin bắt buộc: ' + missing.join(', '));
+      toast.warn('Vui lòng điền các thông tin bắt buộc: ' + missing.join(', '));
       return;
     }
 
@@ -1038,14 +890,14 @@ function Bookings({ data }) {
       let finalEndTime = bookForm.end_time;
 
       if (!finalServiceId) {
-        const placeholder = services.find(s => normalize(s.name).includes('giu cho'));
+        const placeholder = services.find(s => normalize(s.name).includes(PLACEHOLDER_NORMALIZED));
         if (placeholder) {
           finalServiceId = placeholder.id;
           if (!finalEndTime || finalEndTime === '--:--' || finalEndTime === bookForm.start_time) {
             finalEndTime = calculateEndTime(bookForm.start_time, placeholder.duration_minutes || 0);
           }
         } else {
-          alert('Vui lòng chọn dịch vụ hoặc tạo dịch vụ "Giữ chỗ" để tiếp tục.');
+          toast.warn('Vui lòng chọn dịch vụ hoặc tạo dịch vụ "Giữ chỗ" để tiếp tục.');
           setIsCreating(false);
           return;
         }
@@ -1056,7 +908,7 @@ function Bookings({ data }) {
         service_id: finalServiceId,
         end_time: finalEndTime,
         customer_id: finalCustomerId || null,
-        customer_name: normalizeName(finalCustomerName || 'Khách lạ'),
+        customer_name: normalizeName(finalCustomerName || WALK_IN_CUSTOMER_NAME),
         customer_phone: finalCustomerPhone || null
       };
 
@@ -1072,7 +924,7 @@ function Bookings({ data }) {
       setModalOpen(false);
       loadBookings();
     } catch (err) {
-      alert('Lỗi: ' + err.message);
+      toast.error('Lỗi: ' + err.message);
     } finally {
       setIsCreating(false);
     }
@@ -1082,7 +934,7 @@ function Bookings({ data }) {
     if (!detailModal || !detailEdit) return;
 
     if (!detailEdit.service_id || !detailEdit.branch_id || !detailEdit.start_time || !detailEdit.employee_id) {
-      alert('Vui lòng chọn đầy đủ: dịch vụ, chi nhánh, giờ, nhân viên');
+      toast.warn('Vui lòng chọn đầy đủ: dịch vụ, chi nhánh, giờ, nhân viên');
       return;
     }
 
@@ -1106,9 +958,8 @@ function Bookings({ data }) {
         bookingUpdate.temporary_name = null;
       }
 
-      const updated = await updateBooking(detailModal.id, bookingUpdate);
-
-      // 2. Update Customer Info if it's the SAME customer but info changed
+      // 2. Cùng khách nhưng thông tin khách đổi → gửi kèm customer_update trong CÙNG request
+      // (backend cập nhật khách + lịch, lỗi thì hoàn lại thông tin khách — không còn cập nhật nửa vời)
       const cust = detailModal.customers;
       if (bookingUpdate.customer_id && cust && (
         detailEdit.customer_name !== cust.name ||
@@ -1116,14 +967,16 @@ function Bookings({ data }) {
         detailEdit.customer_habits !== (cust.habits || '') ||
         detailEdit.customer_email !== (cust.email || '')
       )) {
-        await updateCustomer(bookingUpdate.customer_id, {
+        bookingUpdate.customer_update = {
           name: detailEdit.customer_name,
           phone: detailEdit.customer_phone,
           email: detailEdit.customer_email,
           habits: detailEdit.customer_habits
-        });
-        updated.customers = { ...updated.customers, name: detailEdit.customer_name, phone: detailEdit.customer_phone, email: detailEdit.customer_email, habits: detailEdit.customer_habits };
+        };
       }
+
+      const updated = await updateBookingConfirmingConflict(detailModal.id, bookingUpdate);
+      if (!updated) return; // chọn không lưu khi trùng lịch → giữ modal để chỉnh tiếp
 
       // update list in UI immediately
       loadBookings();
@@ -1134,7 +987,7 @@ function Bookings({ data }) {
 
       setDetailModal(null);
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     } finally {
       setDetailSaving(false);
     }
@@ -1142,8 +995,7 @@ function Bookings({ data }) {
 
   const handleOpenDetail = async (booking) => {
     // Prevent opening detail view for temporary slot holds
-    const isHold = booking.status === 'pending' && booking.internal_note && booking.internal_note.includes('Khách đang đặt');
-    if (isHold) return;
+    if (isHoldBooking(booking)) return;
 
     setDetailModal(booking);
 
@@ -1169,25 +1021,6 @@ function Bookings({ data }) {
     setDetailCustomerView('selected');
     setDetailTab('schedule');
     setShowDetailMore(false);
-    loadEmployeesForDetail(booking.branch_id, booking.booking_date);
-  };
-
-  const loadEmployeesForDetail = async (branchId, date) => {
-    try {
-      const emps = await getEmployees(branchId);
-      const schedules = await getEmployeeSchedules({
-        date_from: date,
-        date_to: date
-      });
-      const availableIds = (schedules || [])
-        .filter(s => !s.is_day_off)
-        .map(s => s.employee_id);
-
-      setEmployeesByBranch((emps || []).filter(e => e.is_active && availableIds.includes(e.id)));
-    } catch (e) {
-
-      setEmployeesByBranch([]);
-    }
   };
 
   const checkStaffAvailability = async (empId, date, start, end) => {
@@ -1215,7 +1048,6 @@ function Bookings({ data }) {
 
   const handleDateChange = async (newDate) => {
     setDetailEdit(prev => ({ ...prev, booking_date: newDate }));
-    loadEmployeesForDetail(detailEdit.branch_id, newDate);
 
     const isAvail = await checkStaffAvailability(detailEdit.employee_id, newDate, detailEdit.start_time, detailEdit.end_time);
     if (!isAvail) {
@@ -1256,29 +1088,13 @@ function Bookings({ data }) {
     );
   }, [detailModal, detailEdit]);
 
-  const handleStatusUpdate = async (status) => {
-    if (!detailModal) return;
-    try {
-      setDetailSaving(true);
-      const { updateBookingStatus } = await import('../api'); // Assuming it exists or use updateBooking
-      // If updateBookingStatus doesn't exist, we can use updateBooking with just status
-      await updateBooking(detailModal.id, { status });
-      notify('Đã cập nhật trạng thái!');
-      setDetailModal(null);
-      loadBookings();
-    } catch (err) {
-      alert('Lỗi: ' + err.message);
-    } finally {
-      setDetailSaving(false);
-    }
-  };
-
   const handleDismissWarning = async (e, booking) => {
     if (e) {
       e.stopPropagation();
       e.preventDefault();
     }
-    if (!booking) return;
+    // Lịch giữ chỗ tạm thời: xóa internal_note sẽ khiến job dọn giữ chỗ không nhận ra → chiếm slot vĩnh viễn
+    if (!booking || isHoldBooking(booking)) return;
 
     try {
       const bookingUpdate = {
@@ -1304,62 +1120,27 @@ function Bookings({ data }) {
       loadBookings();
     } catch (err) {
 
-      alert('Không thể tắt cảnh báo: ' + err.message);
+      toast.error('Không thể tắt cảnh báo: ' + err.message);
     }
   };
 
 
-  // Date options
-  const dateOptions = [];
-  const today = new Date();
-  for (let i = 0; i < 60; i++) {
-    const d = new Date(today);
-    d.setDate(d.getDate() + i);
-    dateOptions.push({
-      value: toDateStr(d),
-      label: `${DAY_NAMES[d.getDay()]}, ${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`
-    });
-  }
-
-  // Get bookings for a specific day and hour
-  const getBookingsForSlot = (dateStr, hour) => {
-    return bookings.filter(b => {
-      if (b.booking_date !== dateStr) return false;
-      const startMin = timeToMinutes(b.start_time);
-      const endMin = timeToMinutes(b.end_time);
-      const slotStart = hour * 60;
-      const slotEnd = (hour + 1) * 60;
-      return startMin < slotEnd && endMin > slotStart;
-    });
-  };
-
-  // Calculate event position
-  const getEventStyle = (booking, hour) => {
-    const startMin = timeToMinutes(booking.start_time);
-    const endMin = timeToMinutes(booking.end_time);
-    const hourStart = hour * 60;
-    const hourEnd = (hour + 1) * 60;
-
-    const top = Math.max(0, startMin - hourStart);
-    const bottom = Math.min(60, endMin - hourStart);
-    const height = bottom - top;
-
-    // Only render in the first hour of the event
-    if (startMin < hourStart) return null;
-
-    const durationHours = (endMin - startMin) / 60;
-
-    return {
-      top: `${(top / 60) * 100}%`,
-      height: `${durationHours * 100}%`,
-      minHeight: `${Math.max(height / 60 * 100, 20)}%`
-    };
-  };
-
-  // Week header label
-  const weekLabel = `${weekDates[0].getDate()}/${weekDates[0].getMonth() + 1} – ${weekDates[6].getDate()}/${weekDates[6].getMonth() + 1}/${weekDates[6].getFullYear()}`;
   const todayStr = toDateStr(new Date());
   const isToday = toDateStr(currentDate) === todayStr;
+
+  // Lịch theo từng nhân viên cho lưới lịch — tính lại chỉ khi danh sách lịch đổi (trước đây lọc lại cho
+  // mọi cột ở mỗi lần render). Cùng điều kiện cũ: khớp employee_id HOẶC employees.id; giữ nguyên thứ tự.
+  const bookingsByEmployee = useMemo(() => {
+    const map = new Map();
+    for (const b of bookings) {
+      const ids = new Set([b.employee_id, b.employees?.id].filter(Boolean));
+      for (const id of ids) {
+        if (!map.has(id)) map.set(id, []);
+        map.get(id).push(b);
+      }
+    }
+    return map;
+  }, [bookings]);
 
   // Mobile list view: gộp các lịch cùng group_booking_id (khách đi nhóm) thành 1 card
   const mobileListItems = useMemo(() => {
@@ -1393,1412 +1174,125 @@ function Bookings({ data }) {
   return (
     <div className='full-view full-view-bookings' style={{ '--staff-count': loading ? 3 : (employees.length || 1) }}>
       {/* Calendar Toolbar */}
-      <div className="cal-toolbar">
-        <div className="cal-toolbar-desktop">
-          <div className="cal-toolbar-left">
-            <BranchDropdown
-              branches={branches}
-              value={filterBranch}
-              onChange={setFilterBranch}
-            />
-
-          </div>
-          <div className="cal-toolbar-middle">
-            <span className="cal-week-label">
-              {formatDateVietnamese(currentDate)}
-            </span>
-            <Tooltip content="Ngày trước">
-              <button className="btn-icon" onClick={goPrev}><FiChevronLeft /></button>
-            </Tooltip>
-            <Tooltip content="Ngày sau">
-              <button className="btn-icon" onClick={goNext}><FiChevronRight /></button>
-            </Tooltip>
-            <Tooltip content={isToday ? "Đang xem lịch hôm nay" : "Trở về hôm nay"}>
-              <button 
-                className={`btn btn-sm btn-ghost btn-today${isToday ? ' active' : ''}`} 
-                onClick={goToday}
-              >
-                Hôm nay
-              </button>
-            </Tooltip>
-          </div>
-          <div className="cal-toolbar-right">
-            {/* Hide view toggle on mobile — mobile always shows list */}
-            {!isMobile && (
-              <div className="cal-view-toggle">
-                <Tooltip content="View Lịch">
-                <button className={`cal-view-btn${effectiveViewMode === 'calendar' ? ' active' : ''}`} onClick={() => setViewMode('calendar')}>
-                  <svg width="19" height="19" viewBox="0 0 19 19" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M4.39984 0.916748H3.84984C2.82307 0.916748 2.30969 0.916748 1.91752 1.11657C1.57256 1.29234 1.29209 1.5728 1.11633 1.91777C0.916504 2.30994 0.916504 2.82332 0.916504 3.85008V14.4834C0.916504 15.5102 0.916504 16.0236 1.11633 16.4157C1.29209 16.7607 1.57256 17.0412 1.91752 17.2169C2.30969 17.4167 2.82307 17.4167 3.84984 17.4167H4.39984C5.4266 17.4167 5.93998 17.4167 6.33215 17.2169C6.67712 17.0412 6.95758 16.7607 7.13335 16.4157C7.33317 16.0236 7.33317 15.5102 7.33317 14.4834V3.85008C7.33317 2.82332 7.33317 2.30994 7.13335 1.91777C6.95758 1.5728 6.67712 1.29234 6.33215 1.11657C5.93998 0.916748 5.4266 0.916748 4.39984 0.916748Z" stroke="#D6D3D1" stroke-width="1.83333" stroke-linecap="round" stroke-linejoin="round" />
-                    <path d="M14.4832 0.916748H13.9332C12.9064 0.916748 12.393 0.916748 12.0009 1.11657C11.6559 1.29234 11.3754 1.5728 11.1997 1.91777C10.9998 2.30994 10.9998 2.82332 10.9998 3.85008V14.4834C10.9998 15.5102 10.9998 16.0236 11.1997 16.4157C11.3754 16.7607 11.6559 17.0412 12.0009 17.2169C12.393 17.4167 12.9064 17.4167 13.9332 17.4167H14.4832C15.5099 17.4167 16.0233 17.4167 16.4155 17.2169C16.7605 17.0412 17.0409 16.7607 17.2167 16.4157C17.4165 16.0236 17.4165 15.5102 17.4165 14.4834V3.85008C17.4165 2.82332 17.4165 2.30994 17.2167 1.91777C17.0409 1.5728 16.7605 1.29234 16.4155 1.11657C16.0233 0.916748 15.5099 0.916748 14.4832 0.916748Z" stroke="#D6D3D1" stroke-width="1.83333" stroke-linecap="round" stroke-linejoin="round" />
-                  </svg>
-                </button>
-                </Tooltip>
-
-                <Tooltip content="View List">
-                <button className={`cal-view-btn${effectiveViewMode === 'list' ? ' active' : ''}`} onClick={() => setViewMode('list')}>
-                  <svg width="19" height="19" viewBox="0 0 19 19" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M14.4832 7.33342C15.5099 7.33342 16.0233 7.33342 16.4155 7.13359C16.7604 6.95783 17.0409 6.67736 17.2167 6.3324C17.4165 5.94023 17.4165 5.42684 17.4165 4.40008V3.85008C17.4165 2.82332 17.4165 2.30994 17.2167 1.91777C17.0409 1.5728 16.7605 1.29234 16.4155 1.11657C16.0233 0.916749 15.5099 0.916749 14.4832 0.916749L3.84984 0.916748C2.82307 0.916748 2.30969 0.916748 1.91752 1.11657C1.57256 1.29234 1.29209 1.5728 1.11633 1.91777C0.916504 2.30994 0.916504 2.82332 0.916504 3.85008L0.916504 4.40008C0.916504 5.42684 0.916504 5.94023 1.11633 6.3324C1.29209 6.67736 1.57256 6.95783 1.91752 7.13359C2.30969 7.33341 2.82307 7.33341 3.84984 7.33341L14.4832 7.33342Z" stroke="#D6D3D1" stroke-width="1.83333" stroke-linecap="round" stroke-linejoin="round" />
-                    <path d="M14.4832 17.4167C15.5099 17.4167 16.0233 17.4167 16.4155 17.2169C16.7604 17.0412 17.0409 16.7607 17.2167 16.4157C17.4165 16.0236 17.4165 15.5102 17.4165 14.4834V13.9334C17.4165 12.9067 17.4165 12.3933 17.2167 12.0011C17.0409 11.6561 16.7605 11.3757 16.4155 11.1999C16.0233 11.0001 15.5099 11.0001 14.4832 11.0001L3.84984 11.0001C2.82307 11.0001 2.30969 11.0001 1.91752 11.1999C1.57256 11.3757 1.29209 11.6561 1.11633 12.0011C0.916504 12.3933 0.916504 12.9067 0.916504 13.9334L0.916504 14.4834C0.916504 15.5102 0.916504 16.0236 1.11633 16.4157C1.29209 16.7607 1.57256 17.0412 1.91752 17.2169C2.30969 17.4167 2.82307 17.4167 3.84984 17.4167H14.4832Z" stroke="#D6D3D1" stroke-width="1.83333" stroke-linecap="round" stroke-linejoin="round" />
-                  </svg>
-                </button>
-                </Tooltip>
-              </div>
-            )}
-            <button className="btn btn-primary btn-create" onClick={() => openBookingModal()}>
-              Tạo lịch <FiPlus />
-            </button>
-          </div>
-        </div>
-        <div className="cal-toolbar-mobile">
-          {/* Row 1: Date navigation + Create button */}
-          <div className="cal-toolbar-row1">
-            <div className="cal-toolbar-middle">
-              <Tooltip content="Ngày trước">
-                <button className="btn-icon" onClick={goPrev}><FiChevronLeft /></button>
-              </Tooltip>
-              <span className="cal-week-label">
-                {formatDateVietnamese(currentDate)}
-              </span>
-              <Tooltip content="Ngày sau">
-                <button className="btn-icon" onClick={goNext}><FiChevronRight /></button>
-              </Tooltip>
-            </div>
-            <div className="cal-toolbar-actions">
-              <Tooltip content={isToday ? "Đang xem lịch hôm nay" : "Trở về hôm nay"}>
-                <button 
-                  className={`btn btn-sm btn-ghost btn-today${isToday ? ' active' : ''}`} 
-                  onClick={goToday}
-                >
-                  Hôm nay
-                </button>
-              </Tooltip>
-              <button className="btn btn-primary btn-create" onClick={() => openBookingModal()}>
-                <span className="btn-create-label">Tạo lịch</span> <FiPlus />
-              </button>
-            </div>
-          </div>
-
-          {/* Row 2: Branch selector + View toggle */}
-          <div className="cal-toolbar-row2">
-            <div className="cal-toolbar-left">
-              <BranchDropdown
-                branches={branches}
-                value={filterBranch}
-                onChange={setFilterBranch}
-              />
-            </div>
-            <div className="cal-view-toggle">
-              <Tooltip content="View Lịch">
-                <button className={`cal-view-btn${effectiveViewMode === 'calendar' ? ' active' : ''}`} onClick={() => setViewMode('calendar')}>
-                  <svg width="19" height="19" viewBox="0 0 19 19" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M4.39984 0.916748H3.84984C2.82307 0.916748 2.30969 0.916748 1.91752 1.11657C1.57256 1.29234 1.29209 1.5728 1.11633 1.91777C0.916504 2.30994 0.916504 2.82332 0.916504 3.85008V14.4834C0.916504 15.5102 0.916504 16.0236 1.11633 16.4157C1.29209 16.7607 1.57256 17.0412 1.91752 17.2169C2.30969 17.4167 2.82307 17.4167 3.84984 17.4167H4.39984C5.4266 17.4167 5.93998 17.4167 6.33215 17.2169C6.67712 17.0412 6.95758 16.7607 7.13335 16.4157C7.33317 16.0236 7.33317 15.5102 7.33317 14.4834V3.85008C7.33317 2.82332 7.33317 2.30994 7.13335 1.91777C6.95758 1.5728 6.67712 1.29234 6.33215 1.11657C5.93998 0.916748 5.4266 0.916748 4.39984 0.916748Z" stroke="#D6D3D1" strokeWidth="1.83333" strokeLinecap="round" strokeLinejoin="round" />
-                    <path d="M14.4832 0.916748H13.9332C12.9064 0.916748 12.393 0.916748 12.0009 1.11657C11.6559 1.29234 11.3754 1.5728 11.1997 1.91777C10.9998 2.30994 10.9998 2.82332 10.9998 3.85008V14.4834C10.9998 15.5102 10.9998 16.0236 11.1997 16.4157C11.3754 16.7607 11.6559 17.0412 12.0009 17.2169C12.393 17.4167 12.9064 17.4167 13.9332 17.4167H14.4832C15.5099 17.4167 16.0233 17.4167 16.4155 17.2169C16.7605 17.0412 17.0409 16.7607 17.2167 16.4157C17.4165 16.0236 17.4165 15.5102 17.4165 14.4834V3.85008C17.4165 2.82332 17.4165 2.30994 17.2167 1.91777C17.0409 1.5728 16.7605 1.29234 16.4155 1.11657C16.0233 0.916748 15.5099 0.916748 14.4832 0.916748Z" stroke="#D6D3D1" strokeWidth="1.83333" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </button>
-              </Tooltip>
-              
-              <Tooltip content="View List">
-                <button className={`cal-view-btn${effectiveViewMode === 'list' ? ' active' : ''}`} onClick={() => setViewMode('list')}>
-                  <svg width="19" height="19" viewBox="0 0 19 19" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M14.4832 7.33342C15.5099 7.33342 16.0233 7.33342 16.4155 7.13359C16.7604 6.95783 17.0409 6.67736 17.2167 6.3324C17.4165 5.94023 17.4165 5.42684 17.4165 4.40008V3.85008C17.4165 2.82332 17.4165 2.30994 17.2167 1.91777C17.0409 1.5728 16.7605 1.29234 16.4155 1.11657C16.0233 0.916749 15.5099 0.916749 14.4832 0.916749L3.84984 0.916748C2.82307 0.916748 2.30969 0.916748 1.91752 1.11657C1.57256 1.29234 1.29209 1.5728 1.11633 1.91777C0.916504 2.30994 0.916504 2.82332 0.916504 3.85008L0.916504 4.40008C0.916504 5.42684 0.916504 5.94023 1.11633 6.3324C1.29209 6.67736 1.57256 6.95783 1.91752 7.13359C2.30969 7.33341 2.82307 7.33341 3.84984 7.33341L14.4832 7.33342Z" stroke="#D6D3D1" strokeWidth="1.83333" strokeLinecap="round" strokeLinejoin="round" />
-                    <path d="M14.4832 17.4167C15.5099 17.4167 16.0233 17.4167 16.4155 17.2169C16.7604 17.0412 17.0409 16.7607 17.2167 16.4157C17.4165 16.0236 17.4165 15.5102 17.4165 14.4834V13.9334C17.4165 12.9067 17.4165 12.3933 17.2167 12.0011C17.0409 11.6561 16.7605 11.3757 16.4155 11.1999C16.0233 11.0001 15.5099 11.0001 14.4832 11.0001L3.84984 11.0001C2.82307 11.0001 2.30969 11.0001 1.91752 11.1999C1.57256 11.3757 1.29209 11.6561 1.11633 12.0011C0.916504 12.3933 0.916504 12.9067 0.916504 13.9334L0.916504 14.4834C0.916504 15.5102 0.916504 16.0236 1.11633 16.4157C1.29209 16.7607 1.57256 17.0412 1.91752 17.2169C2.30969 17.4167 2.82307 17.4167 3.84984 17.4167H14.4832Z" stroke="#D6D3D1" strokeWidth="1.83333" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </button>
-              </Tooltip>
-            </div>
-          </div>
-        </div>
-        {effectiveViewMode === 'calendar' && (
-          <div className="cal-staff-header-wrap">
-            {/* Header row */}
-            <div className="cal-staff-header"></div>
-            {loading ? (
-              Array.from({ length: 3 }).map((_, idx) => (
-                <div key={`skeleton-hdr-${idx}`} className="cal-staff-header available">
-                  <div className="skeleton-shimmer-light" style={{ width: '80px', height: '16px', borderRadius: '4px' }} />
-                </div>
-              ))
-            ) : (
-              employees.map(emp => {
-                const empSched = employeeSchedules.find(s => s.employee_id === emp.id);
-                const isAvailable = empSched && !empSched.is_day_off;
-                return (
-                  <div
-                    key={emp.id}
-                    className={`cal-staff-header ${isAvailable ? 'available' : 'unavailable'}`}
-                  >
-                    {emp.name}
-                  </div>
-                );
-              })
-            )}
-          </div>
-        )}
-      </div>
+      <BookingToolbar
+        branches={branches}
+        currentDate={currentDate}
+        employeeSchedules={employeeSchedules}
+        employees={employees}
+        filterBranch={filterBranch}
+        goNext={goNext}
+        goPrev={goPrev}
+        goToday={goToday}
+        isMobile={isMobile}
+        isToday={isToday}
+        loading={loading}
+        openBookingModal={openBookingModal}
+        setFilterBranch={setFilterBranch}
+        setViewMode={setViewMode}
+        viewMode={viewMode}
+      />
 
       {/* Calendar View */}
-      {effectiveViewMode === 'calendar' ? (
-        <div className="cal-scroll-wrapper">
-          {/* <div className="cal-staff-header-wrap">
-            <div className="cal-staff-header"></div>
-            {loading ? (
-              Array.from({ length: 3 }).map((_, idx) => (
-                <div key={`skeleton-hdr-${idx}`} className="cal-staff-header available">
-                  <div className="skeleton-shimmer-light" style={{ width: '80px', height: '16px', borderRadius: '4px' }} />
-                </div>
-              ))
-            ) : (
-              employees.map(emp => {
-                const empSched = employeeSchedules.find(s => s.employee_id === emp.id);
-                const isAvailable = empSched && !empSched.is_day_off;
-                return (
-                  <div
-                    key={emp.id}
-                    className={`cal-staff-header ${isAvailable ? 'available' : 'unavailable'}`}
-                  >
-                    {emp.name}
-                  </div>
-                );
-              })
-            )}
-          </div> */}
-
-          <div className="cal-container">
-
-            <div className='calendar-grid' ref={gridRef}>
-              {/* Time labels column */}
-              <div className="cal-time-column">
-                {HOURS.map(hour => (
-                  <div key={hour} className="cal-time-slot">
-                    {(() => {
-                      const h12 = hour % 12 === 0 ? 12 : hour % 12;
-                      const period = hour < 12 ? 'AM' : 'PM';
-                      return (
-                        <>
-                          {String(h12).padStart(2)}<span>{period}</span>
-                        </>
-                      );
-                    })()}
-                  </div>
-                ))}
-              </div>
-
-              {/* Hover ghost (rendered in grid layer) */}
-              {hoverInfo && !dragInfo && !cardDrag && (
-                <div
-                  className="cal-hover-ghost"
-                  style={{
-                    top: `${hoverInfo.y}px`,
-                    left: `${hoverInfo.colLeft + 4}px`,
-                    width: `${hoverInfo.colWidth - 8}px`,
-                    height: `${ROW_HEIGHT}px`
-                  }}
-                >
-                  {formatTime(hoverInfo.time)}
-                </div>
-              )}
-
-              {/* Staff columns */}
-              {loading ? (
-                // Calendar View Skeleton (3 columns)
-                Array.from({ length: 3 }).map((_, colIdx) => (
-                  <div
-                    key={`skeleton-col-${colIdx}`}
-                    className="cal-staff-column available skeleton-col"
-                    style={{ minHeight: '1400px', backgroundColor: '#ffffff', opacity: 0.8 }}
-                  >
-                    <div
-                      className="skeleton-shimmer-light"
-                      style={{
-                        position: 'absolute',
-                        top: '120px',
-                        left: '8px',
-                        right: '8px',
-                        height: '90px',
-                        borderRadius: '8px',
-                        opacity: 0.6
-                      }}
-                    />
-                    <div
-                      className="skeleton-shimmer-light"
-                      style={{
-                        position: 'absolute',
-                        top: '320px',
-                        left: '8px',
-                        right: '8px',
-                        height: '140px',
-                        borderRadius: '8px',
-                        opacity: 0.6
-                      }}
-                    />
-                    <div
-                      className="skeleton-shimmer-light"
-                      style={{
-                        position: 'absolute',
-                        top: '650px',
-                        left: '8px',
-                        right: '8px',
-                        height: '80px',
-                        borderRadius: '8px',
-                        opacity: 0.6
-                      }}
-                    />
-                  </div>
-                ))
-              ) : (
-                (() => {
-                  const currentDayEn = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][currentDate.getDay()];
-                  const currentBranchInfo = branches.find(b => b.id === filterBranch);
-                  const branchDaySchedule = currentBranchInfo?.opening_hours?.[currentDayEn];
-                  const branchIsOpen = branchDaySchedule ? branchDaySchedule.isOpen : true;
-
-                  const baseBranchOpenMin = branchDaySchedule?.open ? timeToMinutes(branchDaySchedule.open) : OPEN_HOUR * 60;
-                  const isWeekday = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'].includes(currentDayEn);
-                  const branchOpenMin = isWeekday ? Math.max(baseBranchOpenMin, 10 * 60) : baseBranchOpenMin;
-                  const branchCloseMin = branchDaySchedule?.close ? timeToMinutes(branchDaySchedule.close) : CLOSE_HOUR * 60;
-
-                  return employees.map(emp => {
-                    const empSched = employeeSchedules.find(s => s.employee_id === emp.id);
-                    let isAvailable = empSched && !empSched.is_day_off && branchIsOpen;
-
-                    let startPx = 0;
-                    let endPx = 0;
-                    if (isAvailable) {
-                      const empStartMin = timeToMinutes(String(empSched.start_time).substring(0, 5));
-                      const empEndMin = timeToMinutes(String(empSched.end_time).substring(0, 5));
-                      const startMin = Math.max(empStartMin, branchOpenMin);
-                      const endMin = Math.max(Math.min(empEndMin, branchCloseMin), 23 * 60);
-                      if (startMin >= endMin) {
-                        isAvailable = false;
-                      } else {
-                        startPx = ((startMin - OPEN_HOUR * 60) / 60) * 100;
-                        endPx = ((endMin - OPEN_HOUR * 60) / 60) * 100;
-                      }
-                    }
-
-                    return (
-                      <div
-                        key={emp.id}
-                        className={`cal-staff-column ${isAvailable ? 'available' : 'unavailable'} ${employees.indexOf(emp) === 0 ? 'is-first-staff' : ''}`}
-                        data-staff-id={emp.id}
-                        data-staff-name={emp.name}
-                        style={{
-                          '--shift-start': isAvailable ? `${startPx}px` : '0px',
-                          '--shift-end': isAvailable ? `${endPx}px` : '0px'
-                        }}
-                        onMouseDown={(e) => handleDragStart(e, emp)}
-                        onMouseMove={(e) => handleColumnHover(e, emp)}
-                        onMouseLeave={() => { if (!dragInfo) setHoverInfo(null); }}
-                      >
-                        {/* Unavailable overlays to disable drag-to-create and set cursor to not-allowed */}
-                        {!isAvailable ? (
-                          <div
-                            className="cal-unavailable-overlay"
-                            style={{
-                              position: 'absolute',
-                              top: 0,
-                              left: 0,
-                              right: 0,
-                              bottom: 0,
-                              cursor: 'not-allowed',
-                              zIndex: 5,
-                            }}
-                            onMouseDown={(e) => {
-                              e.stopPropagation();
-                              e.preventDefault();
-                            }}
-                            onMouseMove={(e) => {
-                              e.stopPropagation();
-                            }}
-                          />
-                        ) : (
-                          <>
-                            {startPx > 0 && (
-                              <div
-                                className="cal-unavailable-overlay"
-                                style={{
-                                  position: 'absolute',
-                                  top: 0,
-                                  left: 0,
-                                  right: 0,
-                                  height: `${startPx}px`,
-                                  cursor: 'not-allowed',
-                                  zIndex: 5,
-                                }}
-                                onMouseDown={(e) => {
-                                  e.stopPropagation();
-                                  e.preventDefault();
-                                }}
-                                onMouseMove={(e) => {
-                                  e.stopPropagation();
-                                }}
-                              />
-                            )}
-                            {endPx < 1400 && (
-                              <div
-                                className="cal-unavailable-overlay"
-                                style={{
-                                  position: 'absolute',
-                                  top: `${endPx}px`,
-                                  left: 0,
-                                  right: 0,
-                                  bottom: 0,
-                                  cursor: 'not-allowed',
-                                  zIndex: 5,
-                                }}
-                                onMouseDown={(e) => {
-                                  e.stopPropagation();
-                                  e.preventDefault();
-                                }}
-                                onMouseMove={(e) => {
-                                  e.stopPropagation();
-                                }}
-                              />
-                            )}
-                          </>
-                        )}
-                        {/* Now Line (rendered in each column or once for the whole grid) */}
-                        {toDateStr(currentDate) === toDateStr(now) && (() => {
-                          const nowY = (timeToMinutes(`${now.getHours()}:${now.getMinutes()}`) - OPEN_HOUR * 60) / 60 * 100;
-                          const hideTriangle = hoverInfo && Math.abs(hoverInfo.y - nowY) <= 25;
-                          return (
-                            <div ref={nowLineRef} className={`cal-now-line ${hideTriangle ? 'hide-triangle' : ''}`} style={{ top: `${nowY}px` }}>
-                              {/* We only show badge on the first column for cleaner UI */}
-                              {employees.indexOf(emp) === 0 && (
-                                <div className="cal-now-badge">
-                                  {(() => {
-                                    const h = now.getHours();
-                                    const m = String(now.getMinutes()).padStart(2, '0');
-                                    const h12 = h % 12 === 0 ? 12 : h % 12;
-                                    const period = h < 12 ? 'AM' : 'PM';
-                                    return `${String(h12).padStart(2, '0')}:${m} ${period}`;
-                                  })()}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })()}
-
-                        {/* Bookings for this staff */}
-                        {bookings.filter(b => (b.employee_id === emp.id || b.employees?.id === emp.id)).map(b => {
-                          const startMin = timeToMinutes(b.start_time);
-                          const endMin = timeToMinutes(b.end_time);
-                          const top = (startMin - OPEN_HOUR * 60) / 60 * 100;
-                          const height = (endMin - startMin) / 60 * 100;
-                          const cardBg = getBookingColor(b);
-                          const textColor = '#555555';
-
-                          const isHold = b.status === 'pending' && b.internal_note && b.internal_note.includes('GIỮ CHỖ TẠM THỜI');
-                          const isSpamWarning = b.status === 'pending' && b.internal_note && !isHold;
-
-                          return (
-                            <div
-                              key={b.id}
-                              id={`booking-card-${b.id}`}
-                              className={`cal-booking-card-wrapper${cardDrag && cardDrag.booking.id === b.id ? ' is-original-placeholder' : ''}${isSpamWarning ? ' is-spam-warning' : ''}${isHold ? ' is-hold-disabled' : ''}`}
-                              style={{
-                                position: 'absolute',
-                                top: `${top}px`,
-                                width: '100%',
-                                zIndex: 10
-                              }}
-                              onMouseDown={(e) => handleCardDragStart(e, b)}
-                            >
-                              <div
-                                className="cal-booking-card"
-                                style={{
-                                  height: `calc(${height}px - 4px)`,
-                                  backgroundColor: cardBg,
-                                  color: textColor,
-                                }}
-                              >
-                                {b.notes && (
-                                  <Tooltip content={b.notes} placement="top">
-                                    <img src={noteIcon} alt={b.notes} className="cal-booking-icon" />
-                                  </Tooltip>
-                                )}
-                                <div className="cal-booking-name" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                  {isSpamWarning && <FiAlertTriangle size={12} className="cal-alert-icon" />}
-                                  {b.temporary_name || b.customers?.name}
-                                </div>
-                                <div className="cal-booking-service">{b.services?.name}</div>
-                                <div className="cal-booking-time">{formatTime(b.start_time)} - {formatTime(b.end_time)}</div>
-                              </div>
-                            </div>
-                          );
-                        })}
-
-                        {/* Card drag ghost */}
-                        {cardDrag && cardDrag.currentCol?.getAttribute('data-staff-id') === emp.id && (() => {
-                          const b = cardDrag.booking;
-                          const ghostStart = convertYToTime(cardDrag.currentTop);
-                          const ghostEnd = convertYToTime(cardDrag.currentTop + cardDrag.heightPx);
-                          const cardBg = getBookingColor(b);
-                          const textColor = '#555555';
-
-                          return (
-                            <div
-                              className="cal-booking-card-wrapper is-moving-active"
-                              style={{
-                                position: 'absolute',
-                                top: `${cardDrag.currentTop}px`,
-                                width: '100%',
-                                zIndex: 100
-                              }}
-                            >
-                              <div
-                                className="cal-booking-card"
-                                style={{
-                                  height: `${cardDrag.heightPx}px`,
-                                  backgroundColor: cardBg,
-                                  color: textColor,
-                                }}
-                              >
-                                {b.notes && (
-                                  <Tooltip content={b.notes} placement="top">
-                                    <img src={noteIcon} alt={b.notes} className="cal-booking-icon" />
-                                  </Tooltip>
-                                )}
-                                <div className="cal-booking-name">{b.temporary_name || b.customers?.name}</div>
-                                <div className="cal-booking-service">{b.services?.name}</div>
-                                <div className="cal-booking-time">{formatTime(ghostStart)} - {formatTime(ghostEnd)}</div>
-                              </div>
-                            </div>
-                          );
-                        })()}
-
-                        {/* Drag selection overlay */}
-                        {dragInfo && dragInfo.staffId === emp.id && (() => {
-                          const top = dragInfo.startY;
-                          const height = Math.max(ROW_HEIGHT, dragInfo.currentY - dragInfo.startY);
-                          const startT = convertYToTime(top);
-                          const endT = convertYToTime(top + height);
-                          return (
-                            <div
-                              className="cal-drag-selection"
-                              style={{ top: `${top}px`, height: `${height}px` }}
-                            >
-                              <span className="cal-drag-time">{formatTime(startT)} – {formatTime(endT)}</span>
-                            </div>
-                          );
-                        })()}
-                      </div>
-                    );
-                  })
-                })()
-              )}
-            </div>
-          </div>
-        </div>
+      {viewMode === 'calendar' ? (
+        <CalendarView
+          bookingsByEmployee={bookingsByEmployee}
+          branches={branches}
+          cardDrag={cardDrag}
+          currentDate={currentDate}
+          dragInfo={dragInfo}
+          employeeSchedules={employeeSchedules}
+          employees={employees}
+          filterBranch={filterBranch}
+          gridRef={gridRef}
+          handleCardDragStart={handleCardDragStart}
+          handleColumnHover={handleColumnHover}
+          handleDragStart={handleDragStart}
+          handleRetryLoad={handleRetryLoad}
+          hoverInfo={hoverInfo}
+          loadError={loadError}
+          loading={loading}
+          now={now}
+          nowLineRef={nowLineRef}
+          setHoverInfo={setHoverInfo}
+        />
       ) : (
         /* List View */
-        <div className="card no-border">
-          {/* Desktop Table */}
-          {!isMobile ? (
-            <div className="table-container">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Khách hàng</th>
-                    <th>Dịch vụ</th>
-                    <th>Chi nhánh</th>
-                    <th>Ngày</th>
-                    <th>Giờ</th>
-                    <th>Nhân viên</th>
-                    <th>Ghi chú</th>
-                    <th>Trạng thái</th>
-                    <th>Giá</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {loading ? (
-                    Array.from({ length: 5 }).map((_, idx) => (
-                      <tr key={`skeleton-row-${idx}`}>
-                        <td colSpan="9" style={{ padding: '16px 24px' }}>
-                          <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
-                            <div className="skeleton-shimmer-light" style={{ width: '40px', height: '40px', borderRadius: '50%' }} />
-                            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                              <div className="skeleton-shimmer-light" style={{ width: '30%', height: '16px', borderRadius: '4px' }} />
-                              <div className="skeleton-shimmer-light" style={{ width: '50%', height: '12px', borderRadius: '4px' }} />
-                            </div>
-                            <div className="skeleton-shimmer-light" style={{ width: '80px', height: '24px', borderRadius: '12px' }} />
-                          </div>
-                        </td>
-                      </tr>
-                    ))
-                  ) : bookings.length === 0 ? (
-                    <tr>
-                      <td colSpan="9">
-                        <div className="empty-state">
-                          <FiCalendar size={32} />
-                          <h4>Không có lịch hẹn</h4>
-                          <p>Chưa có lịch hẹn nào trong ngày này</p>
-                        </div>
-                      </td>
-                    </tr>
-                  ) : (
-                    bookings.map(b => (
-                        <tr key={b.id} id={`booking-card-${b.id}`} onClick={() => handleOpenDetail(b)} className={`cursor-pointer${b.status === 'pending' && b.internal_note ? ' row-spam-warning' : ''}`}>
-                          <td>
-                            <div className="list-booking-name">{b.temporary_name || b.customers?.name || '-'}</div>
-                            <div className="list-booking-phone">{b.customers?.phone || ''}</div>
-                          </td>
-                          <td>{b.services?.name || '-'}</td>
-                          <td>{b.branches?.name || '-'}</td>
-                          <td>{new Date(b.booking_date + 'T00:00:00').toLocaleDateString('vi-VN')}</td>
-                          <td>{formatTime(b.start_time)} - {formatTime(b.end_time)}</td>
-                          <td>{b.employees?.name || '-'}</td>
-                          <td>
-                            {b.notes || '-'}
-                            {b.internal_note && <div className="list-booking-note">{b.internal_note}</div>}
-                          </td>
-                          <td>
-                            <span className={`badge badge-${b.status}`}>{b.status}</span>
-                          </td>
-                          <td className="list-booking-price">{formatPrice(b.total_price)}</td>
-                        </tr>
-                      ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            /* Mobile Card Layout */
-            <div className="booking-list-mobile">
-              {loading ? (
-                Array.from({ length: 4 }).map((_, idx) => (
-                  <div key={`skeleton-card-${idx}`} className="booking-card-mobile" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <div className="skeleton-shimmer-light" style={{ width: '120px', height: '16px', borderRadius: '4px' }} />
-                      <div className="skeleton-shimmer-light" style={{ width: '80px', height: '16px', borderRadius: '4px' }} />
-                    </div>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <div className="skeleton-shimmer-light" style={{ width: '80px', height: '12px', borderRadius: '4px' }} />
-                      <div className="skeleton-shimmer-light" style={{ width: '60px', height: '12px', borderRadius: '4px' }} />
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <div className="skeleton-shimmer-light" style={{ width: '50px', height: '20px', borderRadius: '10px' }} />
-                      <div className="skeleton-shimmer-light" style={{ width: '60px', height: '20px', borderRadius: '4px' }} />
-                    </div>
-                  </div>
-                ))
-              ) : bookings.length === 0 ? (
-                <div className="empty-state">
-                  <FiCalendar size={32} />
-                  <h4>Không có lịch hẹn</h4>
-                  <p>Chưa có lịch hẹn nào trong ngày này</p>
-                </div>
-              ) : (
-                mobileListItems.map(({ key, lead, ids, guestCount, endTime, serviceNames, notes, internalNotes }) => {
-                  const isHold = lead.status === 'pending' && lead.internal_note && lead.internal_note.includes('Khách đang đặt');
-                  return (
-                    <div
-                      key={key}
-                      id={`booking-card-${lead.id}`}
-                      data-booking-ids={ids.join(' ')}
-                      className={`booking-card-mobile${lead.status === 'pending' && lead.internal_note ? ' row-spam-warning' : ''}${isHold ? ' is-hold-disabled' : ''}`}
-                      onClick={() => { if (!isHold) handleOpenDetail(lead); }}
-                    >
-                      <div className="booking-card-mobile-header">
-                        <span className="booking-card-mobile-customer">{lead.temporary_name || lead.customers?.name || '-'}</span>
-                        <span className="booking-card-mobile-time">{formatTime(lead.start_time)} - {guestCount} khách</span>
-                      </div>
-                      <div className="booking-card-mobile-body">
-                        <span className="booking-card-mobile-service">
-                          <span className="service-icon-dot sm" style={{ background: lead.services?.color || '#0d8a3f' }}></span>
-                          {serviceNames || '-'}
-                        </span>
-                        <span className={`badge badge-${lead.status}`}>{lead.status}</span>
-                      </div>
-                      
-                      {notes.length > 0 && (
-                        <div className="booking-card-mobile-footer">
-                          <div className="booking-card-mobile-notes">{notes.join('\n')}</div>
-                        </div>
-                      )}
-                      {internalNotes.map(note => (
-                        <div className="booking-card-mobile-footer">
-                          <div key={note} className="list-booking-note">{note}</div>
-                        </div>
-                      ))}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          )}
-        </div>
+        <BookingListView
+          bookings={bookings}
+          handleOpenDetail={handleOpenDetail}
+          handleRetryLoad={handleRetryLoad}
+          isMobile={isMobile}
+          loadError={loadError}
+          loading={loading}
+          mobileListItems={mobileListItems}
+        />
       )}
 
 
       {/* Booking Detail Modal */}
-      {detailModal && (
-        <div className="modal-overlay" onClick={() => setDetailModal(null)}>
-          <div className="modal modal-viewing max-w-480" onClick={e => e.stopPropagation()}>
-            <div className="modal-header modal-header-clean">
-              <h3 className="modal-title-lg">Chi tiết</h3>
-              <button className="modal-close" onClick={() => setDetailModal(null)}>
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M19 5L5 19" stroke="black" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"></path>
-                  <path d="M5 5L19 19" stroke="black" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"></path>
-                </svg>
-              </button>
-            </div>
-
-            <div className="detail-tabs">
-              <button
-                className={`detail-tab-btn tab-btn ${detailTab === 'schedule' ? 'active' : ''}`}
-                onClick={() => setDetailTab('schedule')}
-              >
-                Lịch
-              </button>
-              <button
-                className={`detail-tab-btn tab-btn ${detailTab === 'customer' ? 'active' : ''}`}
-                onClick={() => setDetailTab('customer')}
-              >
-                Khách
-              </button>
-            </div>
-
-            <div className="modal-body modal-body-clean">
-              {/* Anti-spam warning banner */}
-              {detailEdit.internal_note && (
-                <div className="anti-spam-alert" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
-                  <span className="anti-spam-alert-text" style={{ flex: 1 }}>{detailEdit.internal_note}</span>
-                  <button
-                    className="anti-spam-dismiss-btn"
-                    onClick={(e) => handleDismissWarning(e, detailModal)}
-                    style={{
-                      background: 'rgba(245, 158, 11, 0.15)',
-                      border: 'none',
-                      color: '#92400e',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      padding: '4px',
-                      borderRadius: '50%',
-                      transition: 'all 0.2s',
-                      width: '24px',
-                      height: '24px',
-                      flexShrink: 0
-                    }}
-                    title="Tắt cảnh báo"
-                  >
-                    <FiX size={14} />
-                  </button>
-                </div>
-              )}
-              {detailTab === 'schedule' ? (
-                <div className="detail-view">
-                  <div className="booking-row no-hover">
-                    <div className="booking-row-icon">
-                      <div className="service-icon-dot sm" style={{ background: services.find(s => s.id === detailEdit.service_id)?.color || '#0d8a3f' }}></div>
-                    </div>
-                    <div className="booking-row-content">
-                      <div className="pos-relative">
-                        <input
-                          type="text"
-                          className={`form-input form-input-clean ${!detailEdit.service_id && detailEdit.service_search ? 'error' : ''}`}
-                          value={detailEdit.service_search}
-                          onChange={e => {
-                            handleGenericSearch('service', e.target.value, true);
-                            if (detailEdit.service_id) setDetailEdit(prev => ({ ...prev, service_id: '' }));
-                          }}
-                          onFocus={() => handleGenericSearch('service', detailEdit.service_search, true)}
-                          onBlur={() => setTimeout(() => setSearchSuggestions({ type: null, data: [], loading: false }), 200)}
-                          placeholder="Chọn Dịch Vụ"
-                          autoComplete="off"
-                        />
-                        {searchSuggestions.type === 'service' && searchSuggestions.loading && (
-                          <div className="spinner-icon spinner-icon-right" />
-                        )}
-                        {searchSuggestions.type === 'service' && searchSuggestions.data.length > 0 && (
-                          <div className="autocomplete-dropdown">
-                            {searchSuggestions.data.map((s, idx) => {
-                              if (s.isHeader) {
-                                return (
-                                  <div key={`header-${idx}`} className="autocomplete-header">
-                                    {s.name}
-                                  </div>
-                                );
-                              }
-                              return (
-                                <div key={s.id} className="autocomplete-item" onMouseDown={() => handleSelectSuggestion('service', s, true)}>
-                                  <div className="service-icon-dot sm" style={{ background: s.color || '#F8F3EC' }}></div>
-                                  <div className="customer-info">
-                                    <div className="autocomplete-name">{s.name}</div>
-                                    <div className="customer-phone">{formatPrice(s.price)}</div>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="booking-row no-hover">
-                    <div className="booking-row-icon">
-                      <img src={clockIcon} alt="time" className="icon-w24" />
-                    </div>
-                    <div className="booking-row-content row-content-between">
-                      <div className="booking-date-container">
-                        <input
-                          type="text"
-                          className="form-input form-input-clean cursor-pointer"
-                          readOnly
-                          value={detailEdit.booking_date ? new Date(detailEdit.booking_date).toLocaleDateString('vi-VN') : '--/--/----'}
-                          onClick={() => setShowCalendar(!showCalendar)}
-                        />
-                        {showCalendar && (
-                          <div
-                            ref={calendarRef}
-                            className="calendar-popover"
-                          >
-                            <DatePicker.Root
-                              selectionMode="single"
-                              hideOutsideDays
-                              inline
-                              width="fit-content"
-                              value={detailEdit.booking_date ? [parseDate(detailEdit.booking_date)] : []}
-                              onValueChange={(details) => {
-                                if (details.value[0]) {
-                                  const d = details.value[0];
-                                  const dateStr = `${d.year}-${String(d.month).padStart(2, '0')}-${String(d.day).padStart(2, '0')}`;
-
-                                  const selectedDate = new Date(dateStr);
-                                  const today = new Date();
-                                  today.setHours(0, 0, 0, 0);
-
-                                  if (selectedDate < today) {
-                                    alert('Không thể chọn ngày trong quá khứ');
-                                    return;
-                                  }
-
-                                  handleDateChange(dateStr);
-                                  setShowCalendar(false);
-                                }
-                              }}
-                            >
-                              <DatePicker.Content unstyled>
-                                <DatePicker.View view="day">
-                                  <DatePicker.Header />
-                                  <DatePicker.DayTable />
-                                </DatePicker.View>
-                                <DatePicker.View view="month">
-                                  <DatePicker.Header />
-                                  <DatePicker.MonthTable />
-                                </DatePicker.View>
-                                <DatePicker.View view="year">
-                                  <DatePicker.Header />
-                                  <DatePicker.YearTable />
-                                </DatePicker.View>
-                              </DatePicker.Content>
-                            </DatePicker.Root>
-                          </div>
-                        )}
-                      </div>
-                      <div className="time-picker-group">
-                        <TimePickerInput
-                          value={detailEdit.start_time}
-                          onChange={val => handleTimeChange('start_time', val)}
-                        />
-                        <span className="time-separator-text">—</span>
-                        <TimePickerInput
-                          value={detailEdit.end_time}
-                          onChange={val => handleTimeChange('end_time', val)}
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="booking-row no-hover">
-                    <div className="booking-row-icon">
-                      {detailCustomerView === 'selected' || detailCustomerView === 'creating' ? (
-                        <div className="customer-avatar customer-avatar-selected">
-                          {detailEdit.customer_name?.trim().split(' ').at(-1)[0].toUpperCase() || 'C'}
-                        </div>
-                      ) : (
-                        <img src={userIcon} alt="user" />
-                      )}
-                    </div>
-                    <div className="booking-row-content">
-                      {detailCustomerView === 'selected' && (
-                        <div className="customer-info py-0 cursor-pointer" onClick={() => setDetailCustomerView('searching')}>
-                          <div className="booking-row-title">{detailEdit.customer_name}</div>
-                          <div className="customer-phone">{detailEdit.customer_phone}</div>
-                        </div>
-                      )}
-
-                      {detailCustomerView === 'searching' && (
-                        <div className="pos-relative">
-                          <input
-                            type="text"
-                            className="form-input form-input-search"
-                            autoFocus
-                            value={detailEdit.customer_search}
-                            onChange={e => handleGenericSearch('customer', e.target.value, true)}
-                            onFocus={() => handleGenericSearch('customer', detailEdit.customer_search, true)}
-                            onBlur={() => setTimeout(() => {
-                              if (detailCustomerView !== 'selected' && detailCustomerView !== 'creating' && !detailEdit.customer_search) {
-                                setDetailCustomerView('selected');
-                              }
-                              setSearchSuggestions({ type: null, data: [], loading: false });
-                            }, 200)}
-                            placeholder="Tên khách hàng hoặc SĐT..."
-                            autoComplete="off"
-                          />
-                          {searchSuggestions.type === 'customer' && searchSuggestions.loading && (
-                            <div className="spinner-icon spinner-icon-right" />
-                          )}
-                          {searchSuggestions.type === 'customer' && (
-                            <div className="autocomplete-dropdown">
-                              {searchSuggestions.data.map(c => (
-                                <div key={c.id} className="autocomplete-item" onMouseDown={() => handleSelectSuggestion('customer', c, true)}>
-                                  <div className="customer-avatar">{c.name.trim().split(' ').at(-1)[0]}</div>
-                                  <div className="customer-info">
-                                    <div className="autocomplete-name">{c.name}</div>
-                                    <div className="customer-phone">{c.phone}</div>
-                                  </div>
-                                </div>
-                              ))}
-                              <div className="autocomplete-footer" onMouseDown={() => handleSelectSuggestion('customer', 'new', true)}>
-                                <FiPlus /> Tạo Khách Mới
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {detailCustomerView === 'creating' && (
-                        <div className="new-customer-fields">
-                          <input className="form-input form-input-clean" placeholder="Tên khách"
-                            value={detailEdit.customer_name} onChange={e => setDetailEdit(f => ({ ...f, customer_name: e.target.value }))} />
-                          <input className="form-input phone-input-sm" placeholder="Nhập SĐT"
-                            value={detailEdit.customer_phone} onChange={e => setDetailEdit(f => ({ ...f, customer_phone: e.target.value }))} />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="booking-row no-hover">
-                    <div className="booking-row-icon">
-                      <img src={shopIcon} alt="branch" className="icon-w24" />
-                    </div>
-                    <div className="booking-row-content">
-                      <select
-                        className="form-select form-input-clean"
-                        value={detailEdit.branch_id}
-                        onChange={e => {
-                          const newBranchId = e.target.value;
-                          setDetailEdit(f => ({ ...f, branch_id: newBranchId }));
-                          loadEmployeesForDetail(newBranchId, detailEdit.booking_date);
-                        }}
-                      >
-                        {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="booking-row no-hover">
-                    <div className="booking-row-icon">
-                      <div className="customer-avatar avatar-placeholder">{detailModal.employees?.name?.trim().split(' ').at(-1)[0] || 'A'}</div>
-                    </div>
-                    <div className="booking-row-content">
-                      <div className="pos-relative">
-                        <input
-                          type="text"
-                          className="form-input form-input-clean"
-                          value={detailEdit.employee_search}
-                          onChange={e => {
-                            handleGenericSearch('employee', e.target.value, true);
-                            if (detailEdit.employee_id) setDetailEdit(prev => ({ ...prev, employee_id: '' }));
-                          }}
-                          onFocus={() => handleGenericSearch('employee', detailEdit.employee_search, true)}
-                          onBlur={() => setTimeout(() => setSearchSuggestions({ type: null, data: [], loading: false }), 200)}
-                          placeholder="Nhân Viên"
-                          autoComplete="off"
-                        />
-                        {searchSuggestions.type === 'employee' && searchSuggestions.loading && (
-                          <div className="spinner-icon spinner-icon-right" />
-                        )}
-                        {searchSuggestions.type === 'employee' && searchSuggestions.data.length > 0 && (
-                          <div className="autocomplete-dropdown">
-                            {searchSuggestions.data.map(emp => (
-                              <div key={emp.id} className="autocomplete-item" onMouseDown={() => handleSelectSuggestion('employee', emp, true)}>
-                                <div className="customer-avatar">{emp.name.trim().split(' ').at(-1)[0]}</div>
-                                <div className="customer-info">
-                                  <div className="autocomplete-name">{emp.name}</div>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="booking-row no-hover">
-                    <div className="booking-row-icon">
-                      <img src={noteIcon} alt="note" className="icon-w24" />
-                    </div>
-                    <div className="booking-row-content">
-                      <input
-                        type="text"
-                        className="form-input form-input-clean"
-                        value={detailEdit.notes}
-                        onChange={e => setDetailEdit(f => ({ ...f, notes: e.target.value }))}
-                        placeholder="Thêm ghi chú"
-                      />
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="customer-view">
-                  <div className="customer-profile-header">
-                    <p className='customer-id'>Mã KH: {detailModal.customers?.id || 'Tạm thời'}</p>
-                    <div className="customer-avatar-lg avatar-centered">
-                      {detailEdit.customer_name?.trim().split(' ').at(-1)[0].toUpperCase() || 'A'}
-                    </div>
-                    <h2 className="modal-title-lg">{detailModal.temporary_name || detailModal.customers?.name || 'Khách tạm'}</h2>
-                  </div>
-
-                  <div className="booking-row no-hover">
-                    <div className="booking-row-icon">
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#888" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
-                    </div>
-                    <div className="booking-row-content">
-                      <input
-                        className="form-input form-input-clean"
-                        value={detailEdit.customer_name}
-                        onChange={e => setDetailEdit(f => ({ ...f, customer_name: e.target.value }))}
-                        placeholder="Tên khách"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="booking-row no-hover">
-                    <div className="booking-row-icon">
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#888" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
-                    </div>
-                    <div className="booking-row-content">
-                      <input
-                        className="form-input form-input-clean"
-                        value={detailEdit.customer_phone}
-                        onChange={e => setDetailEdit(f => ({ ...f, customer_phone: e.target.value }))}
-                        placeholder="Số điện thoại"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="booking-row no-hover">
-                    <div className="booking-row-icon">
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#888" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
-                    </div>
-                    <div className="booking-row-content">
-                      <input
-                        className="form-input form-input-clean form-input-readonly"
-                        value={detailEdit.customer_email}
-                        onChange={e => setDetailEdit(f => ({ ...f, customer_email: e.target.value }))}
-                        placeholder="Email"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="booking-row no-hover booking-row-top">
-                    <div className="booking-row-icon">
-                      <img src={noteIcon} alt="note" className="icon-w24 icon-mt-32" />
-                    </div>
-                    <div className="booking-row-content">
-                      <textarea
-                        className="form-textarea form-textarea-clean"
-                        value={detailEdit.customer_habits}
-                        onChange={e => setDetailEdit(f => ({ ...f, customer_habits: e.target.value }))}
-                        placeholder="Ghi chú..."
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="modal-footer">
-              <div className="pos-relative" ref={moreMenuRef}>
-                <button className="btn-icon btn-more" onClick={() => setShowDetailMore(!showDetailMore)}>
-                  <FiMoreVertical />
-                </button>
-                {showDetailMore && (
-                  <div className="more-menu">
-                    <button className="more-menu-item" onClick={handleDuplicate}>
-                      Nhân bản
-                    </button>
-                    <button className="more-menu-item danger-item" onClick={() => handleCancel(detailModal.id)}>
-                      Hủy lịch
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              <button
-                className="btn btn-primary btn-save-detail"
-                onClick={handleSaveDetail}
-                disabled={detailSaving || !isDetailModified}
-              >
-                {detailSaving ? 'Đang lưu...' : 'Lưu'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )
-      }
+      <BookingDetailModal
+        branches={branches}
+        calendarRef={calendarRef}
+        detailCustomerView={detailCustomerView}
+        detailEdit={detailEdit}
+        detailModal={detailModal}
+        detailModalRef={detailModalRef}
+        detailSaving={detailSaving}
+        detailTab={detailTab}
+        handleCancel={handleCancel}
+        handleDateChange={handleDateChange}
+        handleDismissWarning={handleDismissWarning}
+        handleDuplicate={handleDuplicate}
+        handleGenericSearch={handleGenericSearch}
+        handleSaveDetail={handleSaveDetail}
+        handleSelectSuggestion={handleSelectSuggestion}
+        handleTimeChange={handleTimeChange}
+        isDetailModified={isDetailModified}
+        moreMenuRef={moreMenuRef}
+        searchSuggestions={searchSuggestions}
+        services={services}
+        setDetailCustomerView={setDetailCustomerView}
+        setDetailEdit={setDetailEdit}
+        setDetailModal={setDetailModal}
+        setDetailTab={setDetailTab}
+        setSearchSuggestions={setSearchSuggestions}
+        setShowCalendar={setShowCalendar}
+        setShowDetailMore={setShowDetailMore}
+        showCalendar={showCalendar}
+        showDetailMore={showDetailMore}
+      />
 
       {/* Create Booking Modal */}
-      {
-        modalOpen && (
-          <div className="modal-overlay" onClick={() => setModalOpen(false)}>
-            <div className="modal modal-max-480" onClick={e => e.stopPropagation()}>
-              <div className="modal-header">
-                <h3>Lịch mới</h3>
-                <button className="modal-close" onClick={() => setModalOpen(false)}>
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M19 5L5 19" stroke="black" stroke-miterlimit="10"></path>
-                    <path d="M5 5L19 19" stroke="black" stroke-miterlimit="10"></path>
-                  </svg>
-                </button>
-              </div>
-              <form onSubmit={handleBookSubmit}>
-                <div className="modal-body">
-                  {/* 1 Row: Dịch vụ */}
-                  <div className="booking-row no-hover">
-                    <div className="booking-row-icon">
-                      <div className="service-icon-dot sm" style={{ background: selectedService?.color || '#F8F3EC' }}></div>
-                    </div>
-                    <div className="booking-row-content">
-                      <div className="pos-relative">
-                        <input
-                          type="text"
-                          className={`form-input form-input-service ${!bookForm.service_id && bookForm.service_search ? 'error' : ''}`}
-                          value={bookForm.service_search}
-                          onChange={e => {
-                            handleGenericSearch('service', e.target.value);
-                            if (bookForm.service_id) setBookForm(prev => ({ ...prev, service_id: '' }));
-                          }}
-                          onFocus={() => handleGenericSearch('service', bookForm.service_search)}
-                          onBlur={() => setTimeout(() => setSearchSuggestions({ type: null, data: [], loading: false }), 200)}
-                          placeholder="Chọn Dịch Vụ"
-                          autoComplete="off"
-                        />
-                        {searchSuggestions.type === 'service' && searchSuggestions.loading && (
-                          <div className="spinner-icon spinner-icon-right" />
-                        )}
-                        {searchSuggestions.type === 'service' && searchSuggestions.data.length > 0 && (
-                          <div className="autocomplete-dropdown">
-                            {searchSuggestions.data.map((s, idx) => {
-                              if (s.isHeader) {
-                                return (
-                                  <div key={`header-${idx}`} className="autocomplete-header">
-                                    {s.name}
-                                  </div>
-                                );
-                              }
-                              return (
-                                <div key={s.id} className="autocomplete-item" onMouseDown={() => handleSelectSuggestion('service', s)}>
-                                  <div className="service-icon-dot sm" style={{ background: s.color || '#F8F3EC' }}></div>
-                                  <div className="customer-info">
-                                    <div className="autocomplete-name">{s.name}</div>
-                                    <div className="customer-phone">{formatPrice(s.price)}</div>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* 1 Row: Ngày & Giờ */}
-                  <div className="booking-row no-hover">
-                    <div className="booking-row-icon">
-                      <img src={clockIcon} alt="date" />
-                    </div>
-                    <div className="booking-row-content new-customer-fields">
-                      <div className="booking-date-container">
-                        <input
-                          type="text"
-                          className="form-input form-input-readonly"
-                          readOnly
-                          value={bookForm.booking_date ? new Date(bookForm.booking_date).toLocaleDateString('vi-VN') : '--/--/----'}
-                          onClick={() => setShowCalendar(!showCalendar)}
-                        />
-                        {showCalendar && (
-                          <div
-                            ref={calendarRef}
-                            className="calendar-popover"
-                          >
-                            <DatePicker.Root
-                              selectionMode="single"
-                              hideOutsideDays
-                              inline
-                              width="fit-content"
-                              value={bookForm.booking_date ? [parseDate(bookForm.booking_date)] : []}
-                              onValueChange={(details) => {
-                                if (details.value[0]) {
-                                  const d = details.value[0];
-                                  const dateStr = `${d.year}-${String(d.month).padStart(2, '0')}-${String(d.day).padStart(2, '0')}`;
-
-                                  const selectedDate = new Date(dateStr);
-                                  const today = new Date();
-                                  today.setHours(0, 0, 0, 0);
-
-                                  if (selectedDate < today) {
-                                    alert('Không thể chọn ngày trong quá khứ');
-                                    return;
-                                  }
-
-                                  const newDate = dateStr;
-
-                                  const handleDateUpdate = async () => {
-                                    let shouldClearEmployee = false;
-                                    if (bookForm.employee_id) {
-                                      const avail = await checkStaffAvailability(bookForm.employee_id, newDate, bookForm.start_time, bookForm.end_time);
-                                      if (!avail) shouldClearEmployee = true;
-                                    }
-
-                                    setBookForm(f => ({
-                                      ...f,
-                                      booking_date: newDate,
-                                      ...(shouldClearEmployee ? { employee_id: '', employee_search: '' } : {})
-                                    }));
-                                  };
-
-                                  handleDateUpdate();
-                                  setShowCalendar(false);
-                                }
-                              }}
-                            >
-                              <DatePicker.Content unstyled>
-                                <DatePicker.View view="day">
-                                  <DatePicker.Header />
-                                  <DatePicker.DayTable />
-                                </DatePicker.View>
-                                <DatePicker.View view="month">
-                                  <DatePicker.Header />
-                                  <DatePicker.MonthTable />
-                                </DatePicker.View>
-                                <DatePicker.View view="year">
-                                  <DatePicker.Header />
-                                  <DatePicker.YearTable />
-                                </DatePicker.View>
-                              </DatePicker.Content>
-                            </DatePicker.Root>
-                          </div>
-                        )}
-                      </div>
-                      <div className="time-picker-group">
-                        <TimePickerInput
-                          value={bookForm.start_time}
-                          onChange={val => {
-                            setBookForm(f => ({ ...f, start_time: val, end_time: calculateEndTime(val, selectedService?.duration_minutes || 0) }));
-                          }}
-                        />
-                        <span className="time-separator-text">—</span>
-                        <TimePickerInput
-                          value={bookForm.end_time}
-                          onChange={val => setBookForm(f => ({ ...f, end_time: val }))}
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* 1 Row: Khách hàng */}
-                  <div className="booking-row no-hover">
-                    <div className="booking-row-icon">
-                      {customerView === 'selected' || customerView === 'creating' ? (
-                        <div className="customer-avatar customer-avatar-selected">{bookForm.customer_name?.trim().split(' ').at(-1)[0].toUpperCase() || 'A'}</div>
-                      ) : (
-                        <img src={userIcon} alt="user" />
-                      )}
-                    </div>
-                    <div className="booking-row-content">
-                      {customerView === 'default' && <div className="booking-row-title placeholder-text-dim cursor-pointer" onClick={() => setCustomerView('searching')}>Thêm Khách</div>}
-
-                      {customerView === 'searching' && (
-                        <div className="pos-relative">
-                          <input
-                            type="text"
-                            className="form-input form-input-search"
-                            autoFocus
-                            value={bookForm.customer_name}
-                            onChange={e => handleGenericSearch('customer', e.target.value)}
-                            onFocus={e => handleGenericSearch('customer', e.target.value)}
-                            onBlur={() => setTimeout(() => {
-                              if (customerView !== 'selected' && customerView !== 'creating' && !bookForm.customer_name) {
-                                setCustomerView('default');
-                              }
-                            }, 200)}
-                            placeholder="Tên khách hàng hoặc SĐT..."
-                            autoComplete="off"
-                          />
-                          {searchSuggestions.type === 'customer' && searchSuggestions.loading && (
-                            <div className="spinner-icon spinner-icon-right" />
-                          )}
-                          {searchSuggestions.type === 'customer' && (
-                            <div className="autocomplete-dropdown">
-                              {searchSuggestions.data.map(c => (
-                                <div key={c.id} className="autocomplete-item" onMouseDown={() => handleSelectSuggestion('customer', c)}>
-                                  <div className="customer-avatar">{c.name.trim().split(' ').at(-1)[0]}</div>
-                                  <div className="customer-info">
-                                    <div className="autocomplete-name">{c.name}</div>
-                                    <div className="customer-phone">{c.phone}</div>
-                                  </div>
-                                </div>
-                              ))}
-                              <div className="autocomplete-footer" onMouseDown={() => handleSelectSuggestion('customer', 'new')}>
-                                <FiPlus /> Tạo Khách Mới
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {customerView === 'selected' && (
-                        <div className="customer-info py-0" onClick={() => setCustomerView('searching')}>
-                          <div className="booking-row-title">{bookForm.customer_name}</div>
-                          <div className="customer-phone">{bookForm.customer_phone}</div>
-                        </div>
-                      )}
-
-                      {customerView === 'creating' && (
-                        <div className="new-customer-fields">
-                          <input className="form-input form-input-clean" placeholder="Tên khách"
-                            value={bookForm.customer_name} onChange={e => setBookForm(f => ({ ...f, customer_name: e.target.value }))} />
-                          <input className="form-input phone-input-sm" placeholder="Nhập SĐT"
-                            value={bookForm.customer_phone} onChange={e => setBookForm(f => ({ ...f, customer_phone: e.target.value }))} />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* 1 Row: Chi nhánh */}
-                  <div className="booking-row no-hover">
-                    <div className="booking-row-icon">
-                      <img src={shopIcon} alt="branch" />
-                    </div>
-                    <div className="booking-row-content">
-                      <select className="form-select form-select-clean"
-                        value={bookForm.branch_id} onChange={e => setBookForm(prev => ({ ...prev, branch_id: e.target.value }))}>
-                        {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* 1 Row: Nhân viên */}
-                  <div className="booking-row no-hover">
-                    <div className="booking-row-icon">
-                      <div className="customer-avatar employee-avatar-placeholder">{bookForm.employee_search?.trim().split(' ').at(-1)[0] || 'A'}</div>
-                    </div>
-                    <div className="booking-row-content">
-                      <div className="pos-relative">
-                        <input
-                          type="text"
-                          className="form-input form-input-clean"
-                          value={bookForm.employee_search}
-                          onChange={e => handleGenericSearch('employee', e.target.value)}
-                          onFocus={e => handleGenericSearch('employee', e.target.value)}
-                          onBlur={() => setTimeout(() => setSearchSuggestions({ type: null, data: [], loading: false }), 200)}
-                          placeholder="Nhân Viên"
-                          autoComplete="off"
-                        />
-                        {searchSuggestions.type === 'employee' && searchSuggestions.loading && (
-                          <div className="spinner-icon spinner-icon-right" />
-                        )}
-                        {searchSuggestions.type === 'employee' && searchSuggestions.data.length > 0 && (
-                          <div className="autocomplete-dropdown">
-                            {searchSuggestions.data.map(emp => (
-                              <div key={emp.id} className="autocomplete-item" onMouseDown={() => handleSelectSuggestion('employee', emp)}>
-                                <div className="customer-avatar">{emp.name.trim().split(' ').at(-1)[0]}</div>
-                                <div className="customer-info">
-                                  <div className="autocomplete-name">{emp.name}</div>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* 1 Row: Ghi chú */}
-                  <div className="booking-row no-hover">
-                    <div className="booking-row-icon">
-                      <img src={noteIcon} alt="notes" />
-                    </div>
-                    <div className="booking-row-content">
-                      <input className="form-input form-input-clean"
-                        placeholder="Notes" value={bookForm.notes} onChange={e => setBookForm({ ...bookForm, notes: e.target.value })} />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="modal-footer">
-                  <button type="submit" className="btn btn-primary btn-submit-booking" disabled={isCreating}>
-                    {isCreating ? 'Đang Tạo...' : 'Tạo'}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div >
-        )
-      }
+      <CreateBookingModal
+        bookForm={bookForm}
+        bookModalRef={bookModalRef}
+        branches={branches}
+        calendarRef={calendarRef}
+        checkStaffAvailability={checkStaffAvailability}
+        customerView={customerView}
+        handleBookSubmit={handleBookSubmit}
+        handleGenericSearch={handleGenericSearch}
+        handleSelectSuggestion={handleSelectSuggestion}
+        isCreating={isCreating}
+        modalOpen={modalOpen}
+        requestCloseBookModal={requestCloseBookModal}
+        searchSuggestions={searchSuggestions}
+        selectedService={selectedService}
+        setBookForm={setBookForm}
+        setCustomerView={setCustomerView}
+        setModalOpen={setModalOpen}
+        setSearchSuggestions={setSearchSuggestions}
+        setShowCalendar={setShowCalendar}
+        showCalendar={showCalendar}
+      />
 
       {/* Drag & Drop Confirmation Popup */}
-      {dragConfirm && (
-        <div className="modal-overlay drag-confirm-overlay" onClick={handleDragCancel}>
-          <div className="drag-confirm-popup" onClick={e => e.stopPropagation()}>
-            <div className="drag-confirm-header">
-              <h3 className="drag-confirm-title">Xác nhận thay đổi?</h3>
-              <button className="modal-close" onClick={handleDragCancel}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                  <path d="M19 5L5 19" stroke="black" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"></path>
-                  <path d="M5 5L19 19" stroke="black" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"></path>
-                </svg>
-              </button>
-            </div>
-            <div className="drag-confirm-body">
-              <div className="drag-confirm-label">Từ:</div>
-              <div className="drag-confirm-row">
-                <div className="drag-confirm-time-icon">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#888" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-                </div>
-                <span className="drag-confirm-time">{dragConfirm.fromTime}</span>
-                <div className="drag-confirm-staff-badge">
-                  <span className="drag-confirm-staff-initial">{dragConfirm.fromStaff?.trim().split(' ').at(-1)?.[0]?.toUpperCase() || 'A'}</span>
-                  <span className="drag-confirm-staff-name">{dragConfirm.fromStaff}</span>
-                </div>
-              </div>
-              <div className="drag-confirm-label">Thành:</div>
-              <div className="drag-confirm-row">
-                <div className="drag-confirm-time-icon">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#888" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-                </div>
-                <span className="drag-confirm-time">{dragConfirm.toTime}</span>
-                <div className="drag-confirm-staff-badge">
-                  <span className="drag-confirm-staff-initial">{dragConfirm.toStaff?.trim().split(' ').at(-1)?.[0]?.toUpperCase() || 'A'}</span>
-                  <span className="drag-confirm-staff-name">{dragConfirm.toStaff}</span>
-                </div>
-              </div>
-            </div>
-            <div className="drag-confirm-actions">
-              <button className="drag-confirm-cancel" onClick={handleDragCancel}>Hủy, giữ nguyên</button>
-              <button className="drag-confirm-submit" onClick={handleDragConfirm}>Thay Đổi</button>
-            </div>
-          </div>
-        </div>
-      )}
+      <DragConfirmDialog
+        dragConfirm={dragConfirm}
+        dragConfirmRef={dragConfirmRef}
+        handleDragCancel={handleDragCancel}
+        handleDragConfirm={handleDragConfirm}
+      />
     </div >
   );
 }

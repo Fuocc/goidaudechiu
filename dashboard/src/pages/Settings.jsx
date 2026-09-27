@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { FiSave, FiClock, FiSettings, FiZap, FiPlus, FiEdit2, FiTrash2, FiPlay, FiList } from 'react-icons/fi';
 import {
   getSettings, updateSetting,
@@ -6,10 +6,16 @@ import {
   getBranches, getEmployees
 } from '../api';
 import { toast } from 'react-toastify';
+import { getInitial } from '../utils/format';
+import { notifyError } from '../utils/notify';
+import { useConfirm } from '../components/ConfirmDialog';
+import { useModalA11y } from '../hooks/useModalA11y';
+import { clickableProps } from '../utils/a11y';
 import '../styles/webhooks.css';
 import '../styles/settings.css';
 
 function Settings() {
+  const confirmDialog = useConfirm();
   const [activeTab, setActiveTab] = useState('general'); // 'general', 'webhooks', or 'tour'
 
   // General Settings State
@@ -34,6 +40,7 @@ function Settings() {
   const [initialTourOrder, setInitialTourOrder] = useState([]);
   const [tourLoading, setTourLoading] = useState(false);
   const [draggedIndex, setDraggedIndex] = useState(null);
+  const staffSeqRef = useRef(0);
 
   useEffect(() => {
     loadSettings();
@@ -59,7 +66,7 @@ function Settings() {
         }));
       }
     } catch (err) {
-
+      notifyError(err, 'Không tải được cài đặt');
     } finally {
       setLoading(false);
     }
@@ -85,7 +92,7 @@ function Settings() {
       const data = await getWebhooks();
       setWebhooks(data);
     } catch (err) {
-
+      notifyError(err, 'Không tải được danh sách webhook');
     } finally {
       setWebhooksLoading(false);
     }
@@ -121,7 +128,7 @@ function Settings() {
   };
 
   const handleDeleteWebhook = async (id) => {
-    if (!confirm('Xóa webhook này?')) return;
+    if (!(await confirmDialog({ message: 'Xóa webhook này?', confirmText: 'Xóa', danger: true }))) return;
     try {
       await deleteWebhook(id);
       toast.success('Xóa webhook thành công!');
@@ -162,7 +169,7 @@ function Settings() {
         setSelectedBranch(bData[0].id);
       }
     } catch (err) {
-
+      notifyError(err, 'Không tải được danh sách chi nhánh');
     } finally {
       setTourLoading(false);
     }
@@ -175,9 +182,13 @@ function Settings() {
   }, [selectedBranch, activeTab]);
 
   const loadBranchStaff = async (branchId) => {
+    // Đổi chi nhánh nhanh → chỉ nhận danh sách của lần gọi mới nhất,
+    // tránh hiển thị (rồi lưu nhầm) thứ tự NV chi nhánh A vào tour_order của chi nhánh B
+    const seq = ++staffSeqRef.current;
     setTourLoading(true);
     try {
       const staff = await getEmployees(branchId);
+      if (seq !== staffSeqRef.current) return;
       const activeStaff = staff.filter(e => e.is_active);
 
       // Try to load existing order from settings
@@ -201,9 +212,12 @@ function Settings() {
         setInitialTourOrder(activeStaff.map(s => s.id));
       }
     } catch (err) {
-
+      if (seq !== staffSeqRef.current) return;
+      setTourStaff([]);
+      setInitialTourOrder([]);
+      notifyError(err, 'Không tải được nhân viên của chi nhánh');
     } finally {
-      setTourLoading(false);
+      if (seq === staffSeqRef.current) setTourLoading(false);
     }
   };
 
@@ -236,6 +250,8 @@ function Settings() {
   };
 
   const isTourModified = JSON.stringify(tourStaff.map(s => s.id)) !== JSON.stringify(initialTourOrder);
+
+  const webhookModalRef = useModalA11y(webhookModalOpen, () => setWebhookModalOpen(false));
 
   if (loading && activeTab === 'general') {
     return (
@@ -383,7 +399,11 @@ function Settings() {
                           <td>
                             <label className="webhook-toggle">
                               <div className={`toggle-switch${w.is_active ? ' active' : ''}`}
-                                onClick={() => handleToggleWebhook(w)}>
+                                onClick={() => handleToggleWebhook(w)}
+                                {...clickableProps(() => handleToggleWebhook(w))}
+                                role="switch"
+                                aria-checked={!!w.is_active}
+                                aria-label={`Bật/tắt webhook ${w.name}`}>
                                 <div className="toggle-knob"></div>
                               </div>
                               <span className={`webhook-status ${w.is_active ? 'active' : 'inactive'}`}>
@@ -486,7 +506,7 @@ function Settings() {
                       >
                         <div className="tour-item-order">{idx + 1}</div>
                         <div className="tour-item-avatar">
-                          {s.name.trim().split(' ').at(-1)[0]}
+                          {getInitial(s.name)}
                         </div>
                         <div className="tour-item-info">
                           <div className="staff-name">{s.name}</div>
@@ -508,10 +528,10 @@ function Settings() {
       {/* Webhook Modal */}
       {webhookModalOpen && (
         <div className="modal-overlay" onClick={() => setWebhookModalOpen(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
+          <div className="modal" ref={webhookModalRef} onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3>{editingWebhook ? 'Sửa Webhook' : 'Thêm Webhook'}</h3>
-              <button className="modal-close" onClick={() => setWebhookModalOpen(false)}>
+              <button className="modal-close" aria-label="Đóng" onClick={() => setWebhookModalOpen(false)}>
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                   <path d="M19 5L5 19" stroke="black" stroke-miterlimit="10"></path>
                   <path d="M5 5L19 19" stroke="black" stroke-miterlimit="10"></path>

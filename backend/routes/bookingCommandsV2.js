@@ -6,6 +6,7 @@ const { GoogleGenAI, ThinkingLevel } = require('@google/genai');
 const { aiLimiter } = require('../middleware/security');
 const { hasRole } = require('../middleware/auth');
 const { loadTourOrder, sortByTourOrder } = require('../lib/tourOrder');
+const { signUndoAction } = require('../lib/undoToken');
 
 // Initialize Gemini SDK
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
@@ -1838,7 +1839,8 @@ ${employeesStr}
 
         toolLog.push({ tool: toolCall.name, params: toolCall.args, result: toolResult });
         const action = buildAction(toolCall.name, toolResult);
-        if (action) actions.push(action);
+        // Ký ngay sau tool (trước tool kế tiếp) để dấu vân tay `after` đúng là trạng thái sau thao tác này
+        if (action) actions.push(await signUndoAction(action, req.auth?.id));
 
         responseParts.push({
           functionResponse: {

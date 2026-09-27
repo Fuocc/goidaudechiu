@@ -298,6 +298,12 @@
   color: var(--error);
 }
 
+/* Khách đã đến (check-in) — trước đây chưa có style */
+.badge-arrived {
+  background: var(--success-bg);
+  color: var(--success);
+}
+
 .badge-active {
   background: var(--success-bg);
   color: var(--success);

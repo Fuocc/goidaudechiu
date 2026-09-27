@@ -3,6 +3,10 @@ import { FiPlus, FiEdit2, FiTrash2 } from 'react-icons/fi';
 import { getEmployees, createEmployee, updateEmployee, deleteEmployee, getBranches } from '../api';
 import { toast } from 'react-toastify';
 import { TableSkeleton, MobileCardSkeleton } from '../components/ui/Skeleton';
+import { notifyError } from '../utils/notify';
+import { useIsMobile } from '../hooks/useIsMobile';
+import { useConfirm } from '../components/ConfirmDialog';
+import { useModalA11y } from '../hooks/useModalA11y';
 import '../styles/employees.css';
 
 function EmployeeTable({ title, employees, loading, isMobile, openEdit, handleDelete, emptyTitle, emptyText, showBranchColumn }) {
@@ -57,8 +61,8 @@ function EmployeeTable({ title, employees, loading, isMobile, openEdit, handleDe
                     </td>
                     <td>
                       <div className="actions-cell">
-                        <button className="btn-icon" onClick={() => openEdit(emp)}><FiEdit2 size={14} /></button>
-                        <button className="btn-icon btn-danger" onClick={() => handleDelete(emp.id)}><FiTrash2 size={14} /></button>
+                        <button className="btn-icon" aria-label="Sửa" onClick={() => openEdit(emp)}><FiEdit2 size={14} /></button>
+                        <button className="btn-icon btn-danger" aria-label="Xóa" onClick={() => handleDelete(emp.id)}><FiTrash2 size={14} /></button>
                       </div>
                     </td>
                   </tr>
@@ -87,8 +91,8 @@ function EmployeeTable({ title, employees, loading, isMobile, openEdit, handleDe
                   {emp.is_active ? 'Hoạt động' : 'Nghỉ'}
                 </span>
                 <div className="mobile-card-actions" onClick={e => e.stopPropagation()}>
-                  <button className="btn-icon" onClick={() => openEdit(emp)}><FiEdit2 size={14} /></button>
-                  <button className="btn-icon btn-danger" onClick={() => handleDelete(emp.id)}><FiTrash2 size={14} /></button>
+                  <button className="btn-icon" aria-label="Sửa" onClick={() => openEdit(emp)}><FiEdit2 size={14} /></button>
+                  <button className="btn-icon btn-danger" aria-label="Xóa" onClick={() => handleDelete(emp.id)}><FiTrash2 size={14} /></button>
                 </div>
               </div>
             ))
@@ -100,6 +104,7 @@ function EmployeeTable({ title, employees, loading, isMobile, openEdit, handleDe
 }
 
 function Employees() {
+  const confirmDialog = useConfirm();
   const [employees, setEmployees] = useState([]);
   const [branches, setBranches] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -108,12 +113,7 @@ function Employees() {
   const [form, setForm] = useState({ name: '', phone: '', branch_id: '', is_active: true });
 
   // Responsive
-  const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 768);
-  useEffect(() => {
-    const h = () => setIsMobile(window.innerWidth <= 768);
-    window.addEventListener('resize', h);
-    return () => window.removeEventListener('resize', h);
-  }, []);
+  const isMobile = useIsMobile();
 
   const notify = (msg) => {
     toast.success(msg, {
@@ -131,7 +131,7 @@ function Employees() {
       const data = await getBranches();
       setBranches(data);
     } catch (err) {
-
+      notifyError(err, 'Không tải được danh sách chi nhánh');
     }
   };
 
@@ -141,6 +141,7 @@ function Employees() {
       const data = await getEmployees();
       setEmployees(data);
     } catch (err) {
+      notifyError(err, 'Không tải được danh sách nhân viên');
     } finally {
       setLoading(false);
     }
@@ -171,22 +172,24 @@ function Employees() {
       setModalOpen(false);
       loadEmployees();
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     }
   };
 
   const handleDelete = async (id) => {
-    if (!confirm('Bạn có chắc muốn vô hiệu hóa nhân viên này?')) return;
+    if (!(await confirmDialog({ message: 'Bạn có chắc muốn vô hiệu hóa nhân viên này?', confirmText: 'Vô hiệu hóa', danger: true }))) return;
     try {
       await deleteEmployee(id);
       loadEmployees();
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     }
   };
 
   const validBranchIds = new Set(branches.map(b => b.id));
   const unassignedEmployees = employees.filter(e => !validBranchIds.has(e.branch_id));
+
+  const modalRef = useModalA11y(modalOpen, () => setModalOpen(false));
 
   return (
     <div>
@@ -231,10 +234,10 @@ function Employees() {
 
       {modalOpen && (
         <div className="modal-overlay" onClick={() => setModalOpen(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
+          <div className="modal" ref={modalRef} onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3>{editing ? 'Sửa nhân viên' : 'Thêm nhân viên'}</h3>
-              <button className="modal-close" onClick={() => setModalOpen(false)}>
+              <button className="modal-close" aria-label="Đóng" onClick={() => setModalOpen(false)}>
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                   <path d="M19 5L5 19" stroke="black" stroke-miterlimit="10"></path>
                   <path d="M5 5L19 19" stroke="black" stroke-miterlimit="10"></path>

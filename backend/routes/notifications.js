@@ -18,6 +18,15 @@ router.get('/vapid-public-key', (req, res) => {
     res.json({ publicKey: process.env.VAPID_PUBLIC_KEY });
 });
 
+// Lỗi do DB chưa có cột (chưa chạy file SQL tương ứng)
+const isMissingColumn = (error, column) => !!error && new RegExp(column).test(error.message || '');
+
+// Danh sách ID chi nhánh đã tắt thông báo (#8): mảng chuỗi, tối đa 50. Không hợp lệ → null
+function sanitizeBranchIds(value) {
+    if (!Array.isArray(value)) return null;
+    return [...new Set(value.filter(id => typeof id === 'string' && id.length > 0 && id.length <= 64))].slice(0, 50);
+}
+
 // API POST: Đăng ký thiết bị nhận thông báo push (Subscribe)
 router.post('/subscribe', async (req, res) => {
     const { subscription } = req.body || {};
@@ -35,21 +44,60 @@ router.post('/subscribe', async (req, res) => {
 
     try {
         // Lưu thông tin đăng ký, gắn với tài khoản đang đăng nhập (cột user_id — SQL Bước 3)
-        let { error } = await supabase
-            .from('push_subscriptions')
-            .upsert({ endpoint, p256dh, auth, user_id: req.auth?.id || null }, { onConflict: 'endpoint' });
+        // và danh sách chi nhánh đã tắt thông báo (cột muted_branch_ids — sql/2026-09-27_push_muted_branches.sql).
+        // Client cũ không gửi muted_branch_ids → không đụng tới cột này (giữ giá trị đang có).
+        const record = { endpoint, p256dh, auth, user_id: req.auth?.id || null };
+        const muted = sanitizeBranchIds(req.body?.muted_branch_ids);
+        if (muted) record.muted_branch_ids = muted;
 
-        // Chưa chạy SQL thêm cột user_id → lưu theo cách cũ để push vẫn hoạt động
-        if (error && /user_id/.test(error.message || '')) {
-            ({ error } = await supabase
-                .from('push_subscriptions')
-                .upsert({ endpoint, p256dh, auth }, { onConflict: 'endpoint' }));
+        let { error } = await supabase.from('push_subscriptions').upsert(record, { onConflict: 'endpoint' });
+
+        // Chưa chạy SQL thêm cột → bỏ cột đó và lưu lại để push vẫn hoạt động.
+        // Postgres báo từng cột thiếu một → lặp cho tới khi không còn lỗi thiếu cột tùy chọn nào.
+        const optionalColumns = ['muted_branch_ids', 'user_id'];
+        for (let i = 0; i < optionalColumns.length && error; i++) {
+            const missing = optionalColumns.find(c => c in record && isMissingColumn(error, c));
+            if (!missing) break;
+            delete record[missing];
+            ({ error } = await supabase.from('push_subscriptions').upsert(record, { onConflict: 'endpoint' }));
         }
 
         if (error) throw error;
         res.status(201).json({ message: 'Đăng ký nhận thông báo đẩy thành công!' });
     } catch (err) {
         res.status(500).json({ error: 'Không thể đăng ký nhận tin trên máy chủ' });
+    }
+});
+
+// API PUT: Lưu danh sách chi nhánh đã tắt thông báo cho mọi thiết bị của tài khoản (+ thiết bị hiện tại)
+// Body: { muted_branch_ids: [uuid...], endpoint? }
+router.put('/preferences', async (req, res) => {
+    const muted = sanitizeBranchIds(req.body?.muted_branch_ids);
+    if (!muted) return res.status(400).json({ error: 'muted_branch_ids phải là mảng' });
+    const endpoint = typeof req.body?.endpoint === 'string' && req.body.endpoint.length <= 1000 ? req.body.endpoint : null;
+
+    try {
+        // 1) Mọi thiết bị đã gắn với tài khoản này
+        if (req.auth?.id) {
+            const { error } = await supabase
+                .from('push_subscriptions')
+                .update({ muted_branch_ids: muted })
+                .eq('user_id', req.auth.id);
+            if (isMissingColumn(error, 'muted_branch_ids')) return res.json({ applied: false });
+            if (error && !isMissingColumn(error, 'user_id')) throw error;
+        }
+        // 2) Thiết bị hiện tại (subscription cũ có thể chưa gắn user_id)
+        if (endpoint) {
+            const { error } = await supabase
+                .from('push_subscriptions')
+                .update({ muted_branch_ids: muted })
+                .eq('endpoint', endpoint);
+            if (isMissingColumn(error, 'muted_branch_ids')) return res.json({ applied: false });
+            if (error) throw error;
+        }
+        res.json({ applied: true });
+    } catch (err) {
+        res.status(500).json({ error: 'Không lưu được cài đặt thông báo trên máy chủ' });
     }
 });
 

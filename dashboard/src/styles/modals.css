@@ -186,3 +186,23 @@
   -moz-appearance: none;
   appearance: none;
 }
+
+/* Hộp thoại xác nhận (ConfirmDialog) — nằm trên các modal khác (z-index modal thường: 1200) */
+.modal-overlay.confirm-dialog-overlay {
+  z-index: 1300;
+}
+
+.modal.confirm-dialog {
+  max-width: 420px;
+}
+
+.confirm-dialog-message {
+  margin: 0;
+  white-space: pre-line;
+  line-height: 1.5;
+}
+
+/* Khung modal nhận focus bằng code (useModalA11y) — không cần viền focus quanh cả khung */
+[data-modal-a11y]:focus {
+  outline: none;
+}

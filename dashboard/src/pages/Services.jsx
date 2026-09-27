@@ -3,21 +3,16 @@ import { FiPlus, FiEdit2, FiTrash2, FiEdit3, FiFileText, FiClock, FiDollarSign, 
 import { getServices, createService, updateService, deleteService } from '../api';
 import { toast } from 'react-toastify';
 import { TableSkeleton, MobileCardSkeleton } from '../components/ui/Skeleton';
+import { notifyError } from '../utils/notify';
+import { useIsMobile } from '../hooks/useIsMobile';
+import { useConfirm } from '../components/ConfirmDialog';
+import { useModalA11y } from '../hooks/useModalA11y';
+import { clickableProps } from '../utils/a11y';
+import { SERVICE_CATEGORIES as CATEGORIES, SERVICE_COLORS as COLORS } from '../config/business';
 import '../styles/services.css';
 
-const CATEGORIES = ["Gội Đầu", "Massage", "Combo", "4 Tay", "Dịch vụ thêm"];
-const COLORS = [
-  '#EDF4EB', // Green
-  '#F8EDDD', // Orange
-  '#F1F1EF',  // Grey
-  '#F8F3EC', // Light Yellow
-  '#ECF5F8', // Blue
-  '#EEECF8', // Purple
-  '#F8ECF4', // Pink
-  '#FEECEC' // Light Pink
-];
-
 function Services() {
+  const confirmDialog = useConfirm();
   const [services, setServices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
@@ -38,12 +33,7 @@ function Services() {
   const categoryRef = useRef(null);
 
   // Responsive
-  const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 768);
-  useEffect(() => {
-    const h = () => setIsMobile(window.innerWidth <= 768);
-    window.addEventListener('resize', h);
-    return () => window.removeEventListener('resize', h);
-  }, []);
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     loadServices();
@@ -66,7 +56,7 @@ function Services() {
       const data = await getServices();
       setServices(data);
     } catch (err) {
-
+      notifyError(err, 'Không tải được danh sách dịch vụ');
     } finally {
       setLoading(false);
     }
@@ -126,23 +116,30 @@ function Services() {
       setModalOpen(false);
       loadServices();
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     }
   };
 
   const handleDelete = async (id) => {
-    if (!confirm('Bạn có chắc muốn vô hiệu hóa dịch vụ này?')) return;
+    if (!(await confirmDialog({ message: 'Bạn có chắc muốn vô hiệu hóa dịch vụ này?', confirmText: 'Vô hiệu hóa', danger: true }))) return;
     try {
       await deleteService(id);
       setModalOpen(false);
       toast.success('Đã vô hiệu hóa dịch vụ');
       loadServices();
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     }
   };
 
   const isFormValid = form.name && form.price >= 0 && form.duration_minutes >= 0;
+
+  // Esc: đóng bảng chọn màu / nhóm đang mở trước, rồi mới đóng modal
+  const modalRef = useModalA11y(modalOpen, () => {
+    if (showColorPicker) setShowColorPicker(false);
+    else if (showCategoryDropdown) setShowCategoryDropdown(false);
+    else setModalOpen(false);
+  });
 
   return (
     <div>
@@ -207,8 +204,8 @@ function Services() {
                       </td>
                       <td>
                         <div className="actions-cell">
-                          <button className="btn-icon" onClick={() => openEdit(svc)}><FiEdit2 size={14} /></button>
-                          <button className="btn-icon btn-danger" onClick={() => handleDelete(svc.id)}><FiTrash2 size={14} /></button>
+                          <button className="btn-icon" aria-label="Sửa" onClick={() => openEdit(svc)}><FiEdit2 size={14} /></button>
+                          <button className="btn-icon btn-danger" aria-label="Xóa" onClick={() => handleDelete(svc.id)}><FiTrash2 size={14} /></button>
                         </div>
                       </td>
                     </tr>
@@ -232,8 +229,8 @@ function Services() {
                       <span className="service-card-name">{svc.name}</span>
                     </div>
                     <div className="mobile-card-actions" onClick={e => e.stopPropagation()}>
-                      <button className="btn-icon" onClick={() => openEdit(svc)}><FiEdit2 size={14} /></button>
-                      <button className="btn-icon btn-danger" onClick={() => handleDelete(svc.id)}><FiTrash2 size={14} /></button>
+                      <button className="btn-icon" aria-label="Sửa" onClick={() => openEdit(svc)}><FiEdit2 size={14} /></button>
+                      <button className="btn-icon btn-danger" aria-label="Xóa" onClick={() => handleDelete(svc.id)}><FiTrash2 size={14} /></button>
                     </div>
                   </div>
                   <div className="service-card-details">
@@ -252,10 +249,10 @@ function Services() {
 
       {modalOpen && (
         <div className="modal-overlay" onClick={() => setModalOpen(false)}>
-          <div className="modal service-modal" onClick={e => e.stopPropagation()}>
+          <div className="modal service-modal" ref={modalRef} onClick={e => e.stopPropagation()}>
             <div className="modal-header service-modal-header">
               <h3 className="service-modal-title">{editing ? 'Sửa dịch vụ' : 'Thêm dịch vụ'}</h3>
-              <button className="modal-close" onClick={() => setModalOpen(false)}>
+              <button className="modal-close" aria-label="Đóng" onClick={() => setModalOpen(false)}>
                 <FiPlus className="service-modal-close-icon" />
               </button>
             </div>
@@ -274,7 +271,12 @@ function Services() {
                       onChange={e => setForm({ ...form, name: e.target.value })}
                       required
                     />
-                    <div className="color-picker-trigger" onClick={() => setShowColorPicker(!showColorPicker)}>
+                    <div
+                      className="color-picker-trigger"
+                      onClick={() => setShowColorPicker(!showColorPicker)}
+                      {...clickableProps(() => setShowColorPicker(!showColorPicker))}
+                      aria-label="Chọn màu dịch vụ"
+                    >
                       <div
                         className="color-indicator"
                         style={{ background: form.color }}
@@ -293,6 +295,11 @@ function Services() {
                                   setForm({ ...form, color: c });
                                   setShowColorPicker(false);
                                 }}
+                                {...clickableProps(() => {
+                                  setForm({ ...form, color: c });
+                                  setShowColorPicker(false);
+                                })}
+                                aria-label={`Màu ${c}`}
                               ></div>
                             </div>
                           ))}
@@ -349,7 +356,11 @@ function Services() {
                 {/* Nhóm */}
                 <div className="service-form-group" ref={categoryRef}>
                   <FiFolder className="service-icon" size={20} />
-                  <div className="service-input-wrapper service-input-clickable" onClick={() => setShowCategoryDropdown(!showCategoryDropdown)}>
+                  <div
+                    className="service-input-wrapper service-input-clickable"
+                    onClick={() => setShowCategoryDropdown(!showCategoryDropdown)}
+                    {...clickableProps(() => setShowCategoryDropdown(!showCategoryDropdown))}
+                  >
                     <div className={`service-input ${form.category ? 'service-text-value' : 'service-text-placeholder'}`}>
                       {form.category || 'Nhóm Dịch Vụ'}
                     </div>
@@ -365,6 +376,10 @@ function Services() {
                               setForm({ ...form, category: cat });
                               setShowCategoryDropdown(false);
                             }}
+                            {...clickableProps(() => {
+                              setForm({ ...form, category: cat });
+                              setShowCategoryDropdown(false);
+                            })}
                           >
                             {cat}
                           </div>
@@ -419,6 +434,10 @@ function Services() {
                   <div
                     className={`toggle-switch ${!form.is_active ? 'active' : ''}`}
                     onClick={() => setForm({ ...form, is_active: !form.is_active })}
+                    {...clickableProps(() => setForm({ ...form, is_active: !form.is_active }))}
+                    role="switch"
+                    aria-checked={!form.is_active}
+                    aria-label="Ẩn dịch vụ khỏi booking"
                   >
                     <div className="toggle-knob"></div>
                   </div>

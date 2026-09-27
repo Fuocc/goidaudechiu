@@ -1,8 +1,14 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { FiChevronLeft, FiChevronRight, FiPlus } from 'react-icons/fi';
 import { getEmployees, getEmployeeSchedules, createBulkSchedule, deleteEmployeeSchedule, getBranches } from '../api';
 import { toast } from 'react-toastify'
 import { TableSkeleton, MobileCardSkeleton } from '../components/ui/Skeleton';
+import { notifyError } from '../utils/notify';
+import { useIsMobile } from '../hooks/useIsMobile';
+import { toDateStr } from '../utils/time';
+import { useConfirm } from '../components/ConfirmDialog';
+import { useModalA11y } from '../hooks/useModalA11y';
+import { DEFAULT_SHIFT } from '../config/business';
 import '../styles/schedules.css';
 
 function getWeekDates(date) {
@@ -18,10 +24,6 @@ function getWeekDates(date) {
   });
 }
 
-function toDateStr(d) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
 const formatTime12h = (t) => {
   if (!t) return '';
   const cleanTime = t.substring(0, 5);
@@ -35,9 +37,9 @@ const formatTime12h = (t) => {
 };
 
 const DAY_NAMES = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
-const DAY_FULL_NAMES = ['Chủ nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
 
 function EmployeeSchedules() {
+  const confirmDialog = useConfirm();
   const [currentDate, setCurrentDate] = useState(new Date());
   const [employees, setEmployees] = useState([]);
   const [schedules, setSchedules] = useState([]);
@@ -46,20 +48,16 @@ function EmployeeSchedules() {
   const [modalOpen, setModalOpen] = useState(false);
   const [scheduleForm, setScheduleForm] = useState({
     id: null,
-    employee_id: '', start_time: '09:00', end_time: '22:00',
+    employee_id: '', start_time: DEFAULT_SHIFT.start, end_time: DEFAULT_SHIFT.end,
     is_day_off: false, note: '', selectedDays: []
   });
 
   const [creatingDefault, setCreatingDefault] = useState(false);
   const [loading, setLoading] = useState(true);
+  const loadSeqRef = useRef(0);
 
   // Responsive
-  const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 768);
-  useEffect(() => {
-    const h = () => setIsMobile(window.innerWidth <= 768);
-    window.addEventListener('resize', h);
-    return () => window.removeEventListener('resize', h);
-  }, []);
+  const isMobile = useIsMobile();
 
   const weekDates = useMemo(() => getWeekDates(currentDate), [currentDate]);
 
@@ -83,11 +81,13 @@ function EmployeeSchedules() {
       const data = await getBranches();
       setBranches(data);
     } catch (err) {
-
+      notifyError(err, 'Không tải được danh sách chi nhánh');
     }
   };
 
   const loadData = async () => {
+    // Chỉ nhận kết quả của lần gọi mới nhất (bấm tuần trước/sau liên tục → response về lệch thứ tự)
+    const seq = ++loadSeqRef.current;
     try {
       setLoading(true);
       const from = toDateStr(weekDates[0]);
@@ -96,11 +96,14 @@ function EmployeeSchedules() {
         getEmployees(filterBranch || undefined),
         getEmployeeSchedules({ date_from: from, date_to: to })
       ]);
+      if (seq !== loadSeqRef.current) return;
       setEmployees(empData.filter(e => e.is_active));
       setSchedules(schedData);
     } catch (err) {
+      if (seq !== loadSeqRef.current) return;
+      notifyError(err, 'Không tải được lịch nhân viên');
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   };
 
@@ -117,8 +120,8 @@ function EmployeeSchedules() {
       setScheduleForm({
         id: existingSched.id,
         employee_id: existingSched.employee_id,
-        start_time: existingSched.start_time?.substring(0, 5) || '09:00',
-        end_time: existingSched.end_time?.substring(0, 5) || '22:00',
+        start_time: existingSched.start_time?.substring(0, 5) || DEFAULT_SHIFT.start,
+        end_time: existingSched.end_time?.substring(0, 5) || DEFAULT_SHIFT.end,
         is_day_off: existingSched.is_day_off,
         note: existingSched.note || '',
         selectedDays: [existingSched.date]
@@ -127,7 +130,7 @@ function EmployeeSchedules() {
       setScheduleForm({
         id: null,
         employee_id: empId || employees[0]?.id || '',
-        start_time: '09:00', end_time: '22:00',
+        start_time: DEFAULT_SHIFT.start, end_time: DEFAULT_SHIFT.end,
         is_day_off: false, note: '',
         selectedDays: dateStr ? [dateStr] : []
       });
@@ -147,7 +150,7 @@ function EmployeeSchedules() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (scheduleForm.selectedDays.length === 0) {
-      alert('Vui lòng chọn ít nhất 1 ngày');
+      toast.warn('Vui lòng chọn ít nhất 1 ngày');
       return;
     }
     try {
@@ -163,29 +166,30 @@ function EmployeeSchedules() {
       notify(`Thêm lịch làm thành công`);
       loadData();
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     }
   };
 
   const handleDeleteSchedule = async (id) => {
-    if (!confirm('Xóa lịch này?')) return;
+    if (!(await confirmDialog({ message: 'Xóa lịch này?', confirmText: 'Xóa', danger: true }))) return;
     try {
       await deleteEmployeeSchedule(id);
       notify(`Xóa lịch làm thành công`);
       loadData();
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     }
   };
 
-  // NEW: create default schedules 10:00-22:00 for ALL employees for the next 30 days
+  // Tạo lịch mặc định 09:00-22:00 cho các nhân viên đang hiển thị trong 30 ngày tới.
+  // Chỉ tạo cho ngày CHƯA có lịch (skip_existing) → không ghi đè ngày nghỉ / ca đặc biệt đã xếp tay.
   const createDefaultSchedulesFor30Days = async () => {
     if (employees.length === 0) {
-      alert('Chưa có nhân viên');
+      toast.warn('Chưa có nhân viên');
       return;
     }
 
-    if (!confirm('Tạo lịch mặc định 09:00 AM - 10:00 PM cho TẤT CẢ nhân viên trong 30 ngày tới?')) return;
+    if (!(await confirmDialog({ message: 'Tạo lịch mặc định 09:00 AM - 10:00 PM cho TẤT CẢ nhân viên trong 30 ngày tới?\n\nChỉ tạo cho những ngày chưa có lịch — ngày nghỉ và ca đã xếp trước sẽ được giữ nguyên.', confirmText: 'Tạo lịch' }))) return;
 
     setCreatingDefault(true);
     try {
@@ -195,22 +199,31 @@ function EmployeeSchedules() {
         return toDateStr(d);
       });
 
-      // Create schedules for each employee (bulk per employee)
+      // Từng nhân viên một; 1 người lỗi vẫn chạy tiếp và báo lại tên
+      const failed = [];
       for (const emp of employees) {
-        await createBulkSchedule({
-          employee_id: emp.id,
-          dates,
-          start_time: '09:00',
-          end_time: '22:00',
-          is_day_off: false,
-          note: null
-        });
+        try {
+          await createBulkSchedule({
+            employee_id: emp.id,
+            dates,
+            start_time: DEFAULT_SHIFT.start,
+            end_time: DEFAULT_SHIFT.end,
+            is_day_off: false,
+            note: null,
+            skip_existing: true
+          });
+        } catch (err) {
+          console.error(`[schedules] Tạo lịch mặc định lỗi cho ${emp.name}:`, err);
+          failed.push(emp.name);
+        }
       }
 
       await loadData();
-      notify('Đã tạo lịch làm việc cho 30 ngày tới');
-    } catch (err) {
-      alert(err.message);
+      if (failed.length === 0) {
+        notify('Đã tạo lịch làm việc cho 30 ngày tới');
+      } else {
+        toast.error(`Không tạo được lịch cho: ${failed.join(', ')}. Vui lòng thử lại.`, { position: 'bottom-right' });
+      }
     } finally {
       setCreatingDefault(false);
     }
@@ -218,6 +231,8 @@ function EmployeeSchedules() {
 
   const weekLabel = `${weekDates[0].getDate()}/${weekDates[0].getMonth() + 1} – ${weekDates[6].getDate()}/${weekDates[6].getMonth() + 1}/${weekDates[6].getFullYear()}`;
   const todayStr = toDateStr(new Date());
+
+  const modalRef = useModalA11y(modalOpen, () => setModalOpen(false));
 
   return (
     <div className="schedules-page">
@@ -248,9 +263,9 @@ function EmployeeSchedules() {
           </select>
         </div>
         <div className="cal-toolbar-right">
-          <button className="btn btn-sm btn-ghost" onClick={goPrev}><FiChevronLeft /></button>
+          <button className="btn btn-sm btn-ghost" aria-label="Tuần trước" onClick={goPrev}><FiChevronLeft /></button>
           <span className="cal-week-label">{weekLabel}</span>
-          <button className="btn btn-sm btn-ghost" onClick={goNext}><FiChevronRight /></button>
+          <button className="btn btn-sm btn-ghost" aria-label="Tuần sau" onClick={goNext}><FiChevronRight /></button>
           <button className="btn btn-sm btn-secondary" onClick={goToday}>Hôm nay</button>
         </div>
       </div>
@@ -377,10 +392,10 @@ function EmployeeSchedules() {
       {/* Schedule Modal */}
       {modalOpen && (
         <div className="modal-overlay" onClick={() => setModalOpen(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
+          <div className="modal" ref={modalRef} onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3>Xếp lịch làm việc</h3>
-              <button className="modal-close" onClick={() => setModalOpen(false)}>
+              <button className="modal-close" aria-label="Đóng" onClick={() => setModalOpen(false)}>
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                   <path d="M19 5L5 19" stroke="black" stroke-miterlimit="10"></path>
                   <path d="M5 5L19 19" stroke="black" stroke-miterlimit="10"></path>

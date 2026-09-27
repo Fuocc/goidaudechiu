@@ -3,17 +3,12 @@ import { useSearchParams } from 'react-router-dom';
 import { FiPlus, FiEdit2, FiTrash2, FiMapPin } from 'react-icons/fi';
 import { getBranches, createBranch, updateBranch, deleteBranch } from '../api';
 import { CardSkeleton } from '../components/ui/Skeleton';
+import { notifyError } from '../utils/notify';
+import { toast } from 'react-toastify';
+import { useConfirm } from '../components/ConfirmDialog';
+import { useModalA11y } from '../hooks/useModalA11y';
+import { DEFAULT_OPENING_HOURS, DEFAULT_DAY_HOURS, DISPLAY_FALLBACK_DAY_HOURS } from '../config/business';
 import '../styles/branches.css';
-
-const DEFAULT_OPENING_HOURS = {
-  Monday: { isOpen: true, open: '08:00', close: '20:00' },
-  Tuesday: { isOpen: true, open: '08:00', close: '20:00' },
-  Wednesday: { isOpen: true, open: '08:00', close: '20:00' },
-  Thursday: { isOpen: true, open: '08:00', close: '20:00' },
-  Friday: { isOpen: true, open: '08:00', close: '20:00' },
-  Saturday: { isOpen: true, open: '08:00', close: '20:00' },
-  Sunday: { isOpen: true, open: '08:00', close: '20:00' }
-};
 
 const DAYS_VN = {
   Monday: 'Thứ 2',
@@ -38,6 +33,7 @@ function formatTime12hCompact(timeStr) {
 }
 
 function Branches() {
+  const confirmDialog = useConfirm();
   const [branches, setBranches] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
@@ -67,6 +63,7 @@ function Branches() {
       const data = await getBranches();
       setBranches(data);
     } catch (err) {
+      notifyError(err, 'Không tải được danh sách chi nhánh');
     } finally {
       setLoading(false);
     }
@@ -77,7 +74,7 @@ function Branches() {
     if (!file) return;
 
     if (file.size > 1024 * 1024) {
-      alert("Dung lượng ảnh phải dưới 1MB!");
+      toast.warn("Dung lượng ảnh phải dưới 1MB!");
       return;
     }
 
@@ -121,21 +118,23 @@ function Branches() {
       setModalOpen(false);
       loadBranches();
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     } finally {
       setSaving(false);
     }
   };
 
   const handleDelete = async (id) => {
-    if (!confirm('Bạn có chắc muốn xóa chi nhánh này? Điều này có thể ảnh hưởng đến nhân viên và giường thuộc chi nhánh.')) return;
+    if (!(await confirmDialog({ message: 'Bạn có chắc muốn xóa chi nhánh này? Điều này có thể ảnh hưởng đến nhân viên và giường thuộc chi nhánh.', confirmText: 'Xóa', danger: true }))) return;
     try {
       await deleteBranch(id);
       loadBranches();
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     }
   };
+
+  const modalRef = useModalA11y(modalOpen, () => setModalOpen(false));
 
   return (
     <div>
@@ -174,8 +173,8 @@ function Branches() {
                     </div>
                   </div>
                   <div className="actions-cell branch-actions">
-                    <button className="btn-icon" onClick={(e) => { e.stopPropagation(); openEdit(branch); }}><FiEdit2 size={14} /></button>
-                    <button className="btn-icon danger" onClick={(e) => { e.stopPropagation(); handleDelete(branch.id); }}><FiTrash2 size={14} /></button>
+                    <button className="btn-icon" aria-label="Sửa" onClick={(e) => { e.stopPropagation(); openEdit(branch); }}><FiEdit2 size={14} /></button>
+                    <button className="btn-icon danger" aria-label="Xóa" onClick={(e) => { e.stopPropagation(); handleDelete(branch.id); }}><FiTrash2 size={14} /></button>
                   </div>
                 </div>
 
@@ -184,7 +183,7 @@ function Branches() {
                   <div className="branch-schedule-title">Lịch hoạt động:</div>
                   <div className="branch-schedule-grid">
                     {Object.entries(DAYS_VN).map(([dayKey, dayLabel]) => {
-                      const dayData = branch.opening_hours?.[dayKey] || { isOpen: true, open: '09:00', close: '22:00' };
+                      const dayData = branch.opening_hours?.[dayKey] || DISPLAY_FALLBACK_DAY_HOURS;
                       return (
                         <div key={dayKey} className="branch-schedule-day">
                           <span className="branch-schedule-day-name">{dayLabel}:</span>
@@ -216,10 +215,10 @@ function Branches() {
       {
         modalOpen && (
           <div className="modal-overlay" onClick={() => setModalOpen(false)}>
-            <div className="modal branch-modal" onClick={e => e.stopPropagation()}>
+            <div className="modal branch-modal" ref={modalRef} onClick={e => e.stopPropagation()}>
               <div className="modal-header">
                 <h3>{editing ? 'Sửa chi nhánh' : 'Thêm chi nhánh'}</h3>
-                <button className="modal-close" onClick={() => setModalOpen(false)}>
+                <button className="modal-close" aria-label="Đóng" onClick={() => setModalOpen(false)}>
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path d="M19 5L5 19" stroke="black" stroke-miterlimit="10"></path>
                     <path d="M5 5L19 19" stroke="black" stroke-miterlimit="10"></path>
@@ -289,7 +288,7 @@ function Branches() {
                     <label className="form-label branch-schedule-edit-label">Giờ mở cửa từng ngày trong tuần</label>
                     <div className="branch-schedule-edit-list">
                       {Object.entries(DAYS_VN).map(([dayKey, dayLabel]) => {
-                        const dayData = form.opening_hours[dayKey] || { isOpen: true, open: '08:00', close: '20:00' };
+                        const dayData = form.opening_hours[dayKey] || DEFAULT_DAY_HOURS;
                         return (
                           <div key={dayKey} className="branch-schedule-edit-item">
                             <span className="branch-schedule-edit-day">{dayLabel}</span>
@@ -304,13 +303,13 @@ function Branches() {
                               </label>
                               {dayData.isOpen ? (
                                 <div className="branch-schedule-edit-times">
-                                  <input type="time" className="form-input branch-schedule-time-input" value={dayData.open || '08:00'} onChange={e => {
+                                  <input type="time" className="form-input branch-schedule-time-input" value={dayData.open || DEFAULT_DAY_HOURS.open} onChange={e => {
                                     const newHours = { ...form.opening_hours };
                                     newHours[dayKey] = { ...dayData, open: e.target.value };
                                     setForm({ ...form, opening_hours: newHours });
                                   }} />
                                   <span className="branch-schedule-time-separator">-</span>
-                                  <input type="time" className="form-input branch-schedule-time-input" value={dayData.close || '20:00'} onChange={e => {
+                                  <input type="time" className="form-input branch-schedule-time-input" value={dayData.close || DEFAULT_DAY_HOURS.close} onChange={e => {
                                     const newHours = { ...form.opening_hours };
                                     newHours[dayKey] = { ...dayData, close: e.target.value };
                                     setForm({ ...form, opening_hours: newHours });

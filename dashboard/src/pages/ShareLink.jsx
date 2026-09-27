@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { toast } from 'react-toastify';
-import { FiCopy, FiCheck, FiInfo, FiExternalLink } from 'react-icons/fi';
+import { FiCopy, FiCheck, FiExternalLink } from 'react-icons/fi';
 import '../styles/sharelink.css';
 
 const shareLinks = [

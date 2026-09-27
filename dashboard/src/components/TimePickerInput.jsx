@@ -1,4 +1,4 @@
-import React from 'react';
+import { TIME_PICKER_MIN_HOUR as MIN_H, TIME_PICKER_MAX_HOUR as MAX_H } from '../config/business';
 
 const TimePickerInput = ({ value, onChange }) => {
   const parts = (value || '').split(':');
@@ -12,15 +12,15 @@ const TimePickerInput = ({ value, onChange }) => {
     let hh = h;
     let mm = min;
 
-    if (isNaN(hh)) hh = 10;
+    if (isNaN(hh)) hh = MIN_H;
     if (isNaN(mm)) mm = 0;
 
     if (isBlur) {
-      if (hh < 10) { hh = 10; mm = 0; }
-      if (hh > 22) { hh = 22; mm = 0; }
-      if (hh === 22 && mm > 0) mm = 0;
+      if (hh < MIN_H) { hh = MIN_H; mm = 0; }
+      if (hh > MAX_H) { hh = MAX_H; mm = 0; }
+      if (hh === MAX_H && mm > 0) mm = 0;
     } else {
-      if (hh > 22) hh = 22;
+      if (hh > MAX_H) hh = MAX_H;
     }
 
     onChange(`${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`);
@@ -29,7 +29,7 @@ const TimePickerInput = ({ value, onChange }) => {
   const handleHourKeyDown = (e) => {
     if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
       e.preventDefault();
-      const currentH = isNaN(h24) ? 10 : h24;
+      const currentH = isNaN(h24) ? MIN_H : h24;
       const step = e.key === 'ArrowUp' ? 1 : -1;
       update24(currentH + step, isNaN(m) ? 0 : m, true);
     }
@@ -39,7 +39,7 @@ const TimePickerInput = ({ value, onChange }) => {
     if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
       e.preventDefault();
       const currentM = isNaN(m) ? 0 : m;
-      const currentH = isNaN(h24) ? 10 : h24;
+      const currentH = isNaN(h24) ? MIN_H : h24;
       let nextM = e.key === 'ArrowUp' ? currentM + 5 : currentM - 5;
       let nextH = currentH;
 
@@ -67,7 +67,7 @@ const TimePickerInput = ({ value, onChange }) => {
         }}
         onKeyDown={handleHourKeyDown}
         onBlur={e => {
-          if (isNaN(h24)) update24(10, isNaN(m) ? 0 : m, true);
+          if (isNaN(h24)) update24(MIN_H, isNaN(m) ? 0 : m, true);
           else update24(h24, isNaN(m) ? 0 : m, true);
         }}
         onFocus={e => e.target.select()}
@@ -85,12 +85,12 @@ const TimePickerInput = ({ value, onChange }) => {
             return;
           }
           let min = parseInt(val) || 0;
-          update24(isNaN(h24) ? 10 : h24, min);
+          update24(isNaN(h24) ? MIN_H : h24, min);
         }}
         onKeyDown={handleMinuteKeyDown}
         onBlur={e => {
-          if (isNaN(m)) update24(isNaN(h24) ? 10 : h24, 0, true);
-          else update24(isNaN(h24) ? 10 : h24, m, true);
+          if (isNaN(m)) update24(isNaN(h24) ? MIN_H : h24, 0, true);
+          else update24(isNaN(h24) ? MIN_H : h24, m, true);
         }}
         onFocus={e => e.target.select()}
         placeholder="--"

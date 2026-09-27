@@ -1,5 +1,3 @@
-import React from 'react';
-
 export const Skeleton = ({ className = '', style = {}, width, height, borderRadius, circle = false }) => {
   const customStyle = {
     ...style,
