@@ -4,6 +4,7 @@ import { getEmployees, getEmployeeSchedules, createBulkSchedule, deleteEmployeeS
 import { toast } from 'react-toastify'
 import { TableSkeleton, MobileCardSkeleton } from '../components/ui/Skeleton';
 import { notifyError } from '../utils/notify';
+import { DEFAULT_SHIFT } from '../config/business';
 import '../styles/schedules.css';
 
 function getWeekDates(date) {
@@ -46,7 +47,7 @@ function EmployeeSchedules() {
   const [modalOpen, setModalOpen] = useState(false);
   const [scheduleForm, setScheduleForm] = useState({
     id: null,
-    employee_id: '', start_time: '09:00', end_time: '22:00',
+    employee_id: '', start_time: DEFAULT_SHIFT.start, end_time: DEFAULT_SHIFT.end,
     is_day_off: false, note: '', selectedDays: []
   });
 
@@ -123,8 +124,8 @@ function EmployeeSchedules() {
       setScheduleForm({
         id: existingSched.id,
         employee_id: existingSched.employee_id,
-        start_time: existingSched.start_time?.substring(0, 5) || '09:00',
-        end_time: existingSched.end_time?.substring(0, 5) || '22:00',
+        start_time: existingSched.start_time?.substring(0, 5) || DEFAULT_SHIFT.start,
+        end_time: existingSched.end_time?.substring(0, 5) || DEFAULT_SHIFT.end,
         is_day_off: existingSched.is_day_off,
         note: existingSched.note || '',
         selectedDays: [existingSched.date]
@@ -133,7 +134,7 @@ function EmployeeSchedules() {
       setScheduleForm({
         id: null,
         employee_id: empId || employees[0]?.id || '',
-        start_time: '09:00', end_time: '22:00',
+        start_time: DEFAULT_SHIFT.start, end_time: DEFAULT_SHIFT.end,
         is_day_off: false, note: '',
         selectedDays: dateStr ? [dateStr] : []
       });
@@ -209,8 +210,8 @@ function EmployeeSchedules() {
           await createBulkSchedule({
             employee_id: emp.id,
             dates,
-            start_time: '09:00',
-            end_time: '22:00',
+            start_time: DEFAULT_SHIFT.start,
+            end_time: DEFAULT_SHIFT.end,
             is_day_off: false,
             note: null,
             skip_existing: true

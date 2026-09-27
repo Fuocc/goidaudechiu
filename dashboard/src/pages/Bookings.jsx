@@ -21,10 +21,14 @@ import BranchDropdown from '../components/BranchDropdown';
 import { getInitial } from '../utils/format';
 import { isHoldBooking, isSpamWarningBooking } from '../utils/booking';
 import { describeError } from '../utils/notify';
+import {
+  CALENDAR_OPEN_HOUR, CALENDAR_CLOSE_HOUR, WEEKDAY_MIN_OPEN_MINUTES, LOGICAL_DAY_CUTOFF,
+  WALK_IN_CUSTOMER_NAME, PLACEHOLDER_SERVICE_NAME
+} from '../config/business';
 import '../styles/bookings.css';
 // ---- Helpers ----
-const OPEN_HOUR = 9;
-const CLOSE_HOUR = 23;
+const OPEN_HOUR = CALENDAR_OPEN_HOUR;
+const CLOSE_HOUR = CALENDAR_CLOSE_HOUR;
 const HOURS = Array.from({ length: CLOSE_HOUR - OPEN_HOUR }, (_, i) => OPEN_HOUR + i);
 
 function toDateStr(d) {
@@ -55,6 +59,8 @@ const STATUS_COLORS = {
 };
 
 const normalize = (str) => (str || '').normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const WALK_IN_NORMALIZED = normalize(WALK_IN_CUSTOMER_NAME);       // 'khach la'
+const PLACEHOLDER_NORMALIZED = normalize(PLACEHOLDER_SERVICE_NAME); // 'giu cho'
 
 
 const getBookingColor = (booking) => {
@@ -63,7 +69,7 @@ const getBookingColor = (booking) => {
   }
 
   const name = normalize(booking.temporary_name || booking.customers?.name || '');
-  if (name === 'khach la') {
+  if (name === WALK_IN_NORMALIZED) {
     return '#F1F1EF'; // Grey
   }
 
@@ -99,7 +105,8 @@ const normalizeName = (name) => {
 
 const getLogicalDate = () => {
   const d = new Date();
-  if (d.getHours() > 22 || (d.getHours() === 22 && d.getMinutes() >= 15)) {
+  const { hour, minute } = LOGICAL_DAY_CUTOFF;
+  if (d.getHours() > hour || (d.getHours() === hour && d.getMinutes() >= minute)) {
     d.setDate(d.getDate() + 1);
   }
   return d;
@@ -958,8 +965,8 @@ function Bookings() {
 
     if (!finalCustomerName && !finalCustomerId) {
       try {
-        const allCustomers = await getCustomers('Khách lạ');
-        const khachLa = allCustomers.find(c => normalize(c.name).includes('khach la'));
+        const allCustomers = await getCustomers(WALK_IN_CUSTOMER_NAME);
+        const khachLa = allCustomers.find(c => normalize(c.name).includes(WALK_IN_NORMALIZED));
         if (khachLa) {
           finalCustomerId = khachLa.id;
           finalCustomerName = khachLa.name;
@@ -987,7 +994,7 @@ function Bookings() {
       let finalEndTime = bookForm.end_time;
 
       if (!finalServiceId) {
-        const placeholder = services.find(s => normalize(s.name).includes('giu cho'));
+        const placeholder = services.find(s => normalize(s.name).includes(PLACEHOLDER_NORMALIZED));
         if (placeholder) {
           finalServiceId = placeholder.id;
           if (!finalEndTime || finalEndTime === '--:--' || finalEndTime === bookForm.start_time) {
@@ -1005,7 +1012,7 @@ function Bookings() {
         service_id: finalServiceId,
         end_time: finalEndTime,
         customer_id: finalCustomerId || null,
-        customer_name: normalizeName(finalCustomerName || 'Khách lạ'),
+        customer_name: normalizeName(finalCustomerName || WALK_IN_CUSTOMER_NAME),
         customer_phone: finalCustomerPhone || null
       };
 
@@ -1503,7 +1510,7 @@ function Bookings() {
 
                   const baseBranchOpenMin = branchDaySchedule?.open ? timeToMinutes(branchDaySchedule.open) : OPEN_HOUR * 60;
                   const isWeekday = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'].includes(currentDayEn);
-                  const branchOpenMin = isWeekday ? Math.max(baseBranchOpenMin, 10 * 60) : baseBranchOpenMin;
+                  const branchOpenMin = isWeekday ? Math.max(baseBranchOpenMin, WEEKDAY_MIN_OPEN_MINUTES) : baseBranchOpenMin;
                   const branchCloseMin = branchDaySchedule?.close ? timeToMinutes(branchDaySchedule.close) : CLOSE_HOUR * 60;
 
                   return employees.map(emp => {

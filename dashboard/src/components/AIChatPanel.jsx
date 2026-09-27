@@ -4,6 +4,7 @@ import { request } from '../api';
 import '../styles/ai-chat.css';
 import geminiLogo from '../assets/gemini-logo.svg';
 import { Tooltip } from '../components/ui/tooltip';
+import { PLACEHOLDER_SERVICE_NAME } from '../config/business';
 
 const BRANCH_STORAGE_KEY = 'yoi_ai_branch';
 
@@ -226,7 +227,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
     // Auto-set replyingTo if checked-in a "Giữ chỗ" booking
     const checkIn = actions.find(a => a.type === 'check_in');
     if (checkIn && data.tool_result?.bookings) {
-      const hasGiuCho = data.tool_result.bookings.some(b => b?.services?.name === 'Giữ chỗ');
+      const hasGiuCho = data.tool_result.bookings.some(b => b?.services?.name === PLACEHOLDER_SERVICE_NAME);
       if (hasGiuCho) {
         setReplyingTo({
           bookingIds: checkIn.booking_ids,

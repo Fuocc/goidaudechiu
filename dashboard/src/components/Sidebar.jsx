@@ -12,6 +12,7 @@ import geminiLogo from '../assets/gemini-logo.svg';
 import AIChatPanel from './AIChatPanel';
 import { getDashboardNotifications, markNotificationRead, markAllNotificationsRead, deleteNotification, updateNotificationPreferences } from '../api';
 import { isHoldBooking } from '../utils/booking';
+import { EMPLOYEE_AVATAR_OVERRIDES, CUSTOMER_AVATAR_COLORS } from '../config/business';
 
 // ---- Custom Inline SVG Icons with stroke="currentColor" ----
 const CalendarIcon = () => (
@@ -357,30 +358,17 @@ function Sidebar({ user, onLogout }) {
   // Dynamic circular therapist and fallback initials avatar builder
   const getAvatarInfo = (employeeName, customerName) => {
     const empNormalized = (employeeName || '').trim().toLowerCase();
-    if (empNormalized.startsWith('thủy') || empNormalized.includes('thuy')) {
-      return { letter: 'T', bg: '#ff9f43', color: '#ffffff' }; // Cam cho Thủy
-    }
-    if (empNormalized.startsWith('hannie') || empNormalized.includes('hannie')) {
-      return { letter: 'H', bg: '#fd79a8', color: '#ffffff' }; // Hồng cho Hannie
-    }
-    if (empNormalized.startsWith('phụng') || empNormalized.includes('phung')) {
-      return { letter: 'P', bg: '#9b59b6', color: '#ffffff' }; // Tím cho Phụng
+    const override = EMPLOYEE_AVATAR_OVERRIDES.find(o => empNormalized.startsWith(o.prefix) || empNormalized.includes(o.contains));
+    if (override) {
+      return { letter: override.letter, bg: override.bg, color: override.color };
     }
 
     const nameToUse = customerName || 'Khách';
     const cleanName = nameToUse.trim().replace(/^(Anh|Chị|Chị|Em|C|A)\s+/i, '');
     const letter = cleanName ? cleanName.charAt(0).toUpperCase() : '👤';
 
-    const colors = [
-      { bg: '#386665', color: '#ffffff' }, // Y Oi Teal
-      { bg: '#edd3a9', color: '#603813' }, // Y Oi Accent Gold
-      { bg: '#10ac84', color: '#ffffff' },
-      { bg: '#2e86de', color: '#ffffff' },
-      { bg: '#ee5253', color: '#ffffff' },
-      { bg: '#ff9f43', color: '#ffffff' }
-    ];
-    const colorIndex = letter.charCodeAt(0) % colors.length;
-    return { letter, ...colors[colorIndex] };
+    const colorIndex = letter.charCodeAt(0) % CUSTOMER_AVATAR_COLORS.length;
+    return { letter, ...CUSTOMER_AVATAR_COLORS[colorIndex] };
   };
 
   const getGroupedNotifications = () => {

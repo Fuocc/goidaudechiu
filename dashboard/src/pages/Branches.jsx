@@ -4,17 +4,8 @@ import { FiPlus, FiEdit2, FiTrash2, FiMapPin } from 'react-icons/fi';
 import { getBranches, createBranch, updateBranch, deleteBranch } from '../api';
 import { CardSkeleton } from '../components/ui/Skeleton';
 import { notifyError } from '../utils/notify';
+import { DEFAULT_OPENING_HOURS, DEFAULT_DAY_HOURS, DISPLAY_FALLBACK_DAY_HOURS } from '../config/business';
 import '../styles/branches.css';
-
-const DEFAULT_OPENING_HOURS = {
-  Monday: { isOpen: true, open: '08:00', close: '20:00' },
-  Tuesday: { isOpen: true, open: '08:00', close: '20:00' },
-  Wednesday: { isOpen: true, open: '08:00', close: '20:00' },
-  Thursday: { isOpen: true, open: '08:00', close: '20:00' },
-  Friday: { isOpen: true, open: '08:00', close: '20:00' },
-  Saturday: { isOpen: true, open: '08:00', close: '20:00' },
-  Sunday: { isOpen: true, open: '08:00', close: '20:00' }
-};
 
 const DAYS_VN = {
   Monday: 'Thứ 2',
@@ -186,7 +177,7 @@ function Branches() {
                   <div className="branch-schedule-title">Lịch hoạt động:</div>
                   <div className="branch-schedule-grid">
                     {Object.entries(DAYS_VN).map(([dayKey, dayLabel]) => {
-                      const dayData = branch.opening_hours?.[dayKey] || { isOpen: true, open: '09:00', close: '22:00' };
+                      const dayData = branch.opening_hours?.[dayKey] || DISPLAY_FALLBACK_DAY_HOURS;
                       return (
                         <div key={dayKey} className="branch-schedule-day">
                           <span className="branch-schedule-day-name">{dayLabel}:</span>
@@ -291,7 +282,7 @@ function Branches() {
                     <label className="form-label branch-schedule-edit-label">Giờ mở cửa từng ngày trong tuần</label>
                     <div className="branch-schedule-edit-list">
                       {Object.entries(DAYS_VN).map(([dayKey, dayLabel]) => {
-                        const dayData = form.opening_hours[dayKey] || { isOpen: true, open: '08:00', close: '20:00' };
+                        const dayData = form.opening_hours[dayKey] || DEFAULT_DAY_HOURS;
                         return (
                           <div key={dayKey} className="branch-schedule-edit-item">
                             <span className="branch-schedule-edit-day">{dayLabel}</span>
@@ -306,13 +297,13 @@ function Branches() {
                               </label>
                               {dayData.isOpen ? (
                                 <div className="branch-schedule-edit-times">
-                                  <input type="time" className="form-input branch-schedule-time-input" value={dayData.open || '08:00'} onChange={e => {
+                                  <input type="time" className="form-input branch-schedule-time-input" value={dayData.open || DEFAULT_DAY_HOURS.open} onChange={e => {
                                     const newHours = { ...form.opening_hours };
                                     newHours[dayKey] = { ...dayData, open: e.target.value };
                                     setForm({ ...form, opening_hours: newHours });
                                   }} />
                                   <span className="branch-schedule-time-separator">-</span>
-                                  <input type="time" className="form-input branch-schedule-time-input" value={dayData.close || '20:00'} onChange={e => {
+                                  <input type="time" className="form-input branch-schedule-time-input" value={dayData.close || DEFAULT_DAY_HOURS.close} onChange={e => {
                                     const newHours = { ...form.opening_hours };
                                     newHours[dayKey] = { ...dayData, close: e.target.value };
                                     setForm({ ...form, opening_hours: newHours });

@@ -4,19 +4,8 @@ import { getServices, createService, updateService, deleteService } from '../api
 import { toast } from 'react-toastify';
 import { TableSkeleton, MobileCardSkeleton } from '../components/ui/Skeleton';
 import { notifyError } from '../utils/notify';
+import { SERVICE_CATEGORIES as CATEGORIES, SERVICE_COLORS as COLORS } from '../config/business';
 import '../styles/services.css';
-
-const CATEGORIES = ["Gội Đầu", "Massage", "Combo", "4 Tay", "Dịch vụ thêm"];
-const COLORS = [
-  '#EDF4EB', // Green
-  '#F8EDDD', // Orange
-  '#F1F1EF',  // Grey
-  '#F8F3EC', // Light Yellow
-  '#ECF5F8', // Blue
-  '#EEECF8', // Purple
-  '#F8ECF4', // Pink
-  '#FEECEC' // Light Pink
-];
 
 function Services() {
   const [services, setServices] = useState([]);
