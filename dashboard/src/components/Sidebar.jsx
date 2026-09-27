@@ -13,6 +13,7 @@ import AIChatPanel from './AIChatPanel';
 import { getDashboardNotifications, markNotificationRead, markAllNotificationsRead, deleteNotification, updateNotificationPreferences } from '../api';
 import { isHoldBooking } from '../utils/booking';
 import { EMPLOYEE_AVATAR_OVERRIDES, CUSTOMER_AVATAR_COLORS } from '../config/business';
+import { shortBranchName } from '../utils/format';
 
 // ---- Custom Inline SVG Icons with stroke="currentColor" ----
 const CalendarIcon = () => (
@@ -195,7 +196,7 @@ function Sidebar({ user, onLogout }) {
 
   const [panelOpen, setPanelOpen] = useState(false);
   const [loadingNotifs, setLoadingNotifs] = useState(true);
-  const [activeFilter, setActiveFilter] = useState('all'); // 'all' | 'unread' | 'CN 1' | 'CN 2'
+  const [activeFilter, setActiveFilter] = useState('all'); // 'all' | 'unread' | 'branch:<tên ngắn chi nhánh>'
   const [shouldRenderPanel, setShouldRenderPanel] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const panelRef = useRef(null);
@@ -310,6 +311,12 @@ function Sidebar({ user, onLogout }) {
 
   const unreadCount = notifications.filter(n => !n.read).length;
 
+  // Nút lọc theo chi nhánh: sinh từ các chi nhánh đang có thông báo ("CN 1", "CN 2", ...)
+  const branchFilterLabels = useMemo(() => {
+    const labels = new Set(notifications.map(n => shortBranchName(n.branchName)).filter(Boolean));
+    return [...labels].sort((a, b) => a.localeCompare(b, 'vi', { numeric: true }));
+  }, [notifications]);
+
   // Specification Rule 4: Flexible relative time note builder
   const formatRelativeTime = (createdAtStr) => {
     if (!createdAtStr) return '';
@@ -374,11 +381,10 @@ function Sidebar({ user, onLogout }) {
   const getGroupedNotifications = () => {
     const groups = {};
 
-    // Filter notifications based on activeFilter
+    // Filter notifications based on activeFilter ('all' | 'unread' | 'branch:<tên ngắn chi nhánh>')
     const filtered = notifications.filter(n => {
       if (activeFilter === 'unread') return !n.read;
-      if (activeFilter === 'CN 1') return n.branchName?.includes('CN 1') || n.branchName?.includes('CN1');
-      if (activeFilter === 'CN 2') return n.branchName?.includes('CN 2') || n.branchName?.includes('CN2');
+      if (activeFilter.startsWith('branch:')) return shortBranchName(n.branchName) === activeFilter.slice('branch:'.length);
       return true;
     });
 
@@ -869,18 +875,16 @@ function Sidebar({ user, onLogout }) {
                 >
                   Chưa đọc
                 </button>
-                <button
-                  className={`notif-filter-tag${activeFilter === 'CN 1' ? ' active' : ''}`}
-                  onClick={() => setActiveFilter('CN 1')}
-                >
-                  CN 1
-                </button>
-                <button
-                  className={`notif-filter-tag${activeFilter === 'CN 2' ? ' active' : ''}`}
-                  onClick={() => setActiveFilter('CN 2')}
-                >
-                  CN 2
-                </button>
+                {/* Mỗi chi nhánh có thông báo một nút lọc (không còn viết cứng CN 1 / CN 2) */}
+                {branchFilterLabels.map(label => (
+                  <button
+                    key={label}
+                    className={`notif-filter-tag${activeFilter === `branch:${label}` ? ' active' : ''}`}
+                    onClick={() => setActiveFilter(`branch:${label}`)}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -958,7 +962,7 @@ function Sidebar({ user, onLogout }) {
 
                         const bookingTime = formatBookingTime(n.startTime);
                         const guestsCount = n.numGuests || 1;
-                        const branchNameClean = n.branchName?.includes('CN 1') || n.branchName?.includes('CN1') ? 'CN 1' : 'CN 2';
+                        const branchNameClean = shortBranchName(n.branchName);
                         const staffText = n.employeeName ? ` (${n.employeeName})` : '';
 
                         let descText = `${actionType} ${bookingTime} — ${guestsCount} người — ${branchNameClean}${staffText}`;
