@@ -6,6 +6,7 @@ const bookingRateLimiter = require('../middleware/rateLimiter');
 const { holdLimiter } = require('../middleware/security');
 const { safeWebhookFetch } = require('../lib/safeUrl');
 const { sortByTourOrder } = require('../lib/tourOrder');
+const { UNDO_RESTORE_FIELDS, UNDO_MAX_AGE_MS, fingerprintRow, verifyUndoAction } = require('../lib/undoToken');
 
 // ---- Kiểm tra dữ liệu đầu vào (dùng cho request từ landing page / chưa đăng nhập) ----
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -596,24 +597,26 @@ router.delete('/hold', async (req, res) => {
 
 /**
  * POST /api/bookings/undo
- * Hoàn tác các thao tác của AI chat. Body: { actions: [{ type, booking_ids, snapshot? }] }
+ * Hoàn tác các thao tác của AI chat. Body: { actions: [{ type, booking_ids, snapshot?, after, iat, uid, sig }] }
+ * Action phải do chính server ký lúc AI thực hiện (xem lib/undoToken.js) — client không tự tạo/sửa được.
  *  - type 'create'                      → xóa các lịch vừa tạo (chỉ lịch tạo trong 24h và chưa hoàn thành)
  *  - type 'update' | 'check_in' | 'cancel' → khôi phục toàn bộ các trường từ snapshot (kể cả status)
+ * Lịch đã bị thay đổi sau thao tác của AI (dấu vân tay khác `after`) sẽ bị bỏ qua, không ghi đè.
  * Các action được hoàn tác theo thứ tự ngược (thao tác sau cùng hoàn tác trước).
  */
-const UNDO_RESTORE_FIELDS = [
-  'service_id', 'employee_id', 'bed_id', 'branch_id', 'customer_id', 'temporary_name',
-  'num_guests', 'booking_date', 'start_time', 'end_time', 'status', 'total_price',
-  'notes', 'internal_note', 'group_booking_id'
-];
 const UNDO_VALID_STATUSES = ['pending', 'confirmed', 'arrived', 'completed', 'cancelled'];
-const UNDO_CREATE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 router.post('/undo', async (req, res) => {
   try {
     const actions = Array.isArray(req.body?.actions) ? req.body.actions : [];
     if (actions.length === 0 || actions.length > 20) {
       return res.status(400).json({ success: false, error: 'Không có thao tác hợp lệ để hoàn tác.' });
+    }
+
+    // Kiểm tra chữ ký của tất cả action trước khi ghi bất cứ thứ gì
+    for (const action of actions) {
+      const check = verifyUndoAction(action, req.auth?.id);
+      if (!check.ok) return res.status(400).json({ success: false, error: check.error });
     }
 
     const broadcast = getBroadcast(req);
@@ -627,16 +630,26 @@ router.post('/undo', async (req, res) => {
         .slice(0, 50);
       if (ids.length === 0) continue;
 
-      if (action.type === 'create') {
-        const { data: rows, error: fetchErr } = await supabase
-          .from('bookings')
-          .select('id, created_at, status')
-          .in('id', ids);
-        if (fetchErr) throw fetchErr;
+      // Trạng thái hiện tại của các lịch — so với dấu vân tay `after` lúc AI vừa thực hiện
+      const { data: currentRows, error: fetchErr } = await supabase
+        .from('bookings')
+        .select('*')
+        .in('id', ids);
+      if (fetchErr) throw fetchErr;
+      const currentById = new Map((currentRows || []).map(r => [r.id, r]));
+      const unchangedSinceAction = (id) => {
+        const current = currentById.get(id);
+        return !!current && fingerprintRow(current) === action.after[id];
+      };
 
-        const deletable = (rows || [])
-          .filter(r => Date.now() - new Date(r.created_at).getTime() < UNDO_CREATE_MAX_AGE_MS && r.status !== 'completed')
-          .map(r => r.id);
+      if (action.type === 'create') {
+        const deletable = ids.filter(id => {
+          const r = currentById.get(id);
+          return r
+            && unchangedSinceAction(id)
+            && Date.now() - new Date(r.created_at).getTime() < UNDO_MAX_AGE_MS
+            && r.status !== 'completed';
+        });
         skipped.push(...ids.filter(id => !deletable.includes(id)));
 
         if (deletable.length > 0) {
@@ -650,6 +663,11 @@ router.post('/undo', async (req, res) => {
         for (const row of snapshot) {
           // Chỉ khôi phục những lịch thuộc đúng action này
           if (!row || typeof row.id !== 'string' || !ids.includes(row.id)) continue;
+          // Đã có người sửa lịch sau thao tác của AI (hoặc đã hoàn tác rồi) → không ghi đè
+          if (!unchangedSinceAction(row.id)) {
+            skipped.push(row.id);
+            continue;
+          }
 
           const patch = {};
           for (const field of UNDO_RESTORE_FIELDS) {

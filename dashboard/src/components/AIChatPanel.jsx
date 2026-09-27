@@ -60,7 +60,6 @@ function AIChatPanel({ onClose, currentBranchId }) {
   // States for Custom UI and Actions
   const [isBranchSelectOpen, setIsBranchSelectOpen] = useState(false);
   const [replyingTo, setReplyingTo] = useState(null); // { bookingId, label }
-  const [undoneMessages, setUndoneMessages] = useState([]); // List of message IDs whose bookings were undone
   const [undoLoadingId, setUndoLoadingId] = useState(null); // Message ID currently performing undo
 
   const branchDropdownRef = useRef(null);
@@ -194,7 +193,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
         reply_to_booking_ids: replyContextIds,
         // Chỉ gửi hội thoại thật (bỏ tin lỗi / hoàn tác / chào) để AI không bị nhiễu ngữ cảnh
         conversation_history: messages
-          .filter(m => m.id !== 'welcome' && !m.isError && !m.isUndoSuccess && m.text)
+          .filter(m => m.id !== 'welcome' && !m.isError && !m.isUndoSuccess && !m.isUndoNote && m.text)
           .slice(-10)
           .map(m => ({
             role: m.sender === 'user' ? 'user' : 'model',
@@ -262,23 +261,31 @@ function AIChatPanel({ onClose, currentBranchId }) {
     setUndoLoadingId(msg.id);
     const messageId = msg.id;
     try {
-      await request('/bookings/undo', {
+      const result = await request('/bookings/undo', {
         method: 'POST',
         body: JSON.stringify({ actions: msg.actions })
       });
 
-      // Track as undone
-      setUndoneMessages(prev => [...prev, messageId]);
-
       // Append a system message confirming the undo
-      const aiMsg = {
+      const newMsgs = [{
         id: (Date.now() + 2).toString(),
         sender: 'ai',
         text: 'Hoàn tác đặt lịch thành công!',
         isUndoSuccess: true,
         time: getNowTime()
-      };
-      setMessages(prev => [...prev, aiMsg].slice(-50));
+      }];
+      const skippedCount = Array.isArray(result?.skipped) ? result.skipped.length : 0;
+      if (skippedCount > 0) {
+        newMsgs.push({
+          id: (Date.now() + 3).toString(),
+          sender: 'ai',
+          text: `Có ${skippedCount} lịch đã được chỉnh sửa sau thao tác của AI nên được giữ nguyên, không hoàn tác.`,
+          isUndoNote: true,
+          time: getNowTime()
+        });
+      }
+      // Đánh dấu `undone` ngay trên tin nhắn (được lưu localStorage) → tải lại trang nút Hoàn tác không hiện lại
+      setMessages(prev => [...prev.map(m => (m.id === messageId ? { ...m, undone: true } : m)), ...newMsgs].slice(-50));
 
       // Dispatch global refresh-bookings event
       window.dispatchEvent(new CustomEvent('refresh-bookings'));
@@ -322,7 +329,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
         ) : (
           <div className="ai-chat-messages">
             {messages.map((msg) => {
-              const isUndone = undoneMessages.includes(msg.id);
+              const isUndone = !!msg.undone;
               return (
                 <div key={msg.id} className={`ai-chat-message-row ${msg.sender} ${isUndone ? 'undone' : ''}`}>
                   {/* Welcome message */}
@@ -543,7 +550,6 @@ function AIChatPanel({ onClose, currentBranchId }) {
                             ];
                             setMessages(welcomeMsg);
                             setReplyingTo(null);
-                            setUndoneMessages([]);
                             localStorage.removeItem('chatlgbt_messages');
                           }
                         }}
