@@ -18,6 +18,7 @@ import { Tooltip } from '../components/ui/tooltip';
 import { DatePicker, parseDate } from "@chakra-ui/react"
 import { subscribeRealtime } from '../realtime';
 import BranchDropdown from '../components/BranchDropdown';
+import { getInitial } from '../utils/format';
 // import '../styles/timepicker.css';
 import '../styles/bookings.css';
 // ---- Helpers ----
@@ -2219,7 +2220,7 @@ function Bookings({ data }) {
                     <div className="booking-row-icon">
                       {detailCustomerView === 'selected' || detailCustomerView === 'creating' ? (
                         <div className="customer-avatar customer-avatar-selected">
-                          {detailEdit.customer_name?.trim().split(' ').at(-1)[0].toUpperCase() || 'C'}
+                          {getInitial(detailEdit.customer_name, 'C', { upper: true })}
                         </div>
                       ) : (
                         <img src={userIcon} alt="user" />
@@ -2258,7 +2259,7 @@ function Bookings({ data }) {
                             <div className="autocomplete-dropdown">
                               {searchSuggestions.data.map(c => (
                                 <div key={c.id} className="autocomplete-item" onMouseDown={() => handleSelectSuggestion('customer', c, true)}>
-                                  <div className="customer-avatar">{c.name.trim().split(' ').at(-1)[0]}</div>
+                                  <div className="customer-avatar">{getInitial(c.name)}</div>
                                   <div className="customer-info">
                                     <div className="autocomplete-name">{c.name}</div>
                                     <div className="customer-phone">{c.phone}</div>
@@ -2305,7 +2306,7 @@ function Bookings({ data }) {
 
                   <div className="booking-row no-hover">
                     <div className="booking-row-icon">
-                      <div className="customer-avatar avatar-placeholder">{detailModal.employees?.name?.trim().split(' ').at(-1)[0] || 'A'}</div>
+                      <div className="customer-avatar avatar-placeholder">{getInitial(detailModal.employees?.name, 'A')}</div>
                     </div>
                     <div className="booking-row-content">
                       <div className="pos-relative">
@@ -2329,7 +2330,7 @@ function Bookings({ data }) {
                           <div className="autocomplete-dropdown">
                             {searchSuggestions.data.map(emp => (
                               <div key={emp.id} className="autocomplete-item" onMouseDown={() => handleSelectSuggestion('employee', emp, true)}>
-                                <div className="customer-avatar">{emp.name.trim().split(' ').at(-1)[0]}</div>
+                                <div className="customer-avatar">{getInitial(emp.name)}</div>
                                 <div className="customer-info">
                                   <div className="autocomplete-name">{emp.name}</div>
                                 </div>
@@ -2361,7 +2362,7 @@ function Bookings({ data }) {
                   <div className="customer-profile-header">
                     <p className='customer-id'>Mã KH: {detailModal.customers?.id || 'Tạm thời'}</p>
                     <div className="customer-avatar-lg avatar-centered">
-                      {detailEdit.customer_name?.trim().split(' ').at(-1)[0].toUpperCase() || 'A'}
+                      {getInitial(detailEdit.customer_name, 'A', { upper: true })}
                     </div>
                     <h2 className="modal-title-lg">{detailModal.temporary_name || detailModal.customers?.name || 'Khách tạm'}</h2>
                   </div>
@@ -2618,7 +2619,7 @@ function Bookings({ data }) {
                   <div className="booking-row no-hover">
                     <div className="booking-row-icon">
                       {customerView === 'selected' || customerView === 'creating' ? (
-                        <div className="customer-avatar customer-avatar-selected">{bookForm.customer_name?.trim().split(' ').at(-1)[0].toUpperCase() || 'A'}</div>
+                        <div className="customer-avatar customer-avatar-selected">{getInitial(bookForm.customer_name, 'A', { upper: true })}</div>
                       ) : (
                         <img src={userIcon} alt="user" />
                       )}
@@ -2650,7 +2651,7 @@ function Bookings({ data }) {
                             <div className="autocomplete-dropdown">
                               {searchSuggestions.data.map(c => (
                                 <div key={c.id} className="autocomplete-item" onMouseDown={() => handleSelectSuggestion('customer', c)}>
-                                  <div className="customer-avatar">{c.name.trim().split(' ').at(-1)[0]}</div>
+                                  <div className="customer-avatar">{getInitial(c.name)}</div>
                                   <div className="customer-info">
                                     <div className="autocomplete-name">{c.name}</div>
                                     <div className="customer-phone">{c.phone}</div>
@@ -2699,7 +2700,7 @@ function Bookings({ data }) {
                   {/* 1 Row: Nhân viên */}
                   <div className="booking-row no-hover">
                     <div className="booking-row-icon">
-                      <div className="customer-avatar employee-avatar-placeholder">{bookForm.employee_search?.trim().split(' ').at(-1)[0] || 'A'}</div>
+                      <div className="customer-avatar employee-avatar-placeholder">{getInitial(bookForm.employee_search, 'A')}</div>
                     </div>
                     <div className="booking-row-content">
                       <div className="pos-relative">
@@ -2720,7 +2721,7 @@ function Bookings({ data }) {
                           <div className="autocomplete-dropdown">
                             {searchSuggestions.data.map(emp => (
                               <div key={emp.id} className="autocomplete-item" onMouseDown={() => handleSelectSuggestion('employee', emp)}>
-                                <div className="customer-avatar">{emp.name.trim().split(' ').at(-1)[0]}</div>
+                                <div className="customer-avatar">{getInitial(emp.name)}</div>
                                 <div className="customer-info">
                                   <div className="autocomplete-name">{emp.name}</div>
                                 </div>
@@ -2776,7 +2777,7 @@ function Bookings({ data }) {
                 </div>
                 <span className="drag-confirm-time">{dragConfirm.fromTime}</span>
                 <div className="drag-confirm-staff-badge">
-                  <span className="drag-confirm-staff-initial">{dragConfirm.fromStaff?.trim().split(' ').at(-1)?.[0]?.toUpperCase() || 'A'}</span>
+                  <span className="drag-confirm-staff-initial">{getInitial(dragConfirm.fromStaff, 'A', { upper: true })}</span>
                   <span className="drag-confirm-staff-name">{dragConfirm.fromStaff}</span>
                 </div>
               </div>
@@ -2787,7 +2788,7 @@ function Bookings({ data }) {
                 </div>
                 <span className="drag-confirm-time">{dragConfirm.toTime}</span>
                 <div className="drag-confirm-staff-badge">
-                  <span className="drag-confirm-staff-initial">{dragConfirm.toStaff?.trim().split(' ').at(-1)?.[0]?.toUpperCase() || 'A'}</span>
+                  <span className="drag-confirm-staff-initial">{getInitial(dragConfirm.toStaff, 'A', { upper: true })}</span>
                   <span className="drag-confirm-staff-name">{dragConfirm.toStaff}</span>
                 </div>
               </div>

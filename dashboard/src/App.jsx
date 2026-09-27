@@ -1,7 +1,7 @@
 import 'react-toastify/dist/ReactToastify.css';
 import { ToastContainer } from 'react-toastify';
 import { useEffect } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuth, useUser } from '@clerk/clerk-react';
 import Login from './pages/Login';
 // import Dashboard from './pages/Dashboard';
@@ -15,6 +15,7 @@ import Settings from './pages/Settings';
 import ShareLink from './pages/ShareLink';
 import Sidebar from './components/Sidebar';
 import UserSettings from './pages/UserSettings';
+import ErrorBoundary from './components/ErrorBoundary';
 import { setAuthTokenGetter } from './api';
 
 const VALID_ROLES = ['staff', 'admin', 'dev'];
@@ -22,6 +23,7 @@ const VALID_ROLES = ['staff', 'admin', 'dev'];
 function App() {
   const { isLoaded, userId, getToken, signOut } = useAuth();
   const { user } = useUser();
+  const location = useLocation();
 
   // Role đặt trong Clerk → Users → Public metadata. Không có role hợp lệ → không cho vào (backend cũng từ chối).
   const userRole = user?.publicMetadata?.role;
@@ -65,23 +67,25 @@ function App() {
       <Sidebar user={user} onLogout={handleLogout} />
       <div className="main-content">
         <div className="page-content">
-          <Routes>
-            <Route path="/" element={<Bookings />} />
-            <Route path="/customers" element={<Customers />} />
-            <Route path="/user-settings" element={<UserSettings />} />
+          <ErrorBoundary resetKey={location.pathname}>
+            <Routes>
+              <Route path="/" element={<Bookings />} />
+              <Route path="/customers" element={<Customers />} />
+              <Route path="/user-settings" element={<UserSettings />} />
 
-            {isAdmin && (
-              <>
-                <Route path="/employees" element={<Employees />} />
-                <Route path="/services" element={<Services />} />
-                <Route path="/branches" element={<Branches />} />
-                <Route path="/schedules" element={<EmployeeSchedules />} />
-                <Route path="/settings" element={<Settings />} />
-                <Route path="/share-link" element={<ShareLink />} />
-              </>
-            )}
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+              {isAdmin && (
+                <>
+                  <Route path="/employees" element={<Employees />} />
+                  <Route path="/services" element={<Services />} />
+                  <Route path="/branches" element={<Branches />} />
+                  <Route path="/schedules" element={<EmployeeSchedules />} />
+                  <Route path="/settings" element={<Settings />} />
+                  <Route path="/share-link" element={<ShareLink />} />
+                </>
+              )}
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </ErrorBoundary>
         </div>
       </div>
       <ToastContainer

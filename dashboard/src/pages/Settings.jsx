@@ -6,6 +6,7 @@ import {
   getBranches, getEmployees
 } from '../api';
 import { toast } from 'react-toastify';
+import { getInitial } from '../utils/format';
 import '../styles/webhooks.css';
 import '../styles/settings.css';
 
@@ -486,7 +487,7 @@ function Settings() {
                       >
                         <div className="tour-item-order">{idx + 1}</div>
                         <div className="tour-item-avatar">
-                          {s.name.trim().split(' ').at(-1)[0]}
+                          {getInitial(s.name)}
                         </div>
                         <div className="tour-item-info">
                           <div className="staff-name">{s.name}</div>
