@@ -1,16 +1,16 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { FiX } from 'react-icons/fi';
 import { toast } from 'react-toastify';
 import { subscribeRealtime } from '../realtime';
 import { useWebPush } from '../hooks/useWebPush';
-import { savePreferenceToDB } from '../idbHelper';
+import { getMutedBranchIds, getCurrentPushEndpoint } from '../utils/notificationPrefs';
 import '../styles/sidebar.css';
 import logo from '../assets/logo.svg';
 import { Tooltip } from '../components/ui/tooltip';
 import geminiLogo from '../assets/gemini-logo.svg';
 import AIChatPanel from './AIChatPanel';
-import { getDashboardNotifications, markNotificationRead, markAllNotificationsRead, deleteNotification } from '../api';
+import { getDashboardNotifications, markNotificationRead, markAllNotificationsRead, deleteNotification, updateNotificationPreferences } from '../api';
 import { isHoldBooking } from '../utils/booking';
 
 // ---- Custom Inline SVG Icons with stroke="currentColor" ----
@@ -258,12 +258,23 @@ function Sidebar({ user, onLogout }) {
     localStorage.setItem('yoi_notifications', JSON.stringify(notifications));
   }, [notifications]);
 
-  // Sync user metadata preferences to IndexedDB for Service Worker
+  // Chi nhánh người dùng đã tắt thông báo (Clerk unsafeMetadata). Dùng chuỗi làm key để deps ổn định.
+  const mutedKey = getMutedBranchIds(user).join(',');
+  const mutedBranchIds = useMemo(() => (mutedKey ? mutedKey.split(',') : []), [mutedKey]);
+
+  // Đồng bộ cài đặt lên server để lọc push khi gửi (thiết bị mới đăng ký / tự sửa khi lần lưu trước lỗi).
+  // Chỉ chạy khi đã có user (tránh ghi đè bằng danh sách rỗng lúc user chưa tải xong) và thiết bị đã đăng ký push.
   useEffect(() => {
-    if (user?.unsafeMetadata?.notifications) {
-      savePreferenceToDB(user.unsafeMetadata.notifications);
-    }
-  }, [user?.unsafeMetadata?.notifications]);
+    if (!user?.id || !isSubscribed) return;
+    let cancelled = false;
+    (async () => {
+      const endpoint = await getCurrentPushEndpoint();
+      if (cancelled) return;
+      updateNotificationPreferences({ muted_branch_ids: mutedBranchIds, endpoint })
+        .catch(err => console.warn('[push] Không đồng bộ được cài đặt thông báo:', err.message));
+    })();
+    return () => { cancelled = true; };
+  }, [user?.id, isSubscribed, mutedBranchIds]);
 
   const fetchNotifications = useCallback(async () => {
     setLoadingNotifs(true);
@@ -296,12 +307,7 @@ function Sidebar({ user, onLogout }) {
             createdAt: n.created_at,
             read: n.read
           };
-        }).filter(n => {
-          const prefs = user?.unsafeMetadata?.notifications || { branch1: true, branch2: true };
-          if (n.branchId === 1 && !prefs.branch1) return false;
-          if (n.branchId === 2 && !prefs.branch2) return false;
-          return true;
-        });
+        }).filter(n => !(n.branchId && mutedBranchIds.includes(n.branchId)));
         setNotifications(mapped);
       }
     } catch (err) {
@@ -309,7 +315,7 @@ function Sidebar({ user, onLogout }) {
     } finally {
       setLoadingNotifs(false);
     }
-  }, [user?.unsafeMetadata?.notifications]);
+  }, [mutedBranchIds]);
 
   useEffect(() => {
     fetchNotifications();
@@ -532,14 +538,8 @@ function Sidebar({ user, onLogout }) {
     // 1) Filter out temporary holds ("Khách đang đặt")
     if (isHoldBooking(booking)) return;
 
-    // ----- Notification Preference Check -----
-    const prefs = user?.unsafeMetadata?.notifications || { branch1: true, branch2: true };
-
-    // Branch 1 is typically ID 1 or the first branch, Branch 2 is ID 2.
-    // Ensure we respect the switch settings:
-    if (booking.branch_id === 1 && !prefs.branch1) return;
-    if (booking.branch_id === 2 && !prefs.branch2) return;
-    // ------------------------------------------
+    // Chi nhánh đã tắt thông báo trong Cài đặt cá nhân → không kêu chuông
+    if (booking.branch_id && mutedBranchIds.includes(booking.branch_id)) return;
 
     // Dedup: skip if this booking was already processed recently
     const bookingId = booking.id;
@@ -575,7 +575,7 @@ function Sidebar({ user, onLogout }) {
     setTimeout(() => {
       fetchNotifications();
     }, 1500);
-  }, [fetchNotifications]);
+  }, [fetchNotifications, mutedBranchIds]);
 
 
   const handleNotifClick = (n) => {

@@ -39,6 +39,7 @@ const ACCESS_RULES = [
   { method: 'GET', path: /^\/beds$/, role: 'staff' },
   { method: 'GET', path: /^\/settings$/, role: 'staff' },
   { method: 'POST', path: /^\/notifications\/(subscribe|unsubscribe)$/, role: 'staff' },
+  { method: 'PUT', path: /^\/notifications\/preferences$/, role: 'staff' },
   { method: '*', path: /^\/notifications\/dashboard(\/.*)?$/, role: 'staff' },
 
   // ---- Dev ----

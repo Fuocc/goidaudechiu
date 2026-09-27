@@ -1,10 +1,11 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useUser, useAuth } from '@clerk/clerk-react';
 import { toast } from 'react-toastify';
 import '../styles/user-settings.css';
 import { FiEdit2, FiLogOut, FiLoader } from 'react-icons/fi';
 import userPlaceholder from '../assets/userPlaceholder.jpg';
-import { savePreferenceToDB } from '../idbHelper';
+import { getBranches, updateNotificationPreferences } from '../api';
+import { getMutedBranchIds, getCurrentPushEndpoint } from '../utils/notificationPrefs';
 
 const UserSettings = () => {
   const { user } = useUser();
@@ -79,23 +80,48 @@ const UserSettings = () => {
     }
   };
 
-  const [toggles, setToggles] = useState(() => {
-    return user?.unsafeMetadata?.notifications || { branch1: true, branch2: true };
-  });
+  // Công tắc thông báo theo từng chi nhánh thật (theo ID), lưu danh sách chi nhánh đã TẮT
+  const [branches, setBranches] = useState([]);
+  const [branchesState, setBranchesState] = useState('loading'); // 'loading' | 'ready' | 'error'
+  const [mutedIds, setMutedIds] = useState(() => getMutedBranchIds(user));
+
+  useEffect(() => {
+    getBranches()
+      .then(list => { setBranches(list || []); setBranchesState('ready'); })
+      .catch(err => { console.error('Không tải được chi nhánh:', err); setBranchesState('error'); });
+  }, []);
+
+  const toggleBranch = (branchId, enabled) => {
+    setMutedIds(prev => (enabled ? prev.filter(id => id !== branchId) : [...new Set([...prev, branchId])]));
+  };
 
   const [isUpdatingNotifs, setIsUpdatingNotifs] = useState(false);
 
   const handleUpdateNotifications = async () => {
     try {
       setIsUpdatingNotifs(true);
+      // Chỉ giữ ID của chi nhánh còn tồn tại
+      const muted = branches.length ? mutedIds.filter(id => branches.some(b => b.id === id)) : mutedIds;
       await user.update({
         unsafeMetadata: {
           ...user.unsafeMetadata,
-          notifications: toggles
+          notifications: { muted_branch_ids: muted }
         }
       });
-      savePreferenceToDB(toggles);
-      toast.success('Cài đặt thông báo đã được lưu đồng bộ!');
+
+      // Báo server để lọc thông báo đẩy khi gửi (mọi thiết bị của tài khoản + thiết bị này)
+      let serverApplied = true;
+      try {
+        const endpoint = await getCurrentPushEndpoint();
+        const result = await updateNotificationPreferences({ muted_branch_ids: muted, endpoint });
+        serverApplied = result?.applied !== false;
+      } catch (err) {
+        console.warn('[push] Không lưu được cài đặt trên máy chủ:', err.message);
+        serverApplied = false;
+      }
+      toast.success(serverApplied
+        ? 'Cài đặt thông báo đã được lưu đồng bộ!'
+        : 'Đã lưu cài đặt. Thông báo đẩy trên thiết bị sẽ áp dụng sau khi máy chủ được cập nhật.');
     } catch (error) {
       console.error('Lỗi khi lưu cài đặt thông báo:', error);
       toast.error('Có lỗi xảy ra khi lưu cài đặt.');
@@ -215,35 +241,27 @@ const UserSettings = () => {
         </p>
 
         <div className="us-toggle-list">
-          <div className="us-toggle-item">
-            <span className="us-toggle-label">Ý Ơi - Lê Văn Huân</span>
-            <label className="us-switch">
-              <input
-                type="checkbox"
-                checked={toggles.branch1}
-                onChange={(e) => setToggles({ ...toggles, branch1: e.target.checked })}
-              />
-              <span className="us-slider"></span>
-            </label>
-          </div>
-
-          <div className="us-toggle-item">
-            <span className="us-toggle-label">Ý Ơi - Hoàng Hoa thám</span>
-            <label className="us-switch">
-              <input
-                type="checkbox"
-                checked={toggles.branch2}
-                onChange={(e) => setToggles({ ...toggles, branch2: e.target.checked })}
-              />
-              <span className="us-slider"></span>
-            </label>
-          </div>
+          {branchesState === 'loading' && <p className="user-settings-subtitle">Đang tải danh sách chi nhánh...</p>}
+          {branchesState === 'error' && <p className="user-settings-subtitle">Không tải được danh sách chi nhánh. Vui lòng tải lại trang.</p>}
+          {branches.map(branch => (
+            <div className="us-toggle-item" key={branch.id}>
+              <span className="us-toggle-label">{branch.name}</span>
+              <label className="us-switch">
+                <input
+                  type="checkbox"
+                  checked={!mutedIds.includes(branch.id)}
+                  onChange={(e) => toggleBranch(branch.id, e.target.checked)}
+                />
+                <span className="us-slider"></span>
+              </label>
+            </div>
+          ))}
         </div>
 
-        <button 
-          className="us-btn us-btn-primary" 
+        <button
+          className="us-btn us-btn-primary"
           onClick={handleUpdateNotifications}
-          disabled={isUpdatingNotifs}
+          disabled={isUpdatingNotifs || branchesState !== 'ready'}
         >
           {isUpdatingNotifs ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>

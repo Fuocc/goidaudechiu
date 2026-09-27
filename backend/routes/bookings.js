@@ -224,7 +224,13 @@ async function notifyNewBooking(bookingData) {
       branch_id: bookingData.branch_id
     });
 
-    uniqueSubs.forEach(sub => {
+    // Bỏ các thiết bị đã tắt thông báo của chi nhánh này (cột muted_branch_ids; chưa có cột → gửi hết như cũ).
+    // Lọc ở server chứ không ở service worker: SW đăng ký userVisibleOnly nên nhận push là phải hiện thông báo.
+    const recipients = uniqueSubs.filter(sub =>
+      !(bookingData.branch_id && Array.isArray(sub.muted_branch_ids) && sub.muted_branch_ids.includes(bookingData.branch_id))
+    );
+
+    recipients.forEach(sub => {
       const pushConfig = {
         endpoint: sub.endpoint,
         keys: {

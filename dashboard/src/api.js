@@ -139,4 +139,6 @@ export const getDashboardNotifications = () => request('/notifications/dashboard
 export const markNotificationRead = (id, read = true) => request(`/notifications/dashboard/${id}/read`, { method: 'PUT', body: JSON.stringify({ read }) });
 export const markAllNotificationsRead = () => request('/notifications/dashboard/mark-all-read', { method: 'POST' });
 export const deleteNotification = (id) => request(`/notifications/dashboard/${id}`, { method: 'DELETE' });
+// Chi nhánh đã tắt thông báo push (server lọc khi gửi). Trả { applied } — false nếu DB chưa chạy SQL thêm cột
+export const updateNotificationPreferences = (data) => request('/notifications/preferences', { method: 'PUT', body: JSON.stringify(data) });
 
