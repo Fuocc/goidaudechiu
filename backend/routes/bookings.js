@@ -809,6 +809,44 @@ router.put('/:id', async (req, res) => {
     // NOTE: total_price in your create flow is stored as service.price (not * num_guests)
     const total_price = service.price || 0;
 
+    // 5.1) Chặn trùng giờ với lịch khác của cùng nhân viên (kéo-thả / sửa chi tiết).
+    // Chỉ kiểm tra khi NV/ngày/giờ thật sự đổi → sửa ghi chú, tắt cảnh báo trên lịch vốn đã chồng nhau vẫn lưu được.
+    // Dashboard có thể gửi allow_conflict: true sau khi người dùng xác nhận "Vẫn lưu".
+    const targetDate = booking_date !== undefined ? booking_date : booking.booking_date;
+    const placementChanged = employee_id !== booking.employee_id
+      || targetDate !== booking.booking_date
+      || timeToMinutes(start_time) !== timeToMinutes(String(booking.start_time || '0:0'))
+      || timeToMinutes(end_time) !== timeToMinutes(String(booking.end_time || '0:0'));
+    if (placementChanged && req.body.allow_conflict !== true) {
+      const { data: sameDay, error: sameDayErr } = await supabase
+        .from('bookings')
+        .select('id, start_time, end_time, temporary_name, customers(name)')
+        .eq('employee_id', employee_id)
+        .eq('booking_date', targetDate)
+        .neq('status', 'cancelled')
+        .neq('id', req.params.id);
+      if (sameDayErr) throw sameDayErr;
+
+      const newStart = timeToMinutes(start_time);
+      const newEnd = timeToMinutes(end_time);
+      const conflicts = (sameDay || []).filter(b =>
+        b.start_time && b.end_time &&
+        timeToMinutes(String(b.start_time)) < newEnd && newStart < timeToMinutes(String(b.end_time))
+      );
+      if (conflicts.length > 0) {
+        return res.status(409).json({
+          code: 'BOOKING_CONFLICT',
+          error: 'Nhân viên đã có lịch trùng giờ',
+          conflicts: conflicts.map(c => ({
+            id: c.id,
+            customer_name: c.temporary_name || c.customers?.name || 'Khách',
+            start_time: String(c.start_time).substring(0, 5),
+            end_time: String(c.end_time).substring(0, 5)
+          }))
+        });
+      }
+    }
+
     // 6) Update
     const { data: updated, error: upErr } = await supabase
       .from('bookings')

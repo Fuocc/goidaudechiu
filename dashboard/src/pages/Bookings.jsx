@@ -764,11 +764,26 @@ function Bookings({ data }) {
     });
   };
 
+  // PUT lịch; nếu backend báo trùng giờ (409 BOOKING_CONFLICT) → hỏi "Vẫn lưu?" rồi gửi lại kèm allow_conflict.
+  // Trả về lịch đã lưu, hoặc null nếu người dùng chọn không lưu.
+  const updateBookingConfirmingConflict = async (id, payload) => {
+    try {
+      return await updateBooking(id, payload);
+    } catch (err) {
+      if (err?.status !== 409 || err.data?.code !== 'BOOKING_CONFLICT') throw err;
+      const list = (err.data.conflicts || [])
+        .map(c => `• ${c.customer_name}: ${formatTime(c.start_time)} - ${formatTime(c.end_time)}`)
+        .join('\n');
+      if (!window.confirm(`Nhân viên đã có lịch trùng giờ:\n${list}\n\nVẫn lưu?`)) return null;
+      return await updateBooking(id, { ...payload, allow_conflict: true });
+    }
+  };
+
   const handleDragConfirm = async () => {
     if (!dragConfirm) return;
     try {
       const bk = dragConfirm.booking;
-      await updateBooking(bk.id, {
+      const saved = await updateBookingConfirmingConflict(bk.id, {
         service_id: bk.service_id || bk.services?.id,
         branch_id: bk.branch_id || bk.branches?.id,
         employee_id: dragConfirm.toStaffId,
@@ -776,8 +791,10 @@ function Bookings({ data }) {
         end_time: dragConfirm.newEnd,
         booking_date: dragConfirm.newDate
       });
-      notify('Đã cập nhật lịch hẹn!');
-      loadBookings();
+      if (saved) {
+        notify('Đã cập nhật lịch hẹn!');
+        loadBookings();
+      }
     } catch (err) {
       alert('Lỗi: ' + err.message);
     }
@@ -1138,7 +1155,8 @@ function Bookings({ data }) {
         bookingUpdate.temporary_name = null;
       }
 
-      const updated = await updateBooking(detailModal.id, bookingUpdate);
+      const updated = await updateBookingConfirmingConflict(detailModal.id, bookingUpdate);
+      if (!updated) return; // chọn không lưu khi trùng lịch → giữ modal để chỉnh tiếp
 
       // 2. Update Customer Info if it's the SAME customer but info changed
       const cust = detailModal.customers;
