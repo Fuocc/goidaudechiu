@@ -5,7 +5,7 @@ import TimePickerInput from '../components/TimePickerInput';
 
 import {
   getBookingsRange, createBooking, updateBooking, deleteBooking,
-  getBranches, getServices, getEmployees, getCustomers, updateCustomer, getEmployeeSchedules,
+  getBranches, getServices, getEmployees, getCustomers, getEmployeeSchedules,
   getSettings
 } from '../api';
 
@@ -1155,10 +1155,8 @@ function Bookings({ data }) {
         bookingUpdate.temporary_name = null;
       }
 
-      const updated = await updateBookingConfirmingConflict(detailModal.id, bookingUpdate);
-      if (!updated) return; // chọn không lưu khi trùng lịch → giữ modal để chỉnh tiếp
-
-      // 2. Update Customer Info if it's the SAME customer but info changed
+      // 2. Cùng khách nhưng thông tin khách đổi → gửi kèm customer_update trong CÙNG request
+      // (backend cập nhật khách + lịch, lỗi thì hoàn lại thông tin khách — không còn cập nhật nửa vời)
       const cust = detailModal.customers;
       if (bookingUpdate.customer_id && cust && (
         detailEdit.customer_name !== cust.name ||
@@ -1166,14 +1164,16 @@ function Bookings({ data }) {
         detailEdit.customer_habits !== (cust.habits || '') ||
         detailEdit.customer_email !== (cust.email || '')
       )) {
-        await updateCustomer(bookingUpdate.customer_id, {
+        bookingUpdate.customer_update = {
           name: detailEdit.customer_name,
           phone: detailEdit.customer_phone,
           email: detailEdit.customer_email,
           habits: detailEdit.customer_habits
-        });
-        updated.customers = { ...updated.customers, name: detailEdit.customer_name, phone: detailEdit.customer_phone, email: detailEdit.customer_email, habits: detailEdit.customer_habits };
+        };
       }
+
+      const updated = await updateBookingConfirmingConflict(detailModal.id, bookingUpdate);
+      if (!updated) return; // chọn không lưu khi trùng lịch → giữ modal để chỉnh tiếp
 
       // update list in UI immediately
       loadBookings();
@@ -2439,6 +2439,9 @@ function Bookings({ data }) {
                       {getInitial(detailEdit.customer_name, 'A', { upper: true })}
                     </div>
                     <h2 className="modal-title-lg">{detailModal.temporary_name || detailModal.customers?.name || 'Khách tạm'}</h2>
+                    {detailModal.customers?.id && (
+                      <p className="customer-shared-note">Sửa thông tin ở đây sẽ cập nhật hồ sơ khách hàng (áp dụng cho mọi lịch của khách này).</p>
+                    )}
                   </div>
 
                   <div className="booking-row no-hover">

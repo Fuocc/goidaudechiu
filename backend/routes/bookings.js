@@ -847,6 +847,34 @@ router.put('/:id', async (req, res) => {
       }
     }
 
+    // 5.2) (Tùy chọn) cập nhật hồ sơ khách trong CÙNG request — trước đây dashboard gọi 2 request riêng,
+    // request thứ 2 lỗi thì dữ liệu chỉ cập nhật một nửa. Làm khách trước (hay lỗi nhất, VD trùng SĐT);
+    // nếu cập nhật lịch ở bước 6 lỗi thì ghi lại thông tin khách cũ.
+    let customerRollback = null;
+    const customerUpdate = req.body.customer_update;
+    const finalCustomerId = customer_id !== undefined ? customer_id : booking.customer_id;
+    if (customerUpdate && typeof customerUpdate === 'object' && finalCustomerId) {
+      const { data: oldCustomer, error: oldCustErr } = await supabase
+        .from('customers')
+        .select('id, name, phone, email, habits')
+        .eq('id', finalCustomerId)
+        .single();
+      if (oldCustErr || !oldCustomer) return res.status(404).json({ error: 'Customer not found' });
+
+      // Cùng cách ghi với PUT /customers/:id
+      const { name, phone, email, habits } = customerUpdate;
+      const { error: custErr } = await supabase
+        .from('customers')
+        .update({ name, phone, email, habits: habits || null })
+        .eq('id', finalCustomerId);
+      if (custErr) return res.status(400).json({ error: `Không cập nhật được thông tin khách: ${custErr.message}` });
+
+      customerRollback = {
+        id: oldCustomer.id,
+        data: { name: oldCustomer.name, phone: oldCustomer.phone, email: oldCustomer.email, habits: oldCustomer.habits }
+      };
+    }
+
     // 6) Update
     const { data: updated, error: upErr } = await supabase
       .from('bookings')
@@ -874,7 +902,13 @@ router.put('/:id', async (req, res) => {
       `)
       .single();
 
-    if (upErr) throw upErr;
+    if (upErr) {
+      if (customerRollback) {
+        const { error: rbErr } = await supabase.from('customers').update(customerRollback.data).eq('id', customerRollback.id);
+        if (rbErr) console.error('[bookings PUT] Không hoàn lại được thông tin khách:', rbErr.message);
+      }
+      throw upErr;
+    }
 
     // Broadcast SSE for live dashboard updates
     const broadcast = getBroadcast(req);
