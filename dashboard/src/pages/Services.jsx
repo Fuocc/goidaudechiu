@@ -3,6 +3,7 @@ import { FiPlus, FiEdit2, FiTrash2, FiEdit3, FiFileText, FiClock, FiDollarSign, 
 import { getServices, createService, updateService, deleteService } from '../api';
 import { toast } from 'react-toastify';
 import { TableSkeleton, MobileCardSkeleton } from '../components/ui/Skeleton';
+import { notifyError } from '../utils/notify';
 import '../styles/services.css';
 
 const CATEGORIES = ["Gội Đầu", "Massage", "Combo", "4 Tay", "Dịch vụ thêm"];
@@ -66,7 +67,7 @@ function Services() {
       const data = await getServices();
       setServices(data);
     } catch (err) {
-
+      notifyError(err, 'Không tải được danh sách dịch vụ');
     } finally {
       setLoading(false);
     }

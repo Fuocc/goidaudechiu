@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { FiSave, FiClock, FiSettings, FiZap, FiPlus, FiEdit2, FiTrash2, FiPlay, FiList } from 'react-icons/fi';
 import {
   getSettings, updateSetting,
@@ -7,6 +7,7 @@ import {
 } from '../api';
 import { toast } from 'react-toastify';
 import { getInitial } from '../utils/format';
+import { notifyError } from '../utils/notify';
 import '../styles/webhooks.css';
 import '../styles/settings.css';
 
@@ -35,6 +36,7 @@ function Settings() {
   const [initialTourOrder, setInitialTourOrder] = useState([]);
   const [tourLoading, setTourLoading] = useState(false);
   const [draggedIndex, setDraggedIndex] = useState(null);
+  const staffSeqRef = useRef(0);
 
   useEffect(() => {
     loadSettings();
@@ -60,7 +62,7 @@ function Settings() {
         }));
       }
     } catch (err) {
-
+      notifyError(err, 'Không tải được cài đặt');
     } finally {
       setLoading(false);
     }
@@ -86,7 +88,7 @@ function Settings() {
       const data = await getWebhooks();
       setWebhooks(data);
     } catch (err) {
-
+      notifyError(err, 'Không tải được danh sách webhook');
     } finally {
       setWebhooksLoading(false);
     }
@@ -163,7 +165,7 @@ function Settings() {
         setSelectedBranch(bData[0].id);
       }
     } catch (err) {
-
+      notifyError(err, 'Không tải được danh sách chi nhánh');
     } finally {
       setTourLoading(false);
     }
@@ -176,9 +178,13 @@ function Settings() {
   }, [selectedBranch, activeTab]);
 
   const loadBranchStaff = async (branchId) => {
+    // Đổi chi nhánh nhanh → chỉ nhận danh sách của lần gọi mới nhất,
+    // tránh hiển thị (rồi lưu nhầm) thứ tự NV chi nhánh A vào tour_order của chi nhánh B
+    const seq = ++staffSeqRef.current;
     setTourLoading(true);
     try {
       const staff = await getEmployees(branchId);
+      if (seq !== staffSeqRef.current) return;
       const activeStaff = staff.filter(e => e.is_active);
 
       // Try to load existing order from settings
@@ -202,9 +208,12 @@ function Settings() {
         setInitialTourOrder(activeStaff.map(s => s.id));
       }
     } catch (err) {
-
+      if (seq !== staffSeqRef.current) return;
+      setTourStaff([]);
+      setInitialTourOrder([]);
+      notifyError(err, 'Không tải được nhân viên của chi nhánh');
     } finally {
-      setTourLoading(false);
+      if (seq === staffSeqRef.current) setTourLoading(false);
     }
   };
 

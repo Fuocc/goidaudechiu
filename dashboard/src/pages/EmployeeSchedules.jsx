@@ -1,8 +1,9 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { FiChevronLeft, FiChevronRight, FiPlus } from 'react-icons/fi';
 import { getEmployees, getEmployeeSchedules, createBulkSchedule, deleteEmployeeSchedule, getBranches } from '../api';
 import { toast } from 'react-toastify'
 import { TableSkeleton, MobileCardSkeleton } from '../components/ui/Skeleton';
+import { notifyError } from '../utils/notify';
 import '../styles/schedules.css';
 
 function getWeekDates(date) {
@@ -52,6 +53,7 @@ function EmployeeSchedules() {
 
   const [creatingDefault, setCreatingDefault] = useState(false);
   const [loading, setLoading] = useState(true);
+  const loadSeqRef = useRef(0);
 
   // Responsive
   const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 768);
@@ -83,11 +85,13 @@ function EmployeeSchedules() {
       const data = await getBranches();
       setBranches(data);
     } catch (err) {
-
+      notifyError(err, 'Không tải được danh sách chi nhánh');
     }
   };
 
   const loadData = async () => {
+    // Chỉ nhận kết quả của lần gọi mới nhất (bấm tuần trước/sau liên tục → response về lệch thứ tự)
+    const seq = ++loadSeqRef.current;
     try {
       setLoading(true);
       const from = toDateStr(weekDates[0]);
@@ -96,11 +100,14 @@ function EmployeeSchedules() {
         getEmployees(filterBranch || undefined),
         getEmployeeSchedules({ date_from: from, date_to: to })
       ]);
+      if (seq !== loadSeqRef.current) return;
       setEmployees(empData.filter(e => e.is_active));
       setSchedules(schedData);
     } catch (err) {
+      if (seq !== loadSeqRef.current) return;
+      notifyError(err, 'Không tải được lịch nhân viên');
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   };
 

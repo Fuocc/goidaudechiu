@@ -20,6 +20,7 @@ import { subscribeRealtime } from '../realtime';
 import BranchDropdown from '../components/BranchDropdown';
 import { getInitial } from '../utils/format';
 import { isHoldBooking, isSpamWarningBooking } from '../utils/booking';
+import { describeError } from '../utils/notify';
 // import '../styles/timepicker.css';
 import '../styles/bookings.css';
 // ---- Helpers ----
@@ -251,6 +252,7 @@ function Bookings({ data }) {
   const calendarRef = useRef(null);
   const moreMenuRef = useRef(null);
   const searchTimeoutRef = useRef(null);
+  const searchSeqRef = useRef(0);
   const gridRef = useRef(null);
   const nowLineRef = useRef(null);
 
@@ -301,6 +303,11 @@ function Bookings({ data }) {
     filterBranchRef.current = filterBranch;
   }, [filterBranch]);
 
+  // Chống race condition: chỉ nhận kết quả của lần gọi mới nhất (bấm đổi ngày liên tục → response về lệch thứ tự)
+  const loadSeqRef = useRef(0);
+  const refreshSeqRef = useRef(0);
+  const [loadError, setLoadError] = useState(null);
+
   // Ultra-fast helper to refresh ONLY bookings without refetching employees/settings/schedules.
   // This drastically reduces API calls from 4 to 1 per real-time event.
   const refreshBookingsOnly = async () => {
@@ -308,11 +315,15 @@ function Bookings({ data }) {
     const dateStr = toDateStr(currentDateRef.current);
     if (!branchId) return;
 
+    const seq = ++refreshSeqRef.current;
     try {
       const bookingsData = await getBookingsRange(dateStr, dateStr, branchId);
+      // Bỏ kết quả nếu đã có lần làm mới sau, hoặc người dùng vừa chuyển ngày/chi nhánh trong lúc chờ
+      if (seq !== refreshSeqRef.current || branchId !== filterBranchRef.current || dateStr !== toDateStr(currentDateRef.current)) return;
       setBookings(bookingsData.filter(b => b.status !== 'cancelled'));
     } catch (err) {
-
+      // Lỗi khi làm mới nền: giữ nguyên dữ liệu đang hiển thị, không làm phiền người dùng
+      console.warn('[bookings] Làm mới realtime lỗi:', err?.message);
     }
   };
 
@@ -577,12 +588,15 @@ function Bookings({ data }) {
         setFilterBranch(b[0].id);
       }
     } catch (err) {
-
+      console.error('[bookings] Không tải được chi nhánh/dịch vụ:', err);
+      setLoadError(describeError(err));
     }
   };
 
   const loadBookings = async () => {
+    const seq = ++loadSeqRef.current;
     setLoading(true);
+    setLoadError(null);
     try {
       const dayStr = toDateStr(currentDate);
       // Fetch bookings, employees, schedules AND latest settings
@@ -592,6 +606,8 @@ function Bookings({ data }) {
         getEmployeeSchedules({ date_from: dayStr, date_to: dayStr }),
         getSettings()
       ]);
+
+      if (seq !== loadSeqRef.current) return; // đã đổi ngày/chi nhánh → bỏ kết quả cũ
 
       setSysSettings(settingsData || {});
       setBookings(bookingsData.filter(b => b.status !== 'cancelled'));
@@ -615,12 +631,23 @@ function Bookings({ data }) {
       setEmployees(sortedEmployees);
       setEmployeeSchedules(schedulesData);
     } catch (err) {
-
+      if (seq !== loadSeqRef.current) return;
+      console.error('[bookings] Không tải được lịch hẹn:', err);
+      // Không để lại dữ liệu của ngày/chi nhánh trước dưới tiêu đề mới → xóa và hiện thông báo lỗi + nút thử lại
+      setBookings([]);
+      setEmployees([]);
+      setEmployeeSchedules([]);
+      setLoadError(describeError(err));
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   };
   loadBookingsRef.current = loadBookings;
+
+  const handleRetryLoad = () => {
+    if (branches.length === 0) loadInitialData();
+    loadBookings();
+  };
 
   // Navigation
   const goToday = () => {
@@ -870,6 +897,7 @@ function Bookings({ data }) {
 
     setSearchSuggestions(prev => ({ ...prev, type, loading: true }));
     searchTimeoutRef.current = setTimeout(async () => {
+      const seq = ++searchSeqRef.current;
       try {
         let results = [];
         if (type === 'customer') {
@@ -940,9 +968,12 @@ function Bookings({ data }) {
             return idxA - idxB;
           }).filter(e => normalize(e.name).includes(searchVal));
         }
+        // Gõ tiếp trong lúc chờ → đã có lượt tìm mới hơn, bỏ kết quả cũ (tránh gợi ý nhảy về từ khóa cũ)
+        if (seq !== searchSeqRef.current) return;
         setSearchSuggestions({ type, data: results, loading: false });
       } catch (err) {
-
+        if (seq !== searchSeqRef.current) return;
+        console.warn('[bookings] Tìm gợi ý lỗi:', err?.message);
         setSearchSuggestions(prev => ({ ...prev, loading: false }));
       }
     }, 300);
@@ -1541,6 +1572,13 @@ function Bookings({ data }) {
       {/* Calendar View */}
       {effectiveViewMode === 'calendar' ? (
         <div className="cal-scroll-wrapper">
+          {loadError && !loading && (
+            <div className="load-error-banner" role="alert">
+              <FiAlertTriangle size={16} />
+              <span>Không tải được lịch hẹn: {loadError}</span>
+              <button type="button" className="btn btn-sm btn-primary" onClick={handleRetryLoad}>Thử lại</button>
+            </div>
+          )}
           {/* <div className="cal-staff-header-wrap">
             <div className="cal-staff-header"></div>
             {loading ? (
@@ -1928,6 +1966,17 @@ function Bookings({ data }) {
                         </td>
                       </tr>
                     ))
+                  ) : loadError ? (
+                    <tr>
+                      <td colSpan="9">
+                        <div className="empty-state" role="alert">
+                          <FiAlertTriangle size={32} />
+                          <h4>Không tải được lịch hẹn</h4>
+                          <p>{loadError}</p>
+                          <button type="button" className="btn btn-sm btn-primary" onClick={handleRetryLoad}>Thử lại</button>
+                        </div>
+                      </td>
+                    </tr>
                   ) : bookings.length === 0 ? (
                     <tr>
                       <td colSpan="9">
@@ -1984,6 +2033,13 @@ function Bookings({ data }) {
                     </div>
                   </div>
                 ))
+              ) : loadError ? (
+                <div className="empty-state" role="alert">
+                  <FiAlertTriangle size={32} />
+                  <h4>Không tải được lịch hẹn</h4>
+                  <p>{loadError}</p>
+                  <button type="button" className="btn btn-sm btn-primary" onClick={handleRetryLoad}>Thử lại</button>
+                </div>
               ) : bookings.length === 0 ? (
                 <div className="empty-state">
                   <FiCalendar size={32} />

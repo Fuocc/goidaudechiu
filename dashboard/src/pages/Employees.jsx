@@ -3,6 +3,7 @@ import { FiPlus, FiEdit2, FiTrash2 } from 'react-icons/fi';
 import { getEmployees, createEmployee, updateEmployee, deleteEmployee, getBranches } from '../api';
 import { toast } from 'react-toastify';
 import { TableSkeleton, MobileCardSkeleton } from '../components/ui/Skeleton';
+import { notifyError } from '../utils/notify';
 import '../styles/employees.css';
 
 function EmployeeTable({ title, employees, loading, isMobile, openEdit, handleDelete, emptyTitle, emptyText, showBranchColumn }) {
@@ -131,7 +132,7 @@ function Employees() {
       const data = await getBranches();
       setBranches(data);
     } catch (err) {
-
+      notifyError(err, 'Không tải được danh sách chi nhánh');
     }
   };
 
@@ -141,6 +142,7 @@ function Employees() {
       const data = await getEmployees();
       setEmployees(data);
     } catch (err) {
+      notifyError(err, 'Không tải được danh sách nhân viên');
     } finally {
       setLoading(false);
     }

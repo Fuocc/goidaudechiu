@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { FiPlus, FiEdit2, FiTrash2, FiMapPin } from 'react-icons/fi';
 import { getBranches, createBranch, updateBranch, deleteBranch } from '../api';
 import { CardSkeleton } from '../components/ui/Skeleton';
+import { notifyError } from '../utils/notify';
 import '../styles/branches.css';
 
 const DEFAULT_OPENING_HOURS = {
@@ -67,6 +68,7 @@ function Branches() {
       const data = await getBranches();
       setBranches(data);
     } catch (err) {
+      notifyError(err, 'Không tải được danh sách chi nhánh');
     } finally {
       setLoading(false);
     }
