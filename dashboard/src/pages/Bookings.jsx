@@ -21,6 +21,7 @@ import BranchDropdown from '../components/BranchDropdown';
 import { getInitial } from '../utils/format';
 import { isHoldBooking, isSpamWarningBooking, bookingStatusLabel } from '../utils/booking';
 import { describeError } from '../utils/notify';
+import { clickableProps } from '../utils/a11y';
 import {
   CALENDAR_OPEN_HOUR, CALENDAR_CLOSE_HOUR, WEEKDAY_MIN_OPEN_MINUTES, LOGICAL_DAY_CUTOFF,
   WALK_IN_CUSTOMER_NAME, PLACEHOLDER_SERVICE_NAME
@@ -2100,7 +2101,7 @@ function Bookings() {
                     </div>
                     <div className="booking-row-content">
                       {detailCustomerView === 'selected' && (
-                        <div className="customer-info py-0 cursor-pointer" onClick={() => setDetailCustomerView('searching')}>
+                        <div className="customer-info py-0 cursor-pointer" onClick={() => setDetailCustomerView('searching')} {...clickableProps(() => setDetailCustomerView('searching'))}>
                           <div className="booking-row-title">{detailEdit.customer_name}</div>
                           <div className="customer-phone">{detailEdit.customer_phone}</div>
                         </div>
@@ -2499,7 +2500,7 @@ function Bookings() {
                       )}
                     </div>
                     <div className="booking-row-content">
-                      {customerView === 'default' && <div className="booking-row-title placeholder-text-dim cursor-pointer" onClick={() => setCustomerView('searching')}>Thêm Khách</div>}
+                      {customerView === 'default' && <div className="booking-row-title placeholder-text-dim cursor-pointer" onClick={() => setCustomerView('searching')} {...clickableProps(() => setCustomerView('searching'))}>Thêm Khách</div>}
 
                       {customerView === 'searching' && (
                         <div className="pos-relative">
@@ -2541,7 +2542,7 @@ function Bookings() {
                       )}
 
                       {customerView === 'selected' && (
-                        <div className="customer-info py-0" onClick={() => setCustomerView('searching')}>
+                        <div className="customer-info py-0" onClick={() => setCustomerView('searching')} {...clickableProps(() => setCustomerView('searching'))}>
                           <div className="booking-row-title">{bookForm.customer_name}</div>
                           <div className="customer-phone">{bookForm.customer_phone}</div>
                         </div>

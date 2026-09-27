@@ -8,6 +8,7 @@ import {
 import { toast } from 'react-toastify';
 import { getInitial } from '../utils/format';
 import { notifyError } from '../utils/notify';
+import { clickableProps } from '../utils/a11y';
 import '../styles/webhooks.css';
 import '../styles/settings.css';
 
@@ -393,7 +394,11 @@ function Settings() {
                           <td>
                             <label className="webhook-toggle">
                               <div className={`toggle-switch${w.is_active ? ' active' : ''}`}
-                                onClick={() => handleToggleWebhook(w)}>
+                                onClick={() => handleToggleWebhook(w)}
+                                {...clickableProps(() => handleToggleWebhook(w))}
+                                role="switch"
+                                aria-checked={!!w.is_active}
+                                aria-label={`Bật/tắt webhook ${w.name}`}>
                                 <div className="toggle-knob"></div>
                               </div>
                               <span className={`webhook-status ${w.is_active ? 'active' : 'inactive'}`}>

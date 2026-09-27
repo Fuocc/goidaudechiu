@@ -14,6 +14,7 @@ import { getDashboardNotifications, markNotificationRead, markAllNotificationsRe
 import { isHoldBooking } from '../utils/booking';
 import { EMPLOYEE_AVATAR_OVERRIDES, CUSTOMER_AVATAR_COLORS } from '../config/business';
 import { shortBranchName } from '../utils/format';
+import { clickableProps } from '../utils/a11y';
 
 // ---- Custom Inline SVG Icons with stroke="currentColor" ----
 const CalendarIcon = () => (
@@ -753,6 +754,8 @@ function Sidebar({ user, onLogout }) {
           <div
             className="sidebar-user"
             onClick={() => setLogoutMenuOpen(prev => !prev)}
+            {...clickableProps(() => setLogoutMenuOpen(prev => !prev))}
+            aria-label="Tài khoản"
             ref={profileRef}
           >
             {user?.imageUrl ? (
@@ -989,6 +992,7 @@ function Sidebar({ user, onLogout }) {
                             key={n.id}
                             className={`notif-card-item${!n.read ? ' unread' : ' read'}`}
                             onClick={() => handleNotifClick(n)}
+                            {...clickableProps(() => handleNotifClick(n))}
                           >
                             {/* Service Therapist Avatar */}
                             <div className='notif-card-header'>

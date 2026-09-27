@@ -5,6 +5,7 @@ import '../styles/ai-chat.css';
 import geminiLogo from '../assets/gemini-logo.svg';
 import { Tooltip } from '../components/ui/tooltip';
 import { PLACEHOLDER_SERVICE_NAME } from '../config/business';
+import { clickableProps } from '../utils/a11y';
 
 const BRANCH_STORAGE_KEY = 'yoi_ai_branch';
 const CHAT_STORAGE_KEY = 'yoi_ai_chat_messages';
@@ -522,15 +523,17 @@ function AIChatPanel({ onClose, currentBranchId }) {
                     const shortName = parts[0] || b.name;
                     const address = parts[1] || '';
                     const isActive = b.id === selectedBranch;
+                    const chooseBranch = () => {
+                      setSelectedBranch(b.id);
+                      try { localStorage.setItem(BRANCH_STORAGE_KEY, b.id); } catch (e) { /* ignore */ }
+                      setIsBranchSelectOpen(false);
+                    };
                     return (
                       <div
                         key={b.id}
                         className={`custom-branch-option ${isActive ? 'active' : ''}`}
-                        onClick={() => {
-                          setSelectedBranch(b.id);
-                          try { localStorage.setItem(BRANCH_STORAGE_KEY, b.id); } catch (e) { /* ignore */ }
-                          setIsBranchSelectOpen(false);
-                        }}
+                        onClick={chooseBranch}
+                        {...clickableProps(chooseBranch)}
                       >
                         <div className="branch-option-short">{shortName}</div>
                         {address && <div className="branch-option-address">{address}</div>}

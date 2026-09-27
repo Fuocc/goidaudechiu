@@ -4,6 +4,7 @@ import { getServices, createService, updateService, deleteService } from '../api
 import { toast } from 'react-toastify';
 import { TableSkeleton, MobileCardSkeleton } from '../components/ui/Skeleton';
 import { notifyError } from '../utils/notify';
+import { clickableProps } from '../utils/a11y';
 import { SERVICE_CATEGORIES as CATEGORIES, SERVICE_COLORS as COLORS } from '../config/business';
 import '../styles/services.css';
 
@@ -264,7 +265,12 @@ function Services() {
                       onChange={e => setForm({ ...form, name: e.target.value })}
                       required
                     />
-                    <div className="color-picker-trigger" onClick={() => setShowColorPicker(!showColorPicker)}>
+                    <div
+                      className="color-picker-trigger"
+                      onClick={() => setShowColorPicker(!showColorPicker)}
+                      {...clickableProps(() => setShowColorPicker(!showColorPicker))}
+                      aria-label="Chọn màu dịch vụ"
+                    >
                       <div
                         className="color-indicator"
                         style={{ background: form.color }}
@@ -283,6 +289,11 @@ function Services() {
                                   setForm({ ...form, color: c });
                                   setShowColorPicker(false);
                                 }}
+                                {...clickableProps(() => {
+                                  setForm({ ...form, color: c });
+                                  setShowColorPicker(false);
+                                })}
+                                aria-label={`Màu ${c}`}
                               ></div>
                             </div>
                           ))}
@@ -339,7 +350,11 @@ function Services() {
                 {/* Nhóm */}
                 <div className="service-form-group" ref={categoryRef}>
                   <FiFolder className="service-icon" size={20} />
-                  <div className="service-input-wrapper service-input-clickable" onClick={() => setShowCategoryDropdown(!showCategoryDropdown)}>
+                  <div
+                    className="service-input-wrapper service-input-clickable"
+                    onClick={() => setShowCategoryDropdown(!showCategoryDropdown)}
+                    {...clickableProps(() => setShowCategoryDropdown(!showCategoryDropdown))}
+                  >
                     <div className={`service-input ${form.category ? 'service-text-value' : 'service-text-placeholder'}`}>
                       {form.category || 'Nhóm Dịch Vụ'}
                     </div>
@@ -355,6 +370,10 @@ function Services() {
                               setForm({ ...form, category: cat });
                               setShowCategoryDropdown(false);
                             }}
+                            {...clickableProps(() => {
+                              setForm({ ...form, category: cat });
+                              setShowCategoryDropdown(false);
+                            })}
                           >
                             {cat}
                           </div>
@@ -409,6 +428,10 @@ function Services() {
                   <div
                     className={`toggle-switch ${!form.is_active ? 'active' : ''}`}
                     onClick={() => setForm({ ...form, is_active: !form.is_active })}
+                    {...clickableProps(() => setForm({ ...form, is_active: !form.is_active }))}
+                    role="switch"
+                    aria-checked={!form.is_active}
+                    aria-label="Ẩn dịch vụ khỏi booking"
                   >
                     <div className="toggle-knob"></div>
                   </div>
