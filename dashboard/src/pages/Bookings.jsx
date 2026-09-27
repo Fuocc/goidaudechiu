@@ -19,6 +19,7 @@ import { DatePicker, parseDate } from "@chakra-ui/react"
 import { subscribeRealtime } from '../realtime';
 import BranchDropdown from '../components/BranchDropdown';
 import { getInitial } from '../utils/format';
+import { isHoldBooking, isSpamWarningBooking } from '../utils/booking';
 // import '../styles/timepicker.css';
 import '../styles/bookings.css';
 // ---- Helpers ----
@@ -715,8 +716,7 @@ function Bookings({ data }) {
     e.preventDefault();
 
     // Disable drag/click for guest slot holds
-    const isHold = booking.status === 'pending' && booking.internal_note && booking.internal_note.includes('GIỮ CHỖ TẠM THỜI');
-    if (isHold) return;
+    if (isHoldBooking(booking)) return;
 
     const card = e.currentTarget;
     const col = card.closest('.cal-staff-column');
@@ -1143,8 +1143,7 @@ function Bookings({ data }) {
 
   const handleOpenDetail = async (booking) => {
     // Prevent opening detail view for temporary slot holds
-    const isHold = booking.status === 'pending' && booking.internal_note && booking.internal_note.includes('Khách đang đặt');
-    if (isHold) return;
+    if (isHoldBooking(booking)) return;
 
     setDetailModal(booking);
 
@@ -1279,7 +1278,8 @@ function Bookings({ data }) {
       e.stopPropagation();
       e.preventDefault();
     }
-    if (!booking) return;
+    // Lịch giữ chỗ tạm thời: xóa internal_note sẽ khiến job dọn giữ chỗ không nhận ra → chiếm slot vĩnh viễn
+    if (!booking || isHoldBooking(booking)) return;
 
     try {
       const bookingUpdate = {
@@ -1790,8 +1790,8 @@ function Bookings({ data }) {
                           const cardBg = getBookingColor(b);
                           const textColor = '#555555';
 
-                          const isHold = b.status === 'pending' && b.internal_note && b.internal_note.includes('GIỮ CHỖ TẠM THỜI');
-                          const isSpamWarning = b.status === 'pending' && b.internal_note && !isHold;
+                          const isHold = isHoldBooking(b);
+                          const isSpamWarning = isSpamWarningBooking(b);
 
                           return (
                             <div
@@ -1940,7 +1940,7 @@ function Bookings({ data }) {
                     </tr>
                   ) : (
                     bookings.map(b => (
-                        <tr key={b.id} id={`booking-card-${b.id}`} onClick={() => handleOpenDetail(b)} className={`cursor-pointer${b.status === 'pending' && b.internal_note ? ' row-spam-warning' : ''}`}>
+                        <tr key={b.id} id={`booking-card-${b.id}`} onClick={() => handleOpenDetail(b)} className={`cursor-pointer${isSpamWarningBooking(b) ? ' row-spam-warning' : ''}${isHoldBooking(b) ? ' is-hold-disabled' : ''}`}>
                           <td>
                             <div className="list-booking-name">{b.temporary_name || b.customers?.name || '-'}</div>
                             <div className="list-booking-phone">{b.customers?.phone || ''}</div>
@@ -1992,13 +1992,13 @@ function Bookings({ data }) {
                 </div>
               ) : (
                 mobileListItems.map(({ key, lead, ids, guestCount, endTime, serviceNames, notes, internalNotes }) => {
-                  const isHold = lead.status === 'pending' && lead.internal_note && lead.internal_note.includes('Khách đang đặt');
+                  const isHold = isHoldBooking(lead);
                   return (
                     <div
                       key={key}
                       id={`booking-card-${lead.id}`}
                       data-booking-ids={ids.join(' ')}
-                      className={`booking-card-mobile${lead.status === 'pending' && lead.internal_note ? ' row-spam-warning' : ''}${isHold ? ' is-hold-disabled' : ''}`}
+                      className={`booking-card-mobile${isSpamWarningBooking(lead) ? ' row-spam-warning' : ''}${isHold ? ' is-hold-disabled' : ''}`}
                       onClick={() => { if (!isHold) handleOpenDetail(lead); }}
                     >
                       <div className="booking-card-mobile-header">

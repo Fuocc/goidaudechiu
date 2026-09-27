@@ -11,6 +11,7 @@ import { Tooltip } from '../components/ui/tooltip';
 import geminiLogo from '../assets/gemini-logo.svg';
 import AIChatPanel from './AIChatPanel';
 import { getDashboardNotifications, markNotificationRead, markAllNotificationsRead, deleteNotification } from '../api';
+import { isHoldBooking } from '../utils/booking';
 
 // ---- Custom Inline SVG Icons with stroke="currentColor" ----
 const CalendarIcon = () => (
@@ -529,8 +530,7 @@ function Sidebar({ user, onLogout }) {
 
   const handleNewBooking = useCallback((booking) => {
     // 1) Filter out temporary holds ("Khách đang đặt")
-    const isHold = booking.status === 'pending' && booking.internal_note?.includes('GIỮ CHỖ TẠM THỜI');
-    if (isHold) return;
+    if (isHoldBooking(booking)) return;
 
     // ----- Notification Preference Check -----
     const prefs = user?.unsafeMetadata?.notifications || { branch1: true, branch2: true };

@@ -253,6 +253,11 @@ function getBroadcast(req) {
 // Normalize Vietnamese diacritics for Latin search
 const normalize = (str) => (str || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
+// Lịch giữ chỗ tạm thời (POST /hold) — cùng điều kiện với các truy vấn LIKE '[GIỮ CHỖ TẠM THỜI]%' bên dưới
+const HOLD_NOTE_PREFIX = '[GIỮ CHỖ TẠM THỜI]';
+const isHoldBooking = (b) =>
+  b?.status === 'pending' && typeof b.internal_note === 'string' && b.internal_note.startsWith(HOLD_NOTE_PREFIX);
+
 /**
  * GET /api/bookings
  * Query params: branch_id, date, status
@@ -736,6 +741,11 @@ router.put('/:id', async (req, res) => {
       .single();
 
     if (bkErr || !booking) return res.status(404).json({ error: 'Booking not found' });
+
+    // Lịch giữ chỗ tạm thời do khách đang đặt online: không cho sửa (xóa internal_note sẽ làm job dọn giữ chỗ bỏ sót)
+    if (isHoldBooking(booking)) {
+      return res.status(409).json({ error: 'Đây là lịch giữ chỗ tạm thời của khách đang đặt online, không thể chỉnh sửa.' });
+    }
 
     // 2) Load service (duration/price)
     const { data: service, error: svcErr } = await supabase
