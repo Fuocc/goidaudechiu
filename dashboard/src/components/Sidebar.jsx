@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { FiX } from 'react-icons/fi';
 import { toast } from 'react-toastify';
-import { subscribeRealtime } from '../realtime';
+import { subscribeRealtime, REALTIME_RECONNECTED } from '../realtime';
 import { useWebPush } from '../hooks/useWebPush';
 import { getMutedBranchIds, getCurrentPushEndpoint } from '../utils/notificationPrefs';
 import '../styles/sidebar.css';
@@ -608,9 +608,11 @@ function Sidebar({ user, onLogout }) {
   // (bỏ Supabase Realtime: dashboard không còn truy cập thẳng database bằng anon key).
   useEffect(() => {
     return subscribeRealtime({
-      'booking.created': (booking) => { if (booking) handleNewBooking(booking); }
+      'booking.created': (booking) => { if (booking) handleNewBooking(booking); },
+      // Kết nối lại sau khi đứt → tải lại danh sách thông báo (có thể đã lỡ lịch mới)
+      [REALTIME_RECONNECTED]: () => { fetchNotifications(); }
     });
-  }, [handleNewBooking]);
+  }, [handleNewBooking, fetchNotifications]);
 
   // ---- Dynamic Sections Definition based on Mockup ----
   const adminSections = [

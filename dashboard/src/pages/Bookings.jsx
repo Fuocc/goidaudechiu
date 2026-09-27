@@ -16,7 +16,7 @@ import noteIcon from '../assets/note-icon.svg';
 
 import { Tooltip } from '../components/ui/tooltip';
 import { DatePicker, parseDate } from "@chakra-ui/react"
-import { subscribeRealtime } from '../realtime';
+import { subscribeRealtime, REALTIME_RECONNECTED } from '../realtime';
 import BranchDropdown from '../components/BranchDropdown';
 import { getInitial } from '../utils/format';
 import { isHoldBooking, isSpamWarningBooking } from '../utils/booking';
@@ -354,7 +354,9 @@ function Bookings({ data }) {
       'booking.updated': scheduleRefresh,
       'booking.deleted': scheduleRefresh,
       'booking.hold': scheduleRefresh,
-      'booking.hold_released': scheduleRefresh
+      'booking.hold_released': scheduleRefresh,
+      // Kết nối realtime bị đứt rồi nối lại → các sự kiện trong lúc đứt đã lỡ → tải lại lịch
+      [REALTIME_RECONNECTED]: scheduleRefresh
     });
 
     return () => {
