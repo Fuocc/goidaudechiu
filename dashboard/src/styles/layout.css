@@ -47,7 +47,7 @@
   }
 
   .page-content>div:not(.full-view) {
-    padding: 48px 20px 0px;
+    padding: 48px 20px 32px;
   }
 
   .page-title {

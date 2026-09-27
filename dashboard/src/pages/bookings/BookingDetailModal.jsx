@@ -424,7 +424,7 @@ export default function BookingDetailModal({
 
                   <div className="booking-row no-hover booking-row-top">
                     <div className="booking-row-icon">
-                      <img src={noteIcon} alt="note" className="icon-w24 icon-mt-32" />
+                      <img src={noteIcon} alt="note" className="icon-w24 icon-mt-24" />
                     </div>
                     <div className="booking-row-content">
                       <textarea

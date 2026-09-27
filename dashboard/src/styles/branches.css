@@ -58,7 +58,7 @@
   font-size: 13px;
   color: var(--text-color, #4b4b4b);
   margin-top: 2px;
-  white-space: nowrap;
+  white-space: pre-wrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -68,12 +68,6 @@
   color: var(--muted-gray, #afafaf);
   margin-top: 4px;
 }
-
-.branch-actions {
-  flex-shrink: 0;
-  margin-left: 8px;
-}
-
 .branch-schedule-wrapper {
   margin-top: 16px;
   border-top: 1px solid var(--border-color, #f0f2f5);
@@ -217,6 +211,7 @@
 
 .branch-schedule-edit-item {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;

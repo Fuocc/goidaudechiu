@@ -125,9 +125,19 @@ function Branches() {
   };
 
   const handleDelete = async (id) => {
-    if (!(await confirmDialog({ message: 'Bạn có chắc muốn xóa chi nhánh này? Điều này có thể ảnh hưởng đến nhân viên và giường thuộc chi nhánh.', confirmText: 'Xóa', danger: true }))) return;
+    const isConfirmed = await confirmDialog({ 
+      message: 'Bạn có chắc muốn xóa chi nhánh này? Điều này có thể ảnh hưởng đến nhân viên và giường thuộc chi nhánh.', 
+      confirmText: 'Xóa', 
+      danger: true 
+    });
+
+    if (!isConfirmed) return;
+    
     try {
       await deleteBranch(id);
+      setEditing(null); 
+      setModalOpen(false); 
+
       loadBranches();
     } catch (err) {
       toast.error(err.message);
@@ -171,10 +181,6 @@ function Branches() {
                       <div className="branch-address">{branch.address || 'Chưa có địa chỉ'}</div>
                       <div className="branch-phone">{branch.phone || ''}</div>
                     </div>
-                  </div>
-                  <div className="actions-cell branch-actions">
-                    <button className="btn-icon" aria-label="Sửa" onClick={(e) => { e.stopPropagation(); openEdit(branch); }}><FiEdit2 size={14} /></button>
-                    <button className="btn-icon danger" aria-label="Xóa" onClick={(e) => { e.stopPropagation(); handleDelete(branch.id); }}><FiTrash2 size={14} /></button>
                   </div>
                 </div>
 
@@ -326,7 +332,19 @@ function Branches() {
                   </div>
                 </div>
                 <div className="modal-footer">
-                  <button type="button" className="btn btn-secondary" onClick={() => setModalOpen(false)}>Hủy</button>
+                  {editing && (
+                    <button 
+                      type="button" 
+                      className="btn btn-danger" 
+                      onClick={(e) => { 
+                        e.preventDefault(); 
+                        e.stopPropagation(); 
+                        handleDelete(editing.id); 
+                      }}
+                    >
+                      Xoá
+                    </button>
+                  )}
                   <button type="submit" className="btn btn-primary" disabled={saving}>
                     {saving ? 'Đang cập nhật...' : (editing ? 'Cập nhật' : 'Thêm')}
                   </button>

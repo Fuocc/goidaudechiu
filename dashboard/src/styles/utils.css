@@ -29,13 +29,13 @@
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08) !important;
   border: 1px solid #f0f0f0;
   font-family: 'Inter' !important;
-  line-height: 1em;
+  line-height: 150%;
 }
 
 .Toastify__toast-icon svg {
   width: 20px;
   height: 20px;
-  fill: #00c853 !important;
+  fill: var(--toastify-color-progress-error) !important;
 }
 
 /* Nút đóng (X) */
@@ -181,11 +181,7 @@
   /* Nút hành động luôn dính đáy sheet khi cuộn */
   .modal .modal-footer,
   .modal .service-modal-footer {
-    position: sticky;
-    bottom: 0;
-    z-index: 2;
-    margin-top: 12px;
-    padding: 12px 0 calc(20px + env(safe-area-inset-bottom, 0px));
+    padding: 0 0 calc(28px + env(safe-area-inset-bottom, 0px));
     margin-bottom: calc(-20px - env(safe-area-inset-bottom, 0px));
     background: var(--white);
   }

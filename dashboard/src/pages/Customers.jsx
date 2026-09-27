@@ -351,7 +351,7 @@ function Customers() {
                 <div className="form-group">
                   <label className="form-label">Ghi chú</label>
                   <textarea
-                    className="form-input"
+                    className="form-textarea"
                     rows={3}
                     value={form.habits}
                     onChange={e => setForm({ ...form, habits: e.target.value })}
