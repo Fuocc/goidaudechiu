@@ -521,7 +521,7 @@ function Settings() {
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3>{editingWebhook ? 'Sửa Webhook' : 'Thêm Webhook'}</h3>
-              <button className="modal-close" onClick={() => setWebhookModalOpen(false)}>
+              <button className="modal-close" aria-label="Đóng" onClick={() => setWebhookModalOpen(false)}>
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                   <path d="M19 5L5 19" stroke="black" stroke-miterlimit="10"></path>
                   <path d="M5 5L19 19" stroke="black" stroke-miterlimit="10"></path>

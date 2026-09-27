@@ -197,8 +197,8 @@ function Services() {
                       </td>
                       <td>
                         <div className="actions-cell">
-                          <button className="btn-icon" onClick={() => openEdit(svc)}><FiEdit2 size={14} /></button>
-                          <button className="btn-icon btn-danger" onClick={() => handleDelete(svc.id)}><FiTrash2 size={14} /></button>
+                          <button className="btn-icon" aria-label="Sửa" onClick={() => openEdit(svc)}><FiEdit2 size={14} /></button>
+                          <button className="btn-icon btn-danger" aria-label="Xóa" onClick={() => handleDelete(svc.id)}><FiTrash2 size={14} /></button>
                         </div>
                       </td>
                     </tr>
@@ -222,8 +222,8 @@ function Services() {
                       <span className="service-card-name">{svc.name}</span>
                     </div>
                     <div className="mobile-card-actions" onClick={e => e.stopPropagation()}>
-                      <button className="btn-icon" onClick={() => openEdit(svc)}><FiEdit2 size={14} /></button>
-                      <button className="btn-icon btn-danger" onClick={() => handleDelete(svc.id)}><FiTrash2 size={14} /></button>
+                      <button className="btn-icon" aria-label="Sửa" onClick={() => openEdit(svc)}><FiEdit2 size={14} /></button>
+                      <button className="btn-icon btn-danger" aria-label="Xóa" onClick={() => handleDelete(svc.id)}><FiTrash2 size={14} /></button>
                     </div>
                   </div>
                   <div className="service-card-details">
@@ -245,7 +245,7 @@ function Services() {
           <div className="modal service-modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header service-modal-header">
               <h3 className="service-modal-title">{editing ? 'Sửa dịch vụ' : 'Thêm dịch vụ'}</h3>
-              <button className="modal-close" onClick={() => setModalOpen(false)}>
+              <button className="modal-close" aria-label="Đóng" onClick={() => setModalOpen(false)}>
                 <FiPlus className="service-modal-close-icon" />
               </button>
             </div>

@@ -641,6 +641,7 @@ function Sidebar({ user, onLogout }) {
           <Tooltip content={aiChatOpen ? "Tắt trợ lí AI" : "Mở trợ lí AI"}>
             <button
               className={`sidebar-header-gemini${aiChatOpen ? ' active' : ''}`}
+              aria-label={aiChatOpen ? "Tắt trợ lí AI" : "Mở trợ lí AI"}
               onClick={(e) => {
                 e.preventDefault();
                 closePanel();
@@ -856,7 +857,7 @@ function Sidebar({ user, onLogout }) {
                   </svg> Đã đọc hết
 
                 </button>
-                <button className="btn-close-notif-top" onClick={closePanel}>
+                <button className="btn-close-notif-top" aria-label="Đóng thông báo" onClick={closePanel}>
                   <FiX size={18} />
                 </button>
               </div>
@@ -1010,6 +1011,7 @@ function Sidebar({ user, onLogout }) {
                                     <Tooltip content={n.read ? 'Đánh dấu chưa đọc' : 'Đánh dấu đã đọc'}>
                                       <button
                                         className="btn-card-action"
+                                        aria-label={n.read ? "Đánh dấu chưa đọc" : "Đánh dấu đã đọc"}
                                         onClick={(e) => { e.stopPropagation(); toggleReadStatus(n.id, n.read); }}
                                       >
                                         {n.read ? (
@@ -1025,6 +1027,7 @@ function Sidebar({ user, onLogout }) {
                                     <Tooltip content="Xóa">
                                       <button
                                         className="btn-card-action"
+                                        aria-label="Xóa thông báo"
                                         onClick={(e) => { e.stopPropagation(); deleteNotif(n.id); }}
                                       >
                                         <svg width="16" height="16" viewBox="0 0 17 17" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1087,7 +1090,8 @@ function Sidebar({ user, onLogout }) {
           closePanel();
           window.dispatchEvent(new CustomEvent('toggle-ai-chat'));
         }}
-        title="Trò chuyện AI (ChatLGBT)"
+        title="Trợ lý AI (Ý Chatbot)"
+        aria-label="Mở trợ lý AI"
       >
         <img src={geminiLogo} alt="AI Chat" />
       </button>

@@ -265,9 +265,9 @@ function EmployeeSchedules() {
           </select>
         </div>
         <div className="cal-toolbar-right">
-          <button className="btn btn-sm btn-ghost" onClick={goPrev}><FiChevronLeft /></button>
+          <button className="btn btn-sm btn-ghost" aria-label="Tuần trước" onClick={goPrev}><FiChevronLeft /></button>
           <span className="cal-week-label">{weekLabel}</span>
-          <button className="btn btn-sm btn-ghost" onClick={goNext}><FiChevronRight /></button>
+          <button className="btn btn-sm btn-ghost" aria-label="Tuần sau" onClick={goNext}><FiChevronRight /></button>
           <button className="btn btn-sm btn-secondary" onClick={goToday}>Hôm nay</button>
         </div>
       </div>
@@ -397,7 +397,7 @@ function EmployeeSchedules() {
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3>Xếp lịch làm việc</h3>
-              <button className="modal-close" onClick={() => setModalOpen(false)}>
+              <button className="modal-close" aria-label="Đóng" onClick={() => setModalOpen(false)}>
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                   <path d="M19 5L5 19" stroke="black" stroke-miterlimit="10"></path>
                   <path d="M5 5L19 19" stroke="black" stroke-miterlimit="10"></path>

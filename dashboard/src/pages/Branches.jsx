@@ -167,8 +167,8 @@ function Branches() {
                     </div>
                   </div>
                   <div className="actions-cell branch-actions">
-                    <button className="btn-icon" onClick={(e) => { e.stopPropagation(); openEdit(branch); }}><FiEdit2 size={14} /></button>
-                    <button className="btn-icon danger" onClick={(e) => { e.stopPropagation(); handleDelete(branch.id); }}><FiTrash2 size={14} /></button>
+                    <button className="btn-icon" aria-label="Sửa" onClick={(e) => { e.stopPropagation(); openEdit(branch); }}><FiEdit2 size={14} /></button>
+                    <button className="btn-icon danger" aria-label="Xóa" onClick={(e) => { e.stopPropagation(); handleDelete(branch.id); }}><FiTrash2 size={14} /></button>
                   </div>
                 </div>
 
@@ -212,7 +212,7 @@ function Branches() {
             <div className="modal branch-modal" onClick={e => e.stopPropagation()}>
               <div className="modal-header">
                 <h3>{editing ? 'Sửa chi nhánh' : 'Thêm chi nhánh'}</h3>
-                <button className="modal-close" onClick={() => setModalOpen(false)}>
+                <button className="modal-close" aria-label="Đóng" onClick={() => setModalOpen(false)}>
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path d="M19 5L5 19" stroke="black" stroke-miterlimit="10"></path>
                     <path d="M5 5L19 19" stroke="black" stroke-miterlimit="10"></path>

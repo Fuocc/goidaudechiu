@@ -19,7 +19,7 @@ import { DatePicker, parseDate } from "@chakra-ui/react"
 import { subscribeRealtime, REALTIME_RECONNECTED } from '../realtime';
 import BranchDropdown from '../components/BranchDropdown';
 import { getInitial } from '../utils/format';
-import { isHoldBooking, isSpamWarningBooking } from '../utils/booking';
+import { isHoldBooking, isSpamWarningBooking, bookingStatusLabel } from '../utils/booking';
 import { describeError } from '../utils/notify';
 import {
   CALENDAR_OPEN_HOUR, CALENDAR_CLOSE_HOUR, WEEKDAY_MIN_OPEN_MINUTES, LOGICAL_DAY_CUTOFF,
@@ -1279,10 +1279,10 @@ function Bookings() {
               {formatDateVietnamese(currentDate)}
             </span>
             <Tooltip content="Ngày trước">
-              <button className="btn-icon" onClick={goPrev}><FiChevronLeft /></button>
+              <button className="btn-icon" aria-label="Ngày trước" onClick={goPrev}><FiChevronLeft /></button>
             </Tooltip>
             <Tooltip content="Ngày sau">
-              <button className="btn-icon" onClick={goNext}><FiChevronRight /></button>
+              <button className="btn-icon" aria-label="Ngày sau" onClick={goNext}><FiChevronRight /></button>
             </Tooltip>
             <Tooltip content={isToday ? "Đang xem lịch hôm nay" : "Trở về hôm nay"}>
               <button 
@@ -1326,13 +1326,13 @@ function Bookings() {
           <div className="cal-toolbar-row1">
             <div className="cal-toolbar-middle">
               <Tooltip content="Ngày trước">
-                <button className="btn-icon" onClick={goPrev}><FiChevronLeft /></button>
+                <button className="btn-icon" aria-label="Ngày trước" onClick={goPrev}><FiChevronLeft /></button>
               </Tooltip>
               <span className="cal-week-label">
                 {formatDateVietnamese(currentDate)}
               </span>
               <Tooltip content="Ngày sau">
-                <button className="btn-icon" onClick={goNext}><FiChevronRight /></button>
+                <button className="btn-icon" aria-label="Ngày sau" onClick={goNext}><FiChevronRight /></button>
               </Tooltip>
             </div>
             <div className="cal-toolbar-actions">
@@ -1820,7 +1820,7 @@ function Bookings() {
                             {b.internal_note && <div className="list-booking-note">{b.internal_note}</div>}
                           </td>
                           <td>
-                            <span className={`badge badge-${b.status}`}>{b.status}</span>
+                            <span className={`badge badge-${b.status}`}>{bookingStatusLabel(b.status)}</span>
                           </td>
                           <td className="list-booking-price">{formatPrice(b.total_price)}</td>
                         </tr>
@@ -1882,7 +1882,7 @@ function Bookings() {
                           <span className="service-icon-dot sm" style={{ background: lead.services?.color || '#0d8a3f' }}></span>
                           {serviceNames || '-'}
                         </span>
-                        <span className={`badge badge-${lead.status}`}>{lead.status}</span>
+                        <span className={`badge badge-${lead.status}`}>{bookingStatusLabel(lead.status)}</span>
                       </div>
                       
                       {notes.length > 0 && (
@@ -1911,7 +1911,7 @@ function Bookings() {
           <div className="modal modal-viewing max-w-480" onClick={e => e.stopPropagation()}>
             <div className="modal-header modal-header-clean">
               <h3 className="modal-title-lg">Chi tiết</h3>
-              <button className="modal-close" onClick={() => setDetailModal(null)}>
+              <button className="modal-close" aria-label="Đóng" onClick={() => setDetailModal(null)}>
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                   <path d="M19 5L5 19" stroke="black" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"></path>
                   <path d="M5 5L19 19" stroke="black" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"></path>
@@ -2302,7 +2302,7 @@ function Bookings() {
 
             <div className="modal-footer">
               <div className="pos-relative" ref={moreMenuRef}>
-                <button className="btn-icon btn-more" onClick={() => setShowDetailMore(!showDetailMore)}>
+                <button className="btn-icon btn-more" aria-label="Thêm thao tác" onClick={() => setShowDetailMore(!showDetailMore)}>
                   <FiMoreVertical />
                 </button>
                 {showDetailMore && (
@@ -2337,7 +2337,7 @@ function Bookings() {
             <div className="modal modal-max-480" onClick={e => e.stopPropagation()}>
               <div className="modal-header">
                 <h3>Lịch mới</h3>
-                <button className="modal-close" onClick={() => setModalOpen(false)}>
+                <button className="modal-close" aria-label="Đóng" onClick={() => setModalOpen(false)}>
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path d="M19 5L5 19" stroke="black" stroke-miterlimit="10"></path>
                     <path d="M5 5L19 19" stroke="black" stroke-miterlimit="10"></path>
@@ -2636,7 +2636,7 @@ function Bookings() {
           <div className="drag-confirm-popup" onClick={e => e.stopPropagation()}>
             <div className="drag-confirm-header">
               <h3 className="drag-confirm-title">Xác nhận thay đổi?</h3>
-              <button className="modal-close" onClick={handleDragCancel}>
+              <button className="modal-close" aria-label="Đóng" onClick={handleDragCancel}>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                   <path d="M19 5L5 19" stroke="black" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"></path>
                   <path d="M5 5L19 19" stroke="black" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"></path>

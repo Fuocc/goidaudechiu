@@ -58,8 +58,8 @@ function EmployeeTable({ title, employees, loading, isMobile, openEdit, handleDe
                     </td>
                     <td>
                       <div className="actions-cell">
-                        <button className="btn-icon" onClick={() => openEdit(emp)}><FiEdit2 size={14} /></button>
-                        <button className="btn-icon btn-danger" onClick={() => handleDelete(emp.id)}><FiTrash2 size={14} /></button>
+                        <button className="btn-icon" aria-label="Sửa" onClick={() => openEdit(emp)}><FiEdit2 size={14} /></button>
+                        <button className="btn-icon btn-danger" aria-label="Xóa" onClick={() => handleDelete(emp.id)}><FiTrash2 size={14} /></button>
                       </div>
                     </td>
                   </tr>
@@ -88,8 +88,8 @@ function EmployeeTable({ title, employees, loading, isMobile, openEdit, handleDe
                   {emp.is_active ? 'Hoạt động' : 'Nghỉ'}
                 </span>
                 <div className="mobile-card-actions" onClick={e => e.stopPropagation()}>
-                  <button className="btn-icon" onClick={() => openEdit(emp)}><FiEdit2 size={14} /></button>
-                  <button className="btn-icon btn-danger" onClick={() => handleDelete(emp.id)}><FiTrash2 size={14} /></button>
+                  <button className="btn-icon" aria-label="Sửa" onClick={() => openEdit(emp)}><FiEdit2 size={14} /></button>
+                  <button className="btn-icon btn-danger" aria-label="Xóa" onClick={() => handleDelete(emp.id)}><FiTrash2 size={14} /></button>
                 </div>
               </div>
             ))
@@ -236,7 +236,7 @@ function Employees() {
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3>{editing ? 'Sửa nhân viên' : 'Thêm nhân viên'}</h3>
-              <button className="modal-close" onClick={() => setModalOpen(false)}>
+              <button className="modal-close" aria-label="Đóng" onClick={() => setModalOpen(false)}>
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                   <path d="M19 5L5 19" stroke="black" stroke-miterlimit="10"></path>
                   <path d="M5 5L19 19" stroke="black" stroke-miterlimit="10"></path>

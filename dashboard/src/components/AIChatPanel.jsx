@@ -7,6 +7,8 @@ import { Tooltip } from '../components/ui/tooltip';
 import { PLACEHOLDER_SERVICE_NAME } from '../config/business';
 
 const BRANCH_STORAGE_KEY = 'yoi_ai_branch';
+const CHAT_STORAGE_KEY = 'yoi_ai_chat_messages';
+const LEGACY_CHAT_STORAGE_KEY = 'chatlgbt_messages'; // tên cũ — đọc một lần để không mất lịch sử chat
 
 // Tiêu đề thẻ kết quả dựa trên các thao tác THỰC SỰ đã thay đổi lịch (backend trả về `actions`)
 function getActionTitle(actions) {
@@ -24,7 +26,7 @@ function getActionTitle(actions) {
 function AIChatPanel({ onClose, currentBranchId }) {
   const [messages, setMessages] = useState(() => {
     try {
-      const saved = localStorage.getItem('chatlgbt_messages');
+      const saved = localStorage.getItem(CHAT_STORAGE_KEY) || localStorage.getItem(LEGACY_CHAT_STORAGE_KEY);
       if (saved) {
         return JSON.parse(saved);
       }
@@ -104,7 +106,8 @@ function AIChatPanel({ onClose, currentBranchId }) {
   // Save chat history to localStorage
   useEffect(() => {
     try {
-      localStorage.setItem('chatlgbt_messages', JSON.stringify(messages));
+      localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(messages));
+      localStorage.removeItem(LEGACY_CHAT_STORAGE_KEY); // đã chuyển sang khóa mới
     } catch (e) {
       console.error('Failed to save chat history', e);
     }
@@ -551,7 +554,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
                             ];
                             setMessages(welcomeMsg);
                             setReplyingTo(null);
-                            localStorage.removeItem('chatlgbt_messages');
+                            localStorage.removeItem(CHAT_STORAGE_KEY);
                           }
                         }}
                         style={{
@@ -577,7 +580,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
               )}
             </div>
 
-            <button type="submit" className="ai-chat-arrow-btn" disabled={!inputText.trim() || loading}>
+            <button type="submit" className="ai-chat-arrow-btn" aria-label="Gửi" disabled={!inputText.trim() || loading}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="12" y1="19" x2="12" y2="5"></line>
                 <polyline points="5 12 12 5 19 12"></polyline>
