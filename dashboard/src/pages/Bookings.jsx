@@ -1,6 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { FiPlus, FiChevronLeft, FiChevronRight, FiCalendar, FiList, FiMoreVertical, FiX, FiAlertTriangle } from 'react-icons/fi';
-import { HiOutlineChevronLeft, HiOutlineChevronRight } from "react-icons/hi";
 import { toast } from 'react-toastify';
 import TimePickerInput from '../components/TimePickerInput';
 
@@ -150,8 +149,8 @@ function Bookings({ data }) {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  const [viewMode, setViewMode] = useState('calendar'); // 'calendar' | 'list'
-  // On mobile, always force list view
+  // Mobile mở mặc định ở list view, desktop ở calendar view (vẫn đổi được bằng nút toggle)
+  const [viewMode, setViewMode] = useState(() => (window.innerWidth <= 768 ? 'list' : 'calendar')); // 'calendar' | 'list'
   const effectiveViewMode = viewMode;
 
   const [currentDate, setCurrentDate] = useState(getLogicalDate());
@@ -213,10 +212,6 @@ function Bookings({ data }) {
     setBookStep(1);
     setModalOpen(true);
   };
-
-  // Pagination state
-  const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage, setItemsPerPage] = useState(10);
 
   // Booking modal state
   const [modalOpen, setModalOpen] = useState(false);
@@ -388,7 +383,9 @@ function Bookings({ data }) {
       // We can poll the DOM for the booking card element
       let attempts = 0;
       const interval = setInterval(() => {
-        const cardEl = document.getElementById(`booking-card-${detail.bookingId}`);
+        // Card gộp nhóm trên mobile chỉ mang id của lịch đầu → tìm thêm theo data-booking-ids
+        const cardEl = document.getElementById(`booking-card-${detail.bookingId}`)
+          || document.querySelector(`[data-booking-ids~="${detail.bookingId}"]`);
         if (cardEl) {
           clearInterval(interval);
           // Scroll to the card
@@ -1364,6 +1361,35 @@ function Bookings({ data }) {
   const todayStr = toDateStr(new Date());
   const isToday = toDateStr(currentDate) === todayStr;
 
+  // Mobile list view: gộp các lịch cùng group_booking_id (khách đi nhóm) thành 1 card
+  const mobileListItems = useMemo(() => {
+    const groups = new Map();
+    for (const b of bookings) {
+      const key = b.group_booking_id || b.id;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(b);
+    }
+
+    const byStart = (a, b) => (a.start_time || '').localeCompare(b.start_time || '');
+    const unique = (arr) => [...new Set(arr.map(s => (s || '').trim()).filter(Boolean))];
+
+    return [...groups.entries()].map(([key, members]) => {
+      const sorted = [...members].sort(byStart);
+      const lead = sorted[0];
+      const endTime = sorted.reduce((max, m) => ((m.end_time || '') > max ? m.end_time : max), lead.end_time || '');
+      return {
+        key,
+        lead,
+        ids: sorted.map(m => m.id),
+        guestCount: sorted.length,
+        endTime,
+        serviceNames: unique(sorted.map(m => m.services?.name)).join(' + '),
+        notes: unique(sorted.map(m => m.notes)),
+        internalNotes: unique(sorted.map(m => m.internal_note))
+      };
+    }).sort((a, b) => byStart(a.lead, b.lead));
+  }, [bookings]);
+
   return (
     <div className='full-view full-view-bookings' style={{ '--staff-count': loading ? 3 : (employees.length || 1) }}>
       {/* Calendar Toolbar */}
@@ -1867,7 +1893,7 @@ function Bookings({ data }) {
         </div>
       ) : (
         /* List View */
-        <div className="card">
+        <div className="card no-border">
           {/* Desktop Table */}
           {!isMobile ? (
             <div className="table-container">
@@ -1912,9 +1938,7 @@ function Bookings({ data }) {
                       </td>
                     </tr>
                   ) : (
-                    bookings
-                      .slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage)
-                      .map(b => (
+                    bookings.map(b => (
                         <tr key={b.id} id={`booking-card-${b.id}`} onClick={() => handleOpenDetail(b)} className={`cursor-pointer${b.status === 'pending' && b.internal_note ? ' row-spam-warning' : ''}`}>
                           <td>
                             <div className="list-booking-name">{b.temporary_name || b.customers?.name || '-'}</div>
@@ -1966,66 +1990,44 @@ function Bookings({ data }) {
                   <p>Chưa có lịch hẹn nào trong ngày này</p>
                 </div>
               ) : (
-                bookings
-                  .slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage)
-                  .map(b => {
-                    const isHold = b.status === 'pending' && b.internal_note && b.internal_note.includes('Khách đang đặt');
-                    return (
-                      <div
-                        key={b.id}
-                        id={`booking-card-${b.id}`}
-                        className={`booking-card-mobile${b.status === 'pending' && b.internal_note ? ' row-spam-warning' : ''}${isHold ? ' is-hold-disabled' : ''}`}
-                        onClick={() => { if (!isHold) handleOpenDetail(b); }}
-                      >
-                        <div className="booking-card-mobile-header">
-                          <span className="booking-card-mobile-customer">{b.temporary_name || b.customers?.name || '-'}</span>
-                          <span className="booking-card-mobile-time">{formatTime(b.start_time)} - {formatTime(b.end_time)}</span>
-                        </div>
-                        <div className="booking-card-mobile-body">
-                          <span className="booking-card-mobile-service">
-                            <span className="service-icon-dot sm" style={{ background: b.services?.color || '#0d8a3f' }}></span>
-                            {b.services?.name || '-'}
-                          </span>
-                          <span className="booking-card-mobile-staff">{b.employees?.name || '-'}</span>
-                        </div>
-                        <div className="booking-card-mobile-footer">
-                          <span className={`badge badge-${b.status}`}>{b.status}</span>
-                          <span className="booking-card-mobile-price">{formatPrice(b.total_price)}</span>
-                        </div>
-                        {b.internal_note && <div className="list-booking-note">{b.internal_note}</div>}
+                mobileListItems.map(({ key, lead, ids, guestCount, endTime, serviceNames, notes, internalNotes }) => {
+                  const isHold = lead.status === 'pending' && lead.internal_note && lead.internal_note.includes('Khách đang đặt');
+                  return (
+                    <div
+                      key={key}
+                      id={`booking-card-${lead.id}`}
+                      data-booking-ids={ids.join(' ')}
+                      className={`booking-card-mobile${lead.status === 'pending' && lead.internal_note ? ' row-spam-warning' : ''}${isHold ? ' is-hold-disabled' : ''}`}
+                      onClick={() => { if (!isHold) handleOpenDetail(lead); }}
+                    >
+                      <div className="booking-card-mobile-header">
+                        <span className="booking-card-mobile-customer">{lead.temporary_name || lead.customers?.name || '-'}</span>
+                        <span className="booking-card-mobile-time">{formatTime(lead.start_time)} - {guestCount} khách</span>
                       </div>
-                    );
-                  })
+                      <div className="booking-card-mobile-body">
+                        <span className="booking-card-mobile-service">
+                          <span className="service-icon-dot sm" style={{ background: lead.services?.color || '#0d8a3f' }}></span>
+                          {serviceNames || '-'}
+                        </span>
+                        <span className={`badge badge-${lead.status}`}>{lead.status}</span>
+                      </div>
+                      
+                      {notes.length > 0 && (
+                        <div className="booking-card-mobile-footer">
+                          <div className="booking-card-mobile-notes">{notes.join('\n')}</div>
+                        </div>
+                      )}
+                      {internalNotes.map(note => (
+                        <div className="booking-card-mobile-footer">
+                          <div key={note} className="list-booking-note">{note}</div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })
               )}
             </div>
           )}
-
-          {/* Pagination Footer */}
-          <div className="pagination-container">
-            <div className="items-per-page">
-              <span>Hiển thị</span>
-              <select className="ipp-select" value={itemsPerPage} onChange={e => { setItemsPerPage(parseInt(e.target.value)); setCurrentPage(1); }}>
-                <option value={10}>10</option>
-                <option value={25}>25</option>
-                <option value={50}>50</option>
-                <option value={100}>100</option>
-              </select>
-              <span>kết quả mỗi trang</span>
-            </div>
-            <div className="pagination-controls">
-              <button className="page-btn" disabled={currentPage === 1} onClick={() => setCurrentPage(p => p - 1)}><HiOutlineChevronLeft /></button>
-              {Array.from({ length: Math.ceil(bookings.length / itemsPerPage) }, (_, i) => (
-                <button
-                  key={i + 1}
-                  className={`page-btn${currentPage === i + 1 ? ' active' : ''}`}
-                  onClick={() => setCurrentPage(i + 1)}
-                >
-                  {i + 1}
-                </button>
-              )).slice(Math.max(0, currentPage - 3), Math.min(Math.ceil(bookings.length / itemsPerPage), currentPage + 2))}
-              <button className="page-btn" disabled={currentPage >= Math.ceil(bookings.length / itemsPerPage)} onClick={() => setCurrentPage(p => p + 1)}><HiOutlineChevronRight /></button>
-            </div>
-          </div>
         </div>
       )}
 

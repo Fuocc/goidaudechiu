@@ -569,11 +569,14 @@
     /* Neo đáy panel ngay trên thanh menu dưới (kể cả vùng home indicator iPhone)
        thay vì trừ cứng 64px — trước đây ô nhập + nút gửi bị menu che mất ~34px */
     top: 0;
-    bottom: var(--mobile-bottom-offset);
+    /* Panel full màn hình trên mobile → chừa vùng tai thỏ / Dynamic Island cho header */
+    padding-top: var(--safe-area-top);
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
     height: auto;
     right: 0;
     box-shadow: none;
     border-left: none;
+    z-index: 9999;
   }
 
   /* Prevent zoom on text focus for mobile chat textarea */

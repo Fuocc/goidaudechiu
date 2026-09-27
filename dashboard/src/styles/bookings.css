@@ -1551,7 +1551,8 @@
 
   .cal-toolbar {
     position: sticky;
-    top: 0;
+    /* Dính ngay dưới vùng tai thỏ / Dynamic Island khi cuộn */
+    top: var(--safe-area-top);
     left: 0;
   }
 
@@ -1673,23 +1674,20 @@
     gap: 6px;
   }
 
-  .booking-card-mobile-staff {
+  .booking-card-mobile-notes {
     font-size: 13px;
-    color: var(--muted-gray);
+    color: var(--body-gray);
+    white-space: pre-wrap;
+    word-break: break-word;
   }
 
   .booking-card-mobile-footer {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding-top: 6px;
+    margin-top: 4px;
+    padding-top: 8px;
     border-top: 1px solid var(--chip-gray);
-  }
-
-  .booking-card-mobile-price {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--black);
   }
 
   /* Hide table on mobile, show mobile cards */

@@ -1068,6 +1068,16 @@
     display: block;
   }
 
+  .logout-popover {
+    left: 0px;
+    width: auto;
+    bottom: 100%;
+  }
+
+  .sidebar-user-name {
+    display: inline;
+  }
+
   .mobile-header {
     display: flex;
   }
@@ -1082,7 +1092,7 @@
 
   .notif-panel-container {
     left: 0;
-    top: 0;
+    top: var(--safe-area-top);
     right: 0;
     /* Neo theo top/bottom thay vì 100vh (100vh trên iOS cao hơn vùng nhìn thấy) */
     bottom: var(--mobile-bottom-offset);

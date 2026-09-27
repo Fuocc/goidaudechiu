@@ -155,8 +155,8 @@
   }
 
   .btn-icon {
-    width: 36px;
-    height: 36px;
+    width: 20px;
+    height: 20px;
   }
 
   .modal {
@@ -188,7 +188,6 @@
     padding: 12px 0 calc(20px + env(safe-area-inset-bottom, 0px));
     margin-bottom: calc(-20px - env(safe-area-inset-bottom, 0px));
     background: var(--white);
-    box-shadow: 0 -8px 12px -8px rgba(0, 0, 0, 0.08);
   }
 
   .modal-overlay {

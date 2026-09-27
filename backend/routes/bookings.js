@@ -5,6 +5,7 @@ const webpush = require('web-push');
 const bookingRateLimiter = require('../middleware/rateLimiter');
 const { holdLimiter } = require('../middleware/security');
 const { safeWebhookFetch } = require('../lib/safeUrl');
+const { sortByTourOrder } = require('../lib/tourOrder');
 
 // ---- Kiểm tra dữ liệu đầu vào (dùng cho request từ landing page / chưa đăng nhập) ----
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -468,19 +469,13 @@ router.post('/hold', holdLimiter, async (req, res) => {
         }
       }
 
-      const availableEmployees = employees.filter(e => !busyEmployeeIds.has(e.id) && !assignedEmpIds.includes(e.id));
+      const availableEmployees = sortByTourOrder(
+        employees.filter(e => !busyEmployeeIds.has(e.id) && !assignedEmpIds.includes(e.id)),
+        tourOrder
+      );
       if (availableEmployees.length === 0) {
         return res.status(409).json({ error: 'Không có nhân viên trống cho khung giờ này.' });
       }
-
-      availableEmployees.sort((a, b) => {
-        const idxA = tourOrder.indexOf(a.id);
-        const idxB = tourOrder.indexOf(b.id);
-        if (idxA === -1 && idxB === -1) return 0;
-        if (idxA === -1) return 1;
-        if (idxB === -1) return -1;
-        return idxA - idxB;
-      });
 
       const assignedEmployee = availableEmployees[0];
       assignedEmpIds.push(assignedEmployee.id);
@@ -1151,20 +1146,11 @@ router.post('/', bookingRateLimiter, async (req, res) => {
         }
       }
 
-      const availableEmployees = employees.filter(e => !busyEmployeeIds.has(e.id));
+      // Sort by Tour Order from Settings
+      const availableEmployees = sortByTourOrder(employees.filter(e => !busyEmployeeIds.has(e.id)), tourOrder);
       if (availableEmployees.length === 0) {
         return res.status(409).json({ error: 'No employees available for this time slot' });
       }
-
-      // Sort by Tour Order from Settings
-      availableEmployees.sort((a, b) => {
-        const idxA = tourOrder.indexOf(a.id);
-        const idxB = tourOrder.indexOf(b.id);
-        if (idxA === -1 && idxB === -1) return 0;
-        if (idxA === -1) return 1;
-        if (idxB === -1) return -1;
-        return idxA - idxB;
-      });
 
       let assignedEmployee = availableEmployees[0];
 

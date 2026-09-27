@@ -40,8 +40,17 @@
   --header-height: 64px;
   --mobile-header-height: 56px;
   --mobile-bottom-nav-height: 64px;
+  /* Vùng an toàn của iPhone: trên = tai thỏ / Dynamic Island, dưới = home indicator.
+     Máy không có tai thỏ hoặc trình duyệt desktop → 0px */
+  --safe-area-top: env(safe-area-inset-top, 0px);
+  --safe-area-bottom: env(safe-area-inset-bottom, 0px);
   /* Chiều cao thực tế thanh menu dưới trên mobile = 64px + vùng home indicator của iPhone */
-  --mobile-bottom-offset: calc(var(--mobile-bottom-nav-height) + env(safe-area-inset-bottom, 0px));
+  --mobile-bottom-offset: calc(var(--mobile-bottom-nav-height) + var(--safe-area-bottom));
 
   --shadow-base: 0 1px 2px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.1);
+  /* Shadows & Radius */
+  --shadow-subtle: 0 4px 20px rgba(0, 0, 0, 0.05);
+  --radius-lg: 16px;
+  --radius-md: 12px;
+  --radius-pill: 9999px;
 }
