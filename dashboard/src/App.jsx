@@ -1,6 +1,6 @@
 import 'react-toastify/dist/ReactToastify.css';
 import { ToastContainer } from 'react-toastify';
-import { useEffect } from 'react';
+import { useLayoutEffect } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuth, useUser } from '@clerk/clerk-react';
 import Login from './pages/Login';
@@ -29,8 +29,10 @@ function App() {
   const userRole = user?.publicMetadata?.role;
   const isAdmin = userRole === 'admin' || userRole === 'dev';
 
-  // Mỗi request API tự lấy token mới nhất từ Clerk (không lưu token vào localStorage)
-  useEffect(() => {
+  // Mỗi request API tự lấy token mới nhất từ Clerk (không lưu token vào localStorage).
+  // useLayoutEffect (không phải useEffect): React chạy mọi layout effect trước useEffect của component con
+  // trong cùng lần commit → getter đã sẵn sàng khi Bookings/Sidebar gọi API lần đầu (tránh loạt 401 + retry).
+  useLayoutEffect(() => {
     setAuthTokenGetter(userId ? (opts) => getToken(opts) : null);
     // Dọn token cũ do phiên bản trước lưu lại
     try { localStorage.removeItem('sb_access_token'); } catch (e) { /* ignore */ }
