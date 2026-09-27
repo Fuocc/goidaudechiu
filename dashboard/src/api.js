@@ -67,6 +67,9 @@ export const deleteEmployee = (id) => request(`/employees/${id}`, { method: 'DEL
 
 // Customers
 export const getCustomers = (search) => request(withQuery('/customers', { search }));
+// Phân trang ở server: trả { data, total, page, page_size, limited }
+export const getCustomersPage = ({ page = 1, pageSize = 10, search } = {}) =>
+  request(withQuery('/customers', { page, page_size: pageSize, search }));
 export const createCustomer = (data) => request('/customers', { method: 'POST', body: JSON.stringify(data) });
 export const updateCustomer = (id, data) => request(`/customers/${id}`, { method: 'PUT', body: JSON.stringify(data) });
 export const deleteCustomer = (id) => request(`/customers/${id}`, { method: 'DELETE' });

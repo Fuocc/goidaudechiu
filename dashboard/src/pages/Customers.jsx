@@ -1,9 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { useUser } from '@clerk/clerk-react';
 import { FiPlus, FiEdit2, FiTrash2 } from 'react-icons/fi';
 import { HiOutlineChevronLeft, HiOutlineChevronRight } from "react-icons/hi";
-import { getCustomers, createCustomer, updateCustomer, deleteCustomer } from '../api';
+import { getCustomersPage, createCustomer, updateCustomer, deleteCustomer } from '../api';
 import { toast } from 'react-toastify';
 import { TableSkeleton, MobileCardSkeleton } from '../components/ui/Skeleton';
+import { notifyError } from '../utils/notify';
 
 import noteIcon from '../assets/note-icon.svg';
 
@@ -22,9 +24,18 @@ const normalizeName = (name) => {
 };
 
 function Customers() {
-  const [customers, setCustomers] = useState([]);
-  const [search, setSearch] = useState('');
+  const [customers, setCustomers] = useState([]); // chỉ khách của trang hiện tại (phân trang ở server)
+  const [total, setTotal] = useState(0);
+  const [limited, setLimited] = useState(false); // kết quả tìm kiếm bị giới hạn 20 dòng
+  const [search, setSearch] = useState('');       // nội dung ô tìm kiếm
+  const [query, setQuery] = useState('');         // từ khóa đã debounce, dùng để gọi API
+  const searchTimeoutRef = useRef(null);
+  const loadSeqRef = useRef(0);
   const [loading, setLoading] = useState(true);
+
+  // Xóa hồ sơ khách chỉ dành cho admin/dev (backend cũng chặn)
+  const { user } = useUser();
+  const canDelete = ['admin', 'dev'].includes(user?.publicMetadata?.role);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState(null);
   const [form, setForm] = useState({ name: '', phone: '', email: '', habits: '' });
@@ -47,26 +58,46 @@ function Customers() {
     });
   };
 
-  useEffect(() => {
-    loadCustomers();
-  }, []);
-
-  const loadCustomers = async (searchTerm) => {
+  const loadCustomers = async () => {
+    // Chỉ nhận kết quả của lần gọi mới nhất (gõ tìm / chuyển trang nhanh → response về lệch thứ tự)
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     try {
-      const data = await getCustomers(searchTerm);
-      setCustomers(data);
+      const result = await getCustomersPage({ page: currentPage, pageSize: itemsPerPage, search: query });
+      if (seq !== loadSeqRef.current) return;
+      const rows = result?.data || [];
+      const totalCount = result?.total || 0;
+      // Trang hiện tại không còn dữ liệu (VD vừa xóa khách cuối cùng của trang cuối) → lùi về trang cuối
+      const lastPage = Math.max(1, Math.ceil(totalCount / itemsPerPage));
+      if (rows.length === 0 && currentPage > lastPage) {
+        setCurrentPage(lastPage);
+        return;
+      }
+      setCustomers(rows);
+      setTotal(totalCount);
+      setLimited(!!result?.limited);
     } catch (err) {
+      if (seq !== loadSeqRef.current) return;
+      notifyError(err, 'Không tải được danh sách khách hàng');
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   };
+
+  useEffect(() => {
+    loadCustomers();
+  }, [query, currentPage, itemsPerPage]);
+
+  useEffect(() => () => clearTimeout(searchTimeoutRef.current), []);
 
   const handleSearch = (e) => {
     const val = e.target.value;
     setSearch(val);
-    clearTimeout(window._searchTimeout);
-    window._searchTimeout = setTimeout(() => loadCustomers(val), 400);
+    clearTimeout(searchTimeoutRef.current);
+    searchTimeoutRef.current = setTimeout(() => {
+      setQuery(val.trim());
+      setCurrentPage(1); // từ khóa mới → về trang 1
+    }, 400);
   };
 
   const openCreate = () => {
@@ -101,7 +132,7 @@ function Customers() {
         notify(`Thêm khách hàng thành công`);
       }
       setModalOpen(false);
-      loadCustomers(search);
+      loadCustomers();
     } catch (err) {
       alert(err.message);
     }
@@ -112,7 +143,8 @@ function Customers() {
     try {
       await deleteCustomer(id);
       notify('Đã xóa thành công');
-      loadCustomers(search);
+      if (editingCustomer?.id === id) setModalOpen(false); // xóa từ trong modal → đóng modal
+      loadCustomers();
     } catch (err) {
       alert(err.message);
     }
@@ -123,7 +155,9 @@ function Customers() {
     return new Date(dateStr).toLocaleDateString('vi-VN');
   };
 
-  const paginatedCustomers = customers.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+  const totalPages = Math.max(1, Math.ceil(total / itemsPerPage));
+  const emptyTitle = query ? 'Không tìm thấy khách hàng phù hợp' : 'Chưa có khách hàng';
+  const emptyText = query ? 'Thử tìm bằng tên khác hoặc số điện thoại' : 'Khách hàng sẽ được thêm tự động khi đặt lịch';
 
   return (
     <div>
@@ -153,6 +187,11 @@ function Customers() {
             />
           </div>
         </div>
+        {limited && (
+          <p style={{ margin: '0 16px 8px', fontSize: 12, color: '#78716C' }}>
+            Chỉ hiển thị 20 kết quả phù hợp nhất — hãy gõ cụ thể hơn (VD thêm số điện thoại).
+          </p>
+        )}
 
         {loading ? (
           !isMobile ? (
@@ -183,13 +222,13 @@ function Customers() {
                   <tr>
                     <td colSpan="7">
                       <div className="empty-state">
-                        <h4>Chưa có khách hàng</h4>
-                        <p>Khách hàng sẽ được thêm tự động khi đặt lịch</p>
+                        <h4>{emptyTitle}</h4>
+                        <p>{emptyText}</p>
                       </div>
                     </td>
                   </tr>
                 ) : (
-                  paginatedCustomers.map(c => (
+                  customers.map(c => (
                     <tr key={c.id}>
                       <td>{c.id}</td>
                       <td className="data-table-name">{c.name}</td>
@@ -202,9 +241,11 @@ function Customers() {
                           <button className="btn-icon" onClick={() => openEdit(c)} title="Sửa">
                             <FiEdit2 size={14} />
                           </button>
-                          <button className="btn-icon btn-danger" onClick={() => handleDelete(c.id)} title="Xóa">
-                            <FiTrash2 size={14} />
-                          </button>
+                          {canDelete && (
+                            <button className="btn-icon btn-danger" onClick={() => handleDelete(c.id)} title="Xóa">
+                              <FiTrash2 size={14} />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -217,17 +258,19 @@ function Customers() {
           <div className="mobile-card-list">
             {customers.length === 0 ? (
               <div className="empty-state">
-                <h4>Chưa có khách hàng</h4>
-                <p>Khách hàng sẽ được thêm tự động khi đặt lịch</p>
+                <h4>{emptyTitle}</h4>
+                <p>{emptyText}</p>
               </div>
             ) : (
-              paginatedCustomers.map(c => (
+              customers.map(c => (
                 <div key={c.id} className="mobile-card customer-card" onClick={() => openEdit(c)}>
                   <div className="mobile-card-row">
                     <span className="mobile-card-primary">{c.name}</span>
                     <div className="mobile-card-actions" onClick={e => e.stopPropagation()}>
                       <button className="btn-icon" onClick={() => openEdit(c)}><FiEdit2 size={14} /></button>
-                      <button className="btn-icon btn-danger" onClick={() => handleDelete(c.id)}><FiTrash2 size={14} /></button>
+                      {canDelete && (
+                        <button className="btn-icon btn-danger" onClick={() => handleDelete(c.id)}><FiTrash2 size={14} /></button>
+                      )}
                     </div>
                   </div>
                   <div className="mobile-card-row">
@@ -257,7 +300,7 @@ function Customers() {
           </div>
           <div className="pagination-controls">
             <button className="page-btn" disabled={currentPage === 1 || loading} onClick={() => setCurrentPage(p => p - 1)}><HiOutlineChevronLeft /></button>
-            {Array.from({ length: Math.ceil(customers.length / itemsPerPage) }, (_, i) => (
+            {Array.from({ length: totalPages }, (_, i) => (
               <button
                 key={i + 1}
                 className={`page-btn${currentPage === i + 1 ? ' active' : ''}`}
@@ -266,8 +309,8 @@ function Customers() {
               >
                 {i + 1}
               </button>
-            )).slice(Math.max(0, currentPage - 3), Math.min(Math.ceil(customers.length / itemsPerPage), currentPage + 2))}
-            <button className="page-btn" disabled={currentPage >= Math.ceil(customers.length / itemsPerPage) || loading} onClick={() => setCurrentPage(p => p + 1)}><HiOutlineChevronRight /></button>
+            )).slice(Math.max(0, currentPage - 3), Math.min(totalPages, currentPage + 2))}
+            <button className="page-btn" disabled={currentPage >= totalPages || loading} onClick={() => setCurrentPage(p => p + 1)}><HiOutlineChevronRight /></button>
           </div>
         </div>
       </div>
@@ -331,7 +374,7 @@ function Customers() {
               </div>
 
               <div className="modal-footer">
-                {editingCustomer && (
+                {editingCustomer && canDelete && (
                   <button type="button" className="btn btn-danger" onClick={() => handleDelete(editingCustomer.id)} style={{ marginRight: 'auto' }}>Xóa khách hàng</button>
                 )}
                 <button type="button" className="btn btn-secondary" onClick={() => setModalOpen(false)}>Hủy</button>
