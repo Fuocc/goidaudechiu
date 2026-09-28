@@ -1290,6 +1290,34 @@
   background: #333;
 }
 
+/* Lịch nhóm: thêm lựa chọn "Chỉ khách này" bên cạnh "Dời cả nhóm" */
+.drag-confirm-group-note {
+  margin: 20px 0 0;
+  font-size: 14px;
+  color: #555;
+}
+
+.drag-confirm-popup:has(.drag-confirm-alt) .drag-confirm-actions {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.drag-confirm-alt {
+  background: #fff;
+  color: #111;
+  border: 1px solid #d0d0d0;
+  padding: 12px 20px;
+  border-radius: 24px;
+  cursor: pointer;
+  font-weight: 500;
+  font-size: 15px;
+  transition: background 0.2s;
+}
+
+.drag-confirm-alt:hover {
+  background: #f5f5f5;
+}
+
 /* Disabled submit button style */
 .btn-submit-booking:disabled {
   opacity: 0.6;

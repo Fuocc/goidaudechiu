@@ -8,6 +8,8 @@ export default function DragConfirmDialog({
   handleDragCancel,
   handleDragConfirm
 }) {
+  // Kéo lịch thuộc nhóm sang giờ khác → hỏi dời cả nhóm hay chỉ khách này (chỉ đổi nhân viên thì không hỏi)
+  const askGroup = !!dragConfirm && dragConfirm.groupSize > 1 && dragConfirm.timingChanged;
   return (
     <>
       {dragConfirm && (
@@ -46,9 +48,21 @@ export default function DragConfirmDialog({
                 </div>
               </div>
             </div>
+            {askGroup && (
+              <p className="drag-confirm-group-note">
+                Lịch này thuộc nhóm {dragConfirm.groupSize} khách. Dời giờ cho cả nhóm hay chỉ khách này?
+              </p>
+            )}
             <div className="drag-confirm-actions">
               <button className="drag-confirm-cancel" onClick={handleDragCancel}>Hủy, giữ nguyên</button>
-              <button className="drag-confirm-submit" onClick={handleDragConfirm}>Thay Đổi</button>
+              {askGroup ? (
+                <>
+                  <button className="drag-confirm-alt" onClick={() => handleDragConfirm(false)}>Chỉ khách này</button>
+                  <button className="drag-confirm-submit" onClick={() => handleDragConfirm(true)}>Dời cả nhóm ({dragConfirm.groupSize})</button>
+                </>
+              ) : (
+                <button className="drag-confirm-submit" onClick={() => handleDragConfirm(false)}>Thay Đổi</button>
+              )}
             </div>
           </div>
         </div>

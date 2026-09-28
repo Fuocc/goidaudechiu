@@ -4,7 +4,8 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
  * Hộp thoại xác nhận thay cho window.confirm() (hộp thoại trình duyệt chặn luồng, lệch giao diện app).
  * Dùng:  const confirmDialog = useConfirm();
  *        if (!(await confirmDialog({ message: 'Xóa?', danger: true }))) return;
- * Nhận chuỗi hoặc { title, message, confirmText, cancelText, danger }. Trả Promise<boolean>.
+ * Nhận chuỗi hoặc { title, message, confirmText, cancelText, danger, altText }. Trả Promise<boolean>.
+ * Có altText → thêm nút lựa chọn thứ 3 (VD "Chỉ khách này"), bấm vào trả về 'alt'.
  */
 const ConfirmContext = createContext(null);
 
@@ -70,6 +71,11 @@ export function ConfirmProvider({ children }) {
               <button type="button" className="btn btn-secondary" onClick={() => close(false)}>
                 {dialog.cancelText}
               </button>
+              {dialog.altText && (
+                <button type="button" className="btn btn-secondary" onClick={() => close('alt')}>
+                  {dialog.altText}
+                </button>
+              )}
               <button
                 type="button"
                 ref={confirmBtnRef}
