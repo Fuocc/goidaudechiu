@@ -1009,6 +1009,8 @@ router.post('/', bookingRateLimiter, async (req, res) => {
         num_guests: toGuestCount(b.num_guests),
         customer_name: name,
         customer_phone: phone,
+        // SĐT đúng như khách gõ — để tìm hồ sơ khách cũ lưu trước khi chuẩn hóa (VD "090 123 4567")
+        customer_phone_raw: cleanText(b.customer_phone, 20),
         customer_email: cleanText(b.customer_email, 120) || null,
         booking_date: b.booking_date,
         start_time: b.start_time,
@@ -1095,11 +1097,15 @@ router.post('/', bookingRateLimiter, async (req, res) => {
       }
 
       if (!customer && customer_phone) {
+        // Tìm theo cả dạng chuẩn hóa lẫn dạng khách gõ → khách cũ lưu SĐT có dấu cách không bị tạo hồ sơ trùng
+        const phoneCandidates = [...new Set([customer_phone, req.body.customer_phone_raw].filter(Boolean))];
         const { data: existingCustomer } = await supabase
           .from('customers')
           .select('*')
-          .eq('phone', customer_phone)
-          .single();
+          .in('phone', phoneCandidates)
+          .order('created_at', { ascending: true })
+          .limit(1)
+          .maybeSingle();
 
         if (existingCustomer) {
           customer = existingCustomer;
