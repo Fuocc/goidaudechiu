@@ -28,7 +28,6 @@ function signingKey() {
   } else if (process.env.CLERK_SECRET_KEY) {
     // Suy ra một khóa con (không dùng trực tiếp khóa Clerk làm khóa ký)
     cachedKey = crypto.createHmac('sha256', process.env.CLERK_SECRET_KEY).update('yoi-undo-signing-v1').digest();
-    console.warn('[undo] Chưa đặt UNDO_SIGNING_SECRET — đang dùng khóa suy ra từ CLERK_SECRET_KEY.');
   } else {
     throw new Error('Thiếu UNDO_SIGNING_SECRET để ký dữ liệu hoàn tác');
   }
@@ -82,8 +81,7 @@ async function signUndoAction(action, userId) {
     const signed = { ...action, after: await fingerprintsFor(ids), iat: Date.now(), uid: userId || null };
     signed.sig = computeSig(signed);
     return signed;
-  } catch (err) {
-    console.error('[undo] Không ký được dữ liệu hoàn tác:', err.message);
+  } catch {
     return action;
   }
 }

@@ -41,7 +41,6 @@ function normalizeVnPhone(raw) {
 // ---- Cột bookings.client_ip đã được tạo chưa? (kiểm tra 1 lần, chưa có thì 10 phút thử lại) ----
 let clientIpSupported = null;
 let clientIpCheckedAt = 0;
-let clientIpWarned = false;
 
 async function supportsClientIp(supabase) {
   if (clientIpSupported === true) return true;
@@ -50,10 +49,6 @@ async function supportsClientIp(supabase) {
   const { error } = await supabase.from('bookings').select('client_ip').limit(1);
   clientIpCheckedAt = Date.now();
   clientIpSupported = !error;
-  if (error && !clientIpWarned) {
-    clientIpWarned = true;
-    console.warn('[antiSpam] Chưa có cột bookings.client_ip (chạy backend/sql/2026-09-28_bookings_client_ip.sql) — tạm tắt giới hạn theo IP:', error.message);
-  }
   return clientIpSupported;
 }
 
@@ -70,10 +65,7 @@ async function releaseActiveHoldsForIp(supabase, ip) {
     .eq('status', 'pending')
     .like('internal_note', `${HOLD_NOTE_PREFIX}%`)
     .select('id');
-  if (error) {
-    console.warn('[antiSpam] Không nhả được giữ chỗ cũ của IP:', error.message);
-    return [];
-  }
+  if (error) return [];
   return (data || []).map(r => r.id);
 }
 
@@ -86,10 +78,7 @@ async function countIpSlots(supabase, ip) {
     .eq('client_ip', ip)
     .neq('status', 'cancelled')
     .gte('created_at', sinceIso(IP_SLOT_WINDOW_MS));
-  if (error) {
-    console.warn('[antiSpam] Không đếm được slot theo IP:', error.message);
-    return 0; // lỗi DB → không chặn khách
-  }
+  if (error) return 0; // lỗi DB → không chặn khách
   return count || 0;
 }
 
@@ -102,10 +91,7 @@ async function countPhoneSlots(supabase, phone) {
     .eq('customers.phone', phone)
     .neq('status', 'cancelled')
     .gte('created_at', sinceIso(PHONE_SLOT_WINDOW_MS));
-  if (error) {
-    console.warn('[antiSpam] Không đếm được slot theo SĐT:', error.message);
-    return 0;
-  }
+  if (error) return 0;
   return (data || []).length;
 }
 
@@ -174,8 +160,8 @@ async function computeSpamFlag(supabase, { ip, phone }) {
         internalNote: `⚠️ Khách hàng ${phone} đã có ${recentBookings.length} đơn trong 30 phút qua. Vui lòng xác nhận qua điện thoại.`
       };
     }
-  } catch (err) {
-    console.warn('[antiSpam] Kiểm tra spam lỗi, bỏ qua:', err.message);
+  } catch {
+    // Kiểm tra spam lỗi → không gắn cờ, không chặn khách
   }
   return clean;
 }

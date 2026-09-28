@@ -146,9 +146,8 @@ async function notifyNewBooking(bookingData) {
         .filter(sub => !keepIds.has(sub.id))
         .map(sub => sub.id);
       if (duplicateIds.length > 0) {
-        supabase.from('push_subscriptions').delete().in('id', duplicateIds)
-          .then(() => console.log('✅ Duplicate subscriptions cleaned up'))
-          .catch(err => console.error('❌ Failed to clean duplicates:', err));
+        // Query của Supabase chỉ chạy khi được .then() → giữ .then, bỏ qua lỗi dọn dẹp
+        supabase.from('push_subscriptions').delete().in('id', duplicateIds).then(() => {}, () => {});
       }
     }
     // Phân tích dữ liệu khách hàng, dịch vụ và chi nhánh đồng bộ với Dashboard
@@ -212,9 +211,7 @@ async function notifyNewBooking(bookingData) {
         .from('dashboard_notifications')
         .delete()
         .lt('created_at', thirtyDaysAgo.toISOString())
-        .then(({ error: pruneErr }) => {
-          if (pruneErr) console.error('❌ Error pruning old notifications:', pruneErr);
-        });
+        .then(() => {}, () => {});
     } catch (dbEx) {
     }
 
@@ -245,7 +242,6 @@ async function notifyNewBooking(bookingData) {
       };
 
       webpush.sendNotification(pushConfig, payload)
-        .then(() => console.log('✅ Push sent to endpoint:', sub.endpoint.slice(-30)))
         .catch(async (err) => {
           if (err.statusCode === 410 || err.statusCode === 404) {
             await supabase.from('push_subscriptions').delete().eq('id', sub.id);
@@ -680,7 +676,6 @@ router.post('/undo', async (req, res) => {
 
     res.json({ success: true, restored, deleted, skipped });
   } catch (err) {
-    console.error('[undo] error:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -919,8 +914,7 @@ router.put('/:id', async (req, res) => {
 
     if (upErr) {
       if (customerRollback) {
-        const { error: rbErr } = await supabase.from('customers').update(customerRollback.data).eq('id', customerRollback.id);
-        if (rbErr) console.error('[bookings PUT] Không hoàn lại được thông tin khách:', rbErr.message);
+        await supabase.from('customers').update(customerRollback.data).eq('id', customerRollback.id);
       }
       throw upErr;
     }
@@ -938,10 +932,7 @@ router.put('/:id', async (req, res) => {
         .eq('id', move.id)
         .select('*, employees(name), services(name), branches(name)')
         .single();
-      if (sibUpErr) {
-        console.error('[bookings PUT] Không dời được lịch cùng nhóm', move.id, sibUpErr.message);
-        continue;
-      }
+      if (sibUpErr) continue; // tính vào group_failed_count trả về cho dashboard
       broadcast('booking.updated', sib);
       groupUpdatedIds.push(move.id);
     }
@@ -1144,9 +1135,7 @@ router.post('/', bookingRateLimiter, async (req, res) => {
 
       // Fire webhooks async
       const webhookEvent = createdBookings.some(b => b.status === 'pending') ? 'booking.pending' : 'booking.confirmed';
-      fireWebhooks(webhookEvent, createdBookings).catch(err =>
-        console.error('Webhook fire error:', err.message)
-      );
+      fireWebhooks(webhookEvent, createdBookings).catch(() => {});
 
       // Broadcast SSE for live dashboard updates
       createdBookings.forEach(b => {
@@ -1451,8 +1440,7 @@ router.delete('/:id', async (req, res) => {
           .from('bookings')
           .update({ num_guests: remaining.length })
           .in('id', remaining.map(r => r.id));
-        if (countErr) console.warn('[bookings DELETE] Không cập nhật được num_guests của nhóm:', countErr.message);
-        else remaining.forEach(r => broadcast('booking.updated', { id: r.id, num_guests: remaining.length }));
+        if (!countErr) remaining.forEach(r => broadcast('booking.updated', { id: r.id, num_guests: remaining.length }));
       }
     }
 
@@ -1518,8 +1506,8 @@ async function fireWebhooks(event, bookings) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
-      } catch (err) {
-        console.warn(`[webhook] Gửi tới "${webhook.name}" thất bại:`, err.message);
+      } catch {
+        // Webhook lỗi / timeout: bỏ qua, vẫn gửi tiếp các webhook khác
       }
     }
   }

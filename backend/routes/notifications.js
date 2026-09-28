@@ -151,9 +151,8 @@ router.post('/send-test', async (req, res) => {
                 .filter(sub => !keepIds.has(sub.id))
                 .map(sub => sub.id);
             if (duplicateIds.length > 0) {
-                supabase.from('push_subscriptions').delete().in('id', duplicateIds)
-                    .then(() => console.log('✅ Duplicate subscriptions cleaned up'))
-                    .catch(err => console.error('❌ Failed to clean duplicates:', err));
+                // Query của Supabase chỉ chạy khi được .then() → giữ .then, bỏ qua lỗi dọn dẹp
+                supabase.from('push_subscriptions').delete().in('id', duplicateIds).then(() => {}, () => {});
             }
         }
 

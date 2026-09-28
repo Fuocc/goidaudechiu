@@ -29,14 +29,12 @@ async function bookingRateLimiter(req, res, next) {
 
   // A. Environment Variable / Dev Mode Bypass
   // if (process.env.DISABLE_RATE_LIMITER === 'true' || process.env.NODE_ENV === 'development') {
-  //   console.log('⚡ Rate limiter bypassed: Development mode or DISABLE_RATE_LIMITER=true');
   //   return next();
   // }
 
   // B. Localhost Loopback Bypass (127.0.0.1, ::1)
   // const isLocalIp = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
   // if (isLocalIp) {
-  //   console.log(`⚡ Rate limiter bypassed: Localhost developer IP (${ip})`);
   //   return next();
   // }
 
