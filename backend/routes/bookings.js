@@ -11,7 +11,6 @@ const {
   MAX_ONLINE_GUESTS, OVER_GUEST_LIMIT_MESSAGE, normalizeVnPhone, supportsClientIp,
   releaseActiveHoldsForIp, checkSlotBudget, computeSpamFlag
 } = require('../lib/antiSpam');
-const { TURNSTILE_FAILED_MESSAGE, verifyTurnstile } = require('../lib/turnstile');
 const { UNDO_RESTORE_FIELDS, UNDO_MAX_AGE_MS, fingerprintRow, verifyUndoAction } = require('../lib/undoToken');
 
 // ---- Kiểm tra dữ liệu đầu vào (dùng cho request từ landing page / chưa đăng nhập) ----
@@ -313,7 +312,7 @@ router.post('/hold', holdLimiter, async (req, res) => {
 
     const {
       branch_id, service_id, num_guests,
-      booking_date, start_time, hold_duration, turnstile_token
+      booking_date, start_time, hold_duration
     } = req.body || {};
 
     if (!branch_id || !booking_date || !start_time) {
@@ -328,13 +327,10 @@ router.post('/hold', holdLimiter, async (req, res) => {
     const isPublic = !req.auth;
     const ip = isPublic ? getClientIp(req) : null;
 
-    // Chống spam (khách tự đặt): giới hạn số khách, captcha, 1 bộ giữ chỗ / IP, ngân sách slot theo IP
+    // Chống spam (khách tự đặt): giới hạn số khách, 1 bộ giữ chỗ / IP, ngân sách slot theo IP
     if (isPublic) {
       if (guestCount > MAX_ONLINE_GUESTS) {
         return res.status(400).json({ code: 'TOO_MANY_GUESTS', error: OVER_GUEST_LIMIT_MESSAGE });
-      }
-      if (!(await verifyTurnstile(turnstile_token, ip))) {
-        return res.status(403).json({ code: 'TURNSTILE_FAILED', error: TURNSTILE_FAILED_MESSAGE });
       }
       const releasedIds = await releaseActiveHoldsForIp(supabase, ip);
       releasedIds.forEach(id => broadcast('booking.hold_released', { id }));
@@ -995,9 +991,6 @@ router.post('/', bookingRateLimiter, async (req, res) => {
       }
       if (toGuestCount(b.num_guests) > MAX_ONLINE_GUESTS) {
         return res.status(400).json({ code: 'TOO_MANY_GUESTS', error: OVER_GUEST_LIMIT_MESSAGE });
-      }
-      if (!(await verifyTurnstile(b.turnstile_token, ip))) {
-        return res.status(403).json({ code: 'TURNSTILE_FAILED', error: TURNSTILE_FAILED_MESSAGE });
       }
 
       const rawHoldIds = Array.isArray(b.hold_ids) ? b.hold_ids : (typeof b.hold_ids === 'string' ? [b.hold_ids] : []);

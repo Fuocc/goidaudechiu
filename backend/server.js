@@ -12,7 +12,6 @@ const {
   issueSseTicket,
   verifySseTicket
 } = require('./middleware/security');
-const { getTurnstileSiteKey } = require('./lib/turnstile');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -160,11 +159,6 @@ app.get('/api/events', (req, res) => {
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
-
-// Landing page lấy site key Turnstile (công khai). null → Turnstile đang tắt, không hiện widget.
-app.get('/api/turnstile/config', (req, res) => {
-  res.json({ site_key: getTurnstileSiteKey() });
 });
 
 // Serve static frontend files

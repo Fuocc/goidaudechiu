@@ -2212,12 +2212,3 @@ body {
   opacity: 0;
   animation: staggerFadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
-
-/* Cloudflare Turnstile — chỉ chiếm chỗ khi Cloudflare hiện ô xác minh */
-.turnstile-container {
-  margin-bottom: 16px;
-}
-
-.turnstile-container:empty {
-  display: none;
-}
