@@ -1066,6 +1066,97 @@
   font-weight: 600;
 }
 
+/* ---- Lịch nhóm khách (cùng group_booking_id) ---- */
+.cal-group-chip,
+.group-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: rgba(0, 0, 0, 0.08);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: #444;
+}
+
+.group-chip {
+  margin-left: 6px;
+  font-size: 11px;
+  vertical-align: middle;
+}
+
+/* Rê chuột vào 1 lịch → tô sáng các lịch cùng nhóm */
+.cal-booking-card-wrapper.is-group-highlight .cal-booking-card {
+  box-shadow: 0 0 0 2px rgba(17, 17, 17, 0.55);
+}
+
+tr.is-group-highlight td {
+  background: rgba(237, 211, 169, 0.25);
+}
+
+.badge-mixed {
+  background: var(--chip-gray);
+  color: var(--body-gray);
+  padding: 2px 8px;
+}
+
+/* Thẻ nhóm trên mobile: mỗi khách 1 dòng, bấm để mở đúng lịch của người đó */
+.booking-card-mobile.is-group {
+  cursor: default;
+}
+
+.booking-card-mobile.is-group:active {
+  transform: none;
+}
+
+.booking-card-mobile-members {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.booking-card-mobile-member {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--chip-gray);
+  border-radius: 8px;
+  background: #fafafa;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  color: var(--body-gray);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.booking-card-mobile-member:active {
+  background: var(--chip-gray);
+}
+
+.booking-card-mobile-member:disabled {
+  cursor: not-allowed;
+}
+
+.booking-card-mobile-member-staff {
+  font-weight: 600;
+  color: var(--black);
+  white-space: nowrap;
+}
+
+.booking-card-mobile-member-meta {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .list-booking-phone {
   font-size: 12px;
   color: var(--muted-gray, #afafaf);
@@ -1288,6 +1379,34 @@
 
 .drag-confirm-submit:hover {
   background: #333;
+}
+
+/* Lịch nhóm: thêm lựa chọn "Chỉ khách này" bên cạnh "Dời cả nhóm" */
+.drag-confirm-group-note {
+  margin: 20px 0 0;
+  font-size: 14px;
+  color: #555;
+}
+
+.drag-confirm-popup:has(.drag-confirm-alt) .drag-confirm-actions {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.drag-confirm-alt {
+  background: #fff;
+  color: #111;
+  border: 1px solid #d0d0d0;
+  padding: 12px 20px;
+  border-radius: 24px;
+  cursor: pointer;
+  font-weight: 500;
+  font-size: 15px;
+  transition: background 0.2s;
+}
+
+.drag-confirm-alt:hover {
+  background: #f5f5f5;
 }
 
 /* Disabled submit button style */

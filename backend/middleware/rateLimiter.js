@@ -1,5 +1,6 @@
 const supabase = require('../supabaseClient');
 const { getClientIp } = require('./security');
+const { normalizeVnPhone, maskPhone } = require('../lib/antiSpam');
 
 // In-memory store for IP rate limiting
 // Key: IP, Value: Array of timestamps of booking attempts
@@ -54,7 +55,7 @@ async function bookingRateLimiter(req, res, next) {
   const recentIpAttempts = ipTimestamps.filter(t => now - t < WINDOW_MS);
 
   if (recentIpAttempts.length >= MAX_LIMIT) {
-
+    console.warn(`[rateLimit] Chặn IP ${ip}: quá ${MAX_LIMIT} lần đặt lịch / 5 phút`);
     return res.status(429).json({
       error: 'Bạn đã đặt lịch quá 3 lần trong vòng 5 phút từ thiết bị này. Vui lòng đợi 5 phút hoặc liên hệ hotline/Zalo để được hỗ trợ nhanh nhất.'
     });
@@ -62,7 +63,8 @@ async function bookingRateLimiter(req, res, next) {
 
   // 2) --- Phone-based Rate Limiting ---
   if (customer_phone) {
-    const cleanPhone = customer_phone.trim();
+    // So theo dạng đã chuẩn hóa (route lưu SĐT dạng 0xxxxxxxxx) → '0912 345 678' và '0912345678' là cùng 1 số
+    const cleanPhone = normalizeVnPhone(customer_phone) || customer_phone.trim();
     // Do not rate limit placeholder walk-in phones (e.g. 0000000000)
     const isWalkIn = /^0+$/.test(cleanPhone);
 
@@ -78,10 +80,10 @@ async function bookingRateLimiter(req, res, next) {
           .gte('created_at', fiveMinAgo);
 
         if (error) {
-
           // Do not block the booking if database error occurs during check
+          console.error('[rateLimit] Không kiểm tra được giới hạn theo SĐT:', error.message);
         } else if (recentBookings && recentBookings.length >= MAX_LIMIT) {
-
+          console.warn(`[rateLimit] Chặn SĐT ${maskPhone(cleanPhone)} (IP ${ip}): đã có ${recentBookings.length} lịch / 5 phút`);
           return res.status(429).json({
             error: 'Số điện thoại này đã đặt 3 lịch hẹn trong 5 phút qua. Vui lòng đợi 5 phút hoặc liên hệ hotline/Zalo để được hỗ trợ nhanh nhất.'
           });

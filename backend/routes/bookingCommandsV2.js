@@ -733,6 +733,7 @@ async function executeTool(toolName, params, context) {
         return {
           ...bookingParams,
           branch_id,
+          num_guests,
           group_booking_id,
           employee_id: empId
         };
@@ -1770,7 +1771,6 @@ ${employeesStr}
     loopCount++;
 
     let response;
-    const geminiStartedAt = Date.now();
     try {
       response = await ai.models.generateContent({
         model: GEMINI_MODEL,
@@ -1781,7 +1781,6 @@ ${employeesStr}
           thinkingConfig: GEMINI_THINKING
         }
       });
-      console.log(`[command-v2] Gemini lượt ${loopCount}: ${Date.now() - geminiStartedAt}ms`);
     } catch (err) {
       // Nếu đã có thao tác thành công trước khi Gemini lỗi → vẫn trả kết quả để người dùng biết & hoàn tác được
       const partialNote = actions.length ? ' Một số thao tác đã được thực hiện trước khi lỗi — vui lòng kiểm tra lại lịch.' : '';
@@ -1817,7 +1816,6 @@ ${employeesStr}
         let toolResult;
         toolCallCounts[toolCall.name] = (toolCallCounts[toolCall.name] || 0) + 1;
         const limit = TOOL_LIMITS_PER_COMMAND[toolCall.name];
-        const toolStartedAt = Date.now();
         try {
           if (limit && toolCallCounts[toolCall.name] > limit) {
             toolResult = { error: `Vượt giới hạn ${limit} lần ${toolCall.name} trong một lệnh. Dừng lại và báo người dùng tách lệnh thành nhiều lần.` };
@@ -1835,7 +1833,6 @@ ${employeesStr}
           console.error(`[command-v2] Tool ${toolCall.name} lỗi:`, toolErr);
           toolResult = { error: `Lỗi hệ thống khi chạy ${toolCall.name}. Hãy báo lại cho người dùng, không thử lại.` };
         }
-        console.log(`[command-v2] tool ${toolCall.name}: ${Date.now() - toolStartedAt}ms`);
 
         toolLog.push({ tool: toolCall.name, params: toolCall.args, result: toolResult });
         const action = buildAction(toolCall.name, toolResult);

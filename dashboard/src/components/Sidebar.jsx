@@ -313,15 +313,16 @@ function Sidebar({ user, onLogout }) {
     // Chi nhánh đã tắt thông báo trong Cài đặt cá nhân → không kêu chuông
     if (booking.branch_id && mutedBranchIds.includes(booking.branch_id)) return;
 
-    // Dedup: skip if this booking was already processed recently
-    const bookingId = booking.id;
-    if (bookingId && processedBookingsRef.current.has(bookingId)) {
+    // Dedup: skip if this booking was already processed recently.
+    // Nhóm khách (cùng group_booking_id) tạo nhiều lịch cùng lúc → chỉ kêu chuông 1 lần cho cả nhóm.
+    const dedupKey = booking.group_booking_id || booking.id;
+    if (dedupKey && processedBookingsRef.current.has(dedupKey)) {
       return;
     }
-    if (bookingId) {
-      processedBookingsRef.current.add(bookingId);
+    if (dedupKey) {
+      processedBookingsRef.current.add(dedupKey);
       // Auto-cleanup after 10 seconds to prevent memory leak
-      setTimeout(() => processedBookingsRef.current.delete(bookingId), 10000);
+      setTimeout(() => processedBookingsRef.current.delete(dedupKey), 10000);
     }
 
     // Play a gentle soft bell sound

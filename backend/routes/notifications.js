@@ -152,8 +152,9 @@ router.post('/send-test', async (req, res) => {
                 .map(sub => sub.id);
             if (duplicateIds.length > 0) {
                 supabase.from('push_subscriptions').delete().in('id', duplicateIds)
-                    .then(() => console.log('✅ Duplicate subscriptions cleaned up'))
-                    .catch(err => console.error('❌ Failed to clean duplicates:', err));
+                    .then(({ error }) => {
+                        if (error) console.error('[push] Không xóa được subscription trùng:', error.message);
+                    });
             }
         }
 
@@ -242,7 +243,8 @@ router.get('/dashboard', async (req, res) => {
             const { data: groupBookings, error: grpError } = await supabase
                 .from('bookings')
                 .select('id, group_booking_id')
-                .in('group_booking_id', groupBookingIds);
+                .in('group_booking_id', groupBookingIds)
+                .neq('status', 'cancelled');
 
             if (!grpError && groupBookings) {
                 groupBookings.forEach(b => {

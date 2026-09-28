@@ -9,7 +9,7 @@ import {
 
 import { subscribeRealtime, REALTIME_RECONNECTED } from '../realtime';
 import { shortBranchName } from '../utils/format';
-import { isHoldBooking } from '../utils/booking';
+import { isHoldBooking, isSpamWarningBooking } from '../utils/booking';
 import { describeError } from '../utils/notify';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useModalA11y } from '../hooks/useModalA11y';
@@ -305,8 +305,11 @@ function Bookings() {
         // Show confirmation popup
         const fromStart = formatTime(cardDrag.booking.start_time);
         const fromEnd = formatTime(cardDrag.booking.end_time);
+        const bk = cardDrag.booking;
         setDragConfirm({
-          booking: cardDrag.booking,
+          booking: bk,
+          groupSize: bk.group_booking_id ? bookings.filter(b => b.group_booking_id === bk.group_booking_id).length : 0,
+          timingChanged: timeToMinutes(newStart) !== origStartMin,
           fromStaff: fromStaffName,
           fromTime: `${fromStart} — ${fromEnd}`,
           toStaff: toStaffName,
@@ -326,7 +329,7 @@ function Bookings() {
       window.removeEventListener('mousemove', handleMouseMove, true);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [cardDrag, currentDate]);
+  }, [cardDrag, currentDate, bookings]);
 
   useEffect(() => {
     if (!showCalendar) return;
@@ -453,11 +456,55 @@ function Bookings() {
     setCurrentDate(d);
   };
 
+  // Các lịch cùng nhóm khách (cùng group_booking_id) đang hiển thị trong ngày, kể cả chính lịch đó
+  const getGroupMembers = (booking) => (
+    booking?.group_booking_id ? bookings.filter(b => b.group_booking_id === booking.group_booking_id) : []
+  );
+
+  // Lịch nhóm đổi ngày/giờ → hỏi. Trả true (dời cả nhóm) / false (chỉ khách này) / null (không lưu)
+  const askMoveGroup = async (groupSize) => {
+    const choice = await confirmDialog({
+      title: 'Lịch nhóm',
+      message: `Lịch này thuộc nhóm ${groupSize} khách. Dời giờ cho cả nhóm hay chỉ khách này?`,
+      confirmText: `Dời cả nhóm (${groupSize})`,
+      altText: 'Chỉ khách này',
+      cancelText: 'Không lưu'
+    });
+    if (!choice) return null;
+    return choice === true;
+  };
+
+  const notifySaved = (saved, fallbackMsg) => {
+    const movedSiblings = saved?.group_updated_ids?.length || 0;
+    notify(movedSiblings > 0 ? `Đã dời cả nhóm ${movedSiblings + 1} khách!` : fallbackMsg);
+    if (saved?.group_failed_count > 0) {
+      toast.warn(`Có ${saved.group_failed_count} lịch trong nhóm chưa dời được, vui lòng kiểm tra lại.`);
+    }
+  };
+
   const handleCancel = async (id) => {
-    if (!(await confirmDialog({ message: 'Bạn có chắc muốn hủy lịch hẹn này?', confirmText: 'Hủy lịch', cancelText: 'Không', danger: true }))) return;
+    const booking = bookings.find(b => b.id === id) || detailModal;
+    const groupSize = getGroupMembers(booking).length;
+
+    let group = false;
+    if (groupSize > 1) {
+      const choice = await confirmDialog({
+        title: 'Hủy lịch nhóm',
+        message: `Lịch này thuộc nhóm ${groupSize} khách. Hủy cả nhóm hay chỉ khách này?`,
+        confirmText: `Hủy cả nhóm (${groupSize})`,
+        altText: 'Chỉ khách này',
+        cancelText: 'Không',
+        danger: true
+      });
+      if (!choice) return;
+      group = choice === true;
+    } else if (!(await confirmDialog({ message: 'Bạn có chắc muốn hủy lịch hẹn này?', confirmText: 'Hủy lịch', cancelText: 'Không', danger: true }))) {
+      return;
+    }
+
     try {
-      await deleteBooking(id);
-      notify('Đã hủy lịch hẹn thành công!');
+      await deleteBooking(id, { group });
+      notify(group ? `Đã hủy cả nhóm ${groupSize} khách!` : 'Đã hủy lịch hẹn thành công!');
       loadBookings();
       setDetailModal(null);
     } catch (err) {
@@ -558,7 +605,7 @@ function Bookings() {
     }
   };
 
-  const handleDragConfirm = async () => {
+  const handleDragConfirm = async (applyToGroup = false) => {
     if (!dragConfirm) return;
     try {
       const bk = dragConfirm.booking;
@@ -568,10 +615,11 @@ function Bookings() {
         employee_id: dragConfirm.toStaffId,
         start_time: dragConfirm.newStart,
         end_time: dragConfirm.newEnd,
-        booking_date: dragConfirm.newDate
+        booking_date: dragConfirm.newDate,
+        apply_to_group: applyToGroup
       });
       if (saved) {
-        notify('Đã cập nhật lịch hẹn!');
+        notifySaved(saved, 'Đã cập nhật lịch hẹn!');
         loadBookings();
       }
     } catch (err) {
@@ -938,6 +986,17 @@ function Bookings() {
       return;
     }
 
+    // Lịch nhóm đổi ngày/giờ bắt đầu → hỏi dời cả nhóm hay chỉ khách này
+    let applyToGroup = false;
+    const groupSize = getGroupMembers(detailModal).length;
+    const timingChanged = detailEdit.booking_date !== detailModal.booking_date
+      || detailEdit.start_time !== (detailModal.start_time || '').substring(0, 5);
+    if (groupSize > 1 && timingChanged) {
+      const choice = await askMoveGroup(groupSize);
+      if (choice === null) return;
+      applyToGroup = choice;
+    }
+
     setDetailSaving(true);
     try {
       // 1. Update Booking
@@ -949,7 +1008,8 @@ function Bookings() {
         end_time: detailEdit.end_time,
         employee_id: detailEdit.employee_id,
         notes: detailEdit.notes,
-        customer_id: detailEdit.customer_id || null
+        customer_id: detailEdit.customer_id || null,
+        apply_to_group: applyToGroup
       };
 
       if (!bookingUpdate.customer_id && detailEdit.customer_name) {
@@ -981,9 +1041,7 @@ function Bookings() {
       // update list in UI immediately
       loadBookings();
 
-      if (typeof notify === 'function') {
-        notify('Cập nhật thành công!');
-      }
+      notifySaved(updated, 'Cập nhật thành công!');
 
       setDetailModal(null);
     } catch (err) {
@@ -1142,6 +1200,28 @@ function Bookings() {
     return map;
   }, [bookings]);
 
+  // Vị trí từng lịch trong nhóm khách → chip "1/3" trên lưới lịch và bảng.
+  // Thứ tự trong nhóm: giờ bắt đầu, rồi thứ tự cột nhân viên. Nhóm chỉ còn 1 lịch thì không hiện chip.
+  const groupInfoById = useMemo(() => {
+    const byGroup = new Map();
+    for (const b of bookings) {
+      if (!b.group_booking_id) continue;
+      if (!byGroup.has(b.group_booking_id)) byGroup.set(b.group_booking_id, []);
+      byGroup.get(b.group_booking_id).push(b);
+    }
+    const empOrder = new Map(employees.map((e, i) => [e.id, i]));
+    const info = new Map();
+    for (const [groupId, members] of byGroup) {
+      if (members.length < 2) continue;
+      const sorted = [...members].sort((a, b) =>
+        (a.start_time || '').localeCompare(b.start_time || '') ||
+        (empOrder.get(a.employee_id) ?? Infinity) - (empOrder.get(b.employee_id) ?? Infinity)
+      );
+      sorted.forEach((m, i) => info.set(m.id, { groupId, index: i + 1, size: sorted.length }));
+    }
+    return info;
+  }, [bookings, employees]);
+
   // Mobile list view: gộp các lịch cùng group_booking_id (khách đi nhóm) thành 1 card
   const mobileListItems = useMemo(() => {
     const groups = new Map();
@@ -1158,11 +1238,17 @@ function Bookings() {
       const sorted = [...members].sort(byStart);
       const lead = sorted[0];
       const endTime = sorted.reduce((max, m) => ((m.end_time || '') > max ? m.end_time : max), lead.end_time || '');
+      const statuses = unique(sorted.map(m => m.status));
       return {
         key,
         lead,
+        members: sorted,
         ids: sorted.map(m => m.id),
         guestCount: sorted.length,
+        // Trạng thái chung: tất cả giống nhau → trạng thái đó, khác nhau → 'mixed'
+        status: statuses.length === 1 ? statuses[0] : 'mixed',
+        hasSpamWarning: sorted.some(isSpamWarningBooking),
+        isHold: sorted.every(isHoldBooking),
         endTime,
         serviceNames: unique(sorted.map(m => m.services?.name)).join(' + '),
         notes: unique(sorted.map(m => m.notes)),
@@ -1204,6 +1290,7 @@ function Bookings() {
           employees={employees}
           filterBranch={filterBranch}
           gridRef={gridRef}
+          groupInfoById={groupInfoById}
           handleCardDragStart={handleCardDragStart}
           handleColumnHover={handleColumnHover}
           handleDragStart={handleDragStart}
@@ -1219,6 +1306,7 @@ function Bookings() {
         /* List View */
         <BookingListView
           bookings={bookings}
+          groupInfoById={groupInfoById}
           handleOpenDetail={handleOpenDetail}
           handleRetryLoad={handleRetryLoad}
           isMobile={isMobile}

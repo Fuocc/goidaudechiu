@@ -94,7 +94,9 @@ export const getBookingsRange = (dateFrom, dateTo, branchId) => {
 export const createBooking = (data) => request('/bookings', { method: 'POST', body: JSON.stringify(data) });
 export const updateBookingStatus = (id, status) => request(`/bookings/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) });
 export const updateBooking = (id, data) => request(`/bookings/${id}`, { method: 'PUT', body: JSON.stringify(data) });
-export const deleteBooking = (id) => request(`/bookings/${id}`, { method: 'DELETE' });
+// { group: true } → xóa luôn các lịch cùng nhóm khách
+export const deleteBooking = (id, { group = false } = {}) =>
+  request(`/bookings/${id}${group ? '?group=1' : ''}`, { method: 'DELETE' });
 
 // Availability
 export const getAvailability = (params) => {

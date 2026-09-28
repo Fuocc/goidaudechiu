@@ -18,6 +18,7 @@ const DISABLE_AFTER_TIME = '20:15';
 const SPA_CLOSE_HOUR = 22; // 22:00 PM (10:00 PM) closing hour of the spa
 const SKIP_DURATION_MINUTES = 60;
 const CUSTOMER_STORAGE_KEY = 'spa_booking_customer';
+const MAX_ONLINE_GUESTS = 4; // khớp MAX_ONLINE_GUESTS ở backend/lib/antiSpam.js
 
 
 
@@ -116,7 +117,8 @@ function getParams() {
     time: p.get('time') || null,
     time_end: p.get('time_end') || null,
     branch_id: p.get('branch_id') || null,
-    guests: parseInt(p.get('guests') || '1', 10),
+    // Đặt online tối đa 4 khách (backend cũng chặn) — URL tự sửa tay số lớn hơn thì kẹp lại
+    guests: Math.min(Math.max(parseInt(p.get('guests') || '1', 10) || 1, 1), MAX_ONLINE_GUESTS),
   };
 }
 
@@ -2424,8 +2426,10 @@ async function handleHoldState(params) {
       });
 
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Giữ chỗ thất bại');
+        const err = await res.json().catch(() => ({}));
+        const holdError = new Error(err.error || 'Giữ chỗ thất bại');
+        holdError.showToUser = !!err.error && res.status !== 500;
+        throw holdError;
       }
 
       const data = await res.json();
@@ -2449,7 +2453,8 @@ async function handleHoldState(params) {
       // Only alert and redirect if the user is still on the customerinfo step
       const currentParams = getParams();
       if (currentParams.step === STEPS.CUSTOMERINFO) {
-        alert('Khung giờ này đã bị giữ hoặc hết chỗ. Vui lòng chọn khung giờ khác!');
+        // Lỗi có lý do cụ thể từ server (quá số khách, quá giới hạn, xác minh thất bại...) → hiện đúng lý do đó
+        alert(err.showToUser ? err.message : 'Khung giờ này đã bị giữ hoặc hết chỗ. Vui lòng chọn khung giờ khác!');
         navigateTo(STEPS.TIME);
       }
     } finally {

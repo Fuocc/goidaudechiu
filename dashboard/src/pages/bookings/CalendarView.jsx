@@ -1,8 +1,8 @@
 import { isHoldBooking, isSpamWarningBooking } from '../../utils/booking';
 import { Tooltip } from '../../components/ui/tooltip';
-import { FiAlertTriangle } from 'react-icons/fi';
+import { FiAlertTriangle, FiUsers } from 'react-icons/fi';
 import { WEEKDAY_MIN_OPEN_MINUTES } from '../../config/business';
-import { OPEN_HOUR, CLOSE_HOUR, HOURS, ROW_HEIGHT, toDateStr, timeToMinutes, getBookingColor, formatTime, convertYToTime } from './helpers';
+import { OPEN_HOUR, CLOSE_HOUR, HOURS, ROW_HEIGHT, toDateStr, timeToMinutes, getBookingColor, formatTime, convertYToTime, setGroupHighlight } from './helpers';
 import noteIcon from '../../assets/note-icon.svg';
 
 // Dạng lưới lịch theo nhân viên: kéo tạo lịch, kéo đổi lịch, vạch giờ hiện tại
@@ -17,6 +17,7 @@ export default function CalendarView({
   employees,
   filterBranch,
   gridRef,
+  groupInfoById,
   handleCardDragStart,
   handleColumnHover,
   handleDragStart,
@@ -266,11 +267,15 @@ export default function CalendarView({
 
                           const isHold = isHoldBooking(b);
                           const isSpamWarning = isSpamWarningBooking(b);
+                          const groupInfo = groupInfoById.get(b.id);
 
                           return (
                             <div
                               key={b.id}
                               id={`booking-card-${b.id}`}
+                              data-group-id={groupInfo?.groupId}
+                              onMouseEnter={groupInfo ? () => setGroupHighlight(groupInfo.groupId, true) : undefined}
+                              onMouseLeave={groupInfo ? () => setGroupHighlight(groupInfo.groupId, false) : undefined}
                               className={`cal-booking-card-wrapper${cardDrag && cardDrag.booking.id === b.id ? ' is-original-placeholder' : ''}${isSpamWarning ? ' is-spam-warning' : ''}${isHold ? ' is-hold-disabled' : ''}`}
                               style={{
                                 position: 'absolute',
@@ -295,6 +300,11 @@ export default function CalendarView({
                                 )}
                                 <div className="cal-booking-name" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                                   {isSpamWarning && <FiAlertTriangle size={12} className="cal-alert-icon" />}
+                                  {groupInfo && (
+                                    <span className="cal-group-chip" title={`Nhóm ${groupInfo.size} khách`}>
+                                      <FiUsers size={10} /> {groupInfo.index}/{groupInfo.size}
+                                    </span>
+                                  )}
                                   {b.temporary_name || b.customers?.name}
                                 </div>
                                 <div className="cal-booking-service">{b.services?.name}</div>
