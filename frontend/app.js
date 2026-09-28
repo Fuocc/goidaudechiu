@@ -18,6 +18,7 @@ const DISABLE_AFTER_TIME = '20:15';
 const SPA_CLOSE_HOUR = 22; // 22:00 PM (10:00 PM) closing hour of the spa
 const SKIP_DURATION_MINUTES = 60;
 const CUSTOMER_STORAGE_KEY = 'spa_booking_customer';
+const MAX_ONLINE_GUESTS = 4; // khớp MAX_ONLINE_GUESTS ở backend/lib/antiSpam.js
 
 
 
@@ -116,7 +117,8 @@ function getParams() {
     time: p.get('time') || null,
     time_end: p.get('time_end') || null,
     branch_id: p.get('branch_id') || null,
-    guests: parseInt(p.get('guests') || '1', 10),
+    // Đặt online tối đa 4 khách (backend cũng chặn) — URL tự sửa tay số lớn hơn thì kẹp lại
+    guests: Math.min(Math.max(parseInt(p.get('guests') || '1', 10) || 1, 1), MAX_ONLINE_GUESTS),
   };
 }
 
@@ -1845,6 +1847,8 @@ async function handleSubmit(e) {
   };
 
   try {
+    payload.turnstile_token = await getTurnstileToken();
+
     const res = await fetch(`${API_BASE}/bookings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2117,6 +2121,111 @@ function checkBookingBlock() {
     });
     return false;
   }
+}
+
+// =============================================
+// Cloudflare Turnstile (chống bot đặt lịch ảo)
+// Site key lấy từ backend; backend chưa cấu hình → getTurnstileToken() trả null, không hiện widget.
+// Mỗi token chỉ dùng được 1 lần → giữ chỗ và đặt lịch mỗi bước lấy 1 token mới.
+// =============================================
+
+const TURNSTILE_WAIT_MS = 2 * 60 * 1000; // đủ lâu cho khách bấm ô xác minh nếu Cloudflare yêu cầu
+
+const turnstileState = {
+  configPromise: null,
+  scriptPromise: null,
+  widgetId: null,
+  token: null,
+  challenging: false,
+  waiters: []
+};
+
+function loadTurnstileSiteKey() {
+  if (!turnstileState.configPromise) {
+    turnstileState.configPromise = fetch(`${API_BASE}/turnstile/config`)
+      .then(res => (res.ok ? res.json() : {}))
+      .then(data => data.site_key || null)
+      .catch(() => {
+        turnstileState.configPromise = null; // lỗi mạng → lần sau thử lại
+        return null;
+      });
+  }
+  return turnstileState.configPromise;
+}
+
+function loadTurnstileScript() {
+  if (!turnstileState.scriptPromise) {
+    turnstileState.scriptPromise = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+      script.async = true;
+      script.onload = () => resolve();
+      script.onerror = () => {
+        turnstileState.scriptPromise = null;
+        reject(turnstileError('Không tải được bước xác minh. Vui lòng kiểm tra mạng và thử lại.'));
+      };
+      document.head.appendChild(script);
+    });
+  }
+  return turnstileState.scriptPromise;
+}
+
+// Lỗi xác minh có thông báo dành cho khách (showToUser) → nơi gọi hiện nguyên văn
+function turnstileError(message) {
+  const err = new Error(message);
+  err.showToUser = true;
+  return err;
+}
+
+function settleTurnstileWaiters(token, error) {
+  const waiters = turnstileState.waiters;
+  turnstileState.waiters = [];
+  waiters.forEach(w => (error ? w.reject(error) : w.resolve(token)));
+}
+
+async function getTurnstileToken() {
+  const siteKey = await loadTurnstileSiteKey();
+  if (!siteKey) return null;
+  await loadTurnstileScript();
+
+  // Token đang có sẵn và chưa dùng → dùng luôn
+  if (turnstileState.token) {
+    const token = turnstileState.token;
+    turnstileState.token = null;
+    return token;
+  }
+
+  if (turnstileState.widgetId === null) {
+    turnstileState.challenging = true;
+    turnstileState.widgetId = window.turnstile.render('#turnstile-container', {
+      sitekey: siteKey,
+      appearance: 'interaction-only', // chỉ hiện ô xác minh khi Cloudflare nghi ngờ
+      callback: (token) => {
+        turnstileState.challenging = false;
+        if (turnstileState.waiters.length > 0) settleTurnstileWaiters(token);
+        else turnstileState.token = token;
+      },
+      'expired-callback': () => { turnstileState.token = null; },
+      'error-callback': () => {
+        turnstileState.challenging = false;
+        settleTurnstileWaiters(null, turnstileError('Không xác minh được thiết bị của bạn. Vui lòng tải lại trang và thử lại.'));
+      }
+    });
+  } else if (!turnstileState.challenging) {
+    // Token trước đã dùng → chạy lại bước xác minh để lấy token mới
+    turnstileState.challenging = true;
+    window.turnstile.reset(turnstileState.widgetId);
+  }
+
+  return new Promise((resolve, reject) => {
+    const waiter = { resolve, reject };
+    turnstileState.waiters.push(waiter);
+    setTimeout(() => {
+      if (!turnstileState.waiters.includes(waiter)) return;
+      turnstileState.waiters = turnstileState.waiters.filter(w => w !== waiter);
+      reject(turnstileError('Hết thời gian xác minh. Vui lòng thử lại.'));
+    }, TURNSTILE_WAIT_MS);
+  });
 }
 
 // =============================================
@@ -2414,7 +2523,8 @@ async function handleHoldState(params) {
         num_guests: params.guests,
         booking_date: params.date,
         start_time: params.time,
-        hold_duration: holdDuration
+        hold_duration: holdDuration,
+        turnstile_token: await getTurnstileToken()
       };
 
       const res = await fetch(`${API_BASE}/bookings/hold`, {
@@ -2424,8 +2534,10 @@ async function handleHoldState(params) {
       });
 
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Giữ chỗ thất bại');
+        const err = await res.json().catch(() => ({}));
+        const holdError = new Error(err.error || 'Giữ chỗ thất bại');
+        holdError.showToUser = !!err.error && res.status !== 500;
+        throw holdError;
       }
 
       const data = await res.json();
@@ -2449,7 +2561,8 @@ async function handleHoldState(params) {
       // Only alert and redirect if the user is still on the customerinfo step
       const currentParams = getParams();
       if (currentParams.step === STEPS.CUSTOMERINFO) {
-        alert('Khung giờ này đã bị giữ hoặc hết chỗ. Vui lòng chọn khung giờ khác!');
+        // Lỗi có lý do cụ thể từ server (quá số khách, quá giới hạn, xác minh thất bại...) → hiện đúng lý do đó
+        alert(err.showToUser ? err.message : 'Khung giờ này đã bị giữ hoặc hết chỗ. Vui lòng chọn khung giờ khác!');
         navigateTo(STEPS.TIME);
       }
     } finally {

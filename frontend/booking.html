@@ -131,6 +131,9 @@
                     placeholder="Hãy note cho Ý biết điều gì sẽ mang lại nhiều dễ chịu nhất cho bạn nhé..."></textarea>
                 </div>
 
+                <!-- Cloudflare Turnstile: chỉ hiện ô xác minh khi Cloudflare nghi ngờ bot (xem getTurnstileToken trong app.js) -->
+                <div id="turnstile-container" class="turnstile-container"></div>
+
                 <button type="submit" class="btn-primary" id="btn-submit">Đặt Lịch</button>
                 <p class="form-note">
                   Bạn sẽ nhận được SMS hoặc email xác nhận sau khi đã đặt lịch thành công
