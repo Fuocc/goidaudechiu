@@ -108,3 +108,11 @@ export const calculateEndTime = (startTime, duration) => {
   const endM = String(totalMinutes % 60).padStart(2, '0');
   return `${endH}:${endM}`;
 };
+
+// Rê chuột vào 1 lịch của nhóm khách → tô sáng mọi lịch cùng nhóm (các cột nhân viên khác / các dòng khác).
+// Đổi class trực tiếp trên DOM thay vì state để không render lại cả lưới lịch mỗi lần rê chuột.
+export const setGroupHighlight = (groupId, on) => {
+  if (!groupId) return;
+  document.querySelectorAll(`[data-group-id="${groupId}"]`)
+    .forEach(el => el.classList.toggle('is-group-highlight', on));
+};

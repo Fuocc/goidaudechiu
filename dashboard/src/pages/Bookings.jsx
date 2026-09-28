@@ -9,7 +9,7 @@ import {
 
 import { subscribeRealtime, REALTIME_RECONNECTED } from '../realtime';
 import { shortBranchName } from '../utils/format';
-import { isHoldBooking } from '../utils/booking';
+import { isHoldBooking, isSpamWarningBooking } from '../utils/booking';
 import { describeError } from '../utils/notify';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useModalA11y } from '../hooks/useModalA11y';
@@ -1200,6 +1200,28 @@ function Bookings() {
     return map;
   }, [bookings]);
 
+  // Vị trí từng lịch trong nhóm khách → chip "1/3" trên lưới lịch và bảng.
+  // Thứ tự trong nhóm: giờ bắt đầu, rồi thứ tự cột nhân viên. Nhóm chỉ còn 1 lịch thì không hiện chip.
+  const groupInfoById = useMemo(() => {
+    const byGroup = new Map();
+    for (const b of bookings) {
+      if (!b.group_booking_id) continue;
+      if (!byGroup.has(b.group_booking_id)) byGroup.set(b.group_booking_id, []);
+      byGroup.get(b.group_booking_id).push(b);
+    }
+    const empOrder = new Map(employees.map((e, i) => [e.id, i]));
+    const info = new Map();
+    for (const [groupId, members] of byGroup) {
+      if (members.length < 2) continue;
+      const sorted = [...members].sort((a, b) =>
+        (a.start_time || '').localeCompare(b.start_time || '') ||
+        (empOrder.get(a.employee_id) ?? Infinity) - (empOrder.get(b.employee_id) ?? Infinity)
+      );
+      sorted.forEach((m, i) => info.set(m.id, { groupId, index: i + 1, size: sorted.length }));
+    }
+    return info;
+  }, [bookings, employees]);
+
   // Mobile list view: gộp các lịch cùng group_booking_id (khách đi nhóm) thành 1 card
   const mobileListItems = useMemo(() => {
     const groups = new Map();
@@ -1216,11 +1238,17 @@ function Bookings() {
       const sorted = [...members].sort(byStart);
       const lead = sorted[0];
       const endTime = sorted.reduce((max, m) => ((m.end_time || '') > max ? m.end_time : max), lead.end_time || '');
+      const statuses = unique(sorted.map(m => m.status));
       return {
         key,
         lead,
+        members: sorted,
         ids: sorted.map(m => m.id),
         guestCount: sorted.length,
+        // Trạng thái chung: tất cả giống nhau → trạng thái đó, khác nhau → 'mixed'
+        status: statuses.length === 1 ? statuses[0] : 'mixed',
+        hasSpamWarning: sorted.some(isSpamWarningBooking),
+        isHold: sorted.every(isHoldBooking),
         endTime,
         serviceNames: unique(sorted.map(m => m.services?.name)).join(' + '),
         notes: unique(sorted.map(m => m.notes)),
@@ -1262,6 +1290,7 @@ function Bookings() {
           employees={employees}
           filterBranch={filterBranch}
           gridRef={gridRef}
+          groupInfoById={groupInfoById}
           handleCardDragStart={handleCardDragStart}
           handleColumnHover={handleColumnHover}
           handleDragStart={handleDragStart}
@@ -1277,6 +1306,7 @@ function Bookings() {
         /* List View */
         <BookingListView
           bookings={bookings}
+          groupInfoById={groupInfoById}
           handleOpenDetail={handleOpenDetail}
           handleRetryLoad={handleRetryLoad}
           isMobile={isMobile}

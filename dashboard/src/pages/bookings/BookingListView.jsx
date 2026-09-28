@@ -1,11 +1,15 @@
 import { isHoldBooking, isSpamWarningBooking, bookingStatusLabel } from '../../utils/booking';
-import { FiCalendar, FiAlertTriangle } from 'react-icons/fi';
-import { formatPrice, formatTime } from './helpers';
+import { FiCalendar, FiAlertTriangle, FiUsers } from 'react-icons/fi';
+import { formatPrice, formatTime, setGroupHighlight } from './helpers';
+
+// Trạng thái chung của thẻ nhóm: các khách khác trạng thái nhau → 'mixed'
+const groupStatusLabel = (status) => (status === 'mixed' ? 'Nhiều trạng thái' : bookingStatusLabel(status));
 
 // Dạng danh sách: bảng (desktop) hoặc thẻ gộp theo nhóm khách (mobile)
 // Component trình bày: state + handler vẫn nằm ở Bookings.jsx, truyền vào qua props.
 export default function BookingListView({
   bookings,
+  groupInfoById,
   handleOpenDetail,
   handleRetryLoad,
   isMobile,
@@ -71,10 +75,27 @@ export default function BookingListView({
                       </td>
                     </tr>
                   ) : (
-                    bookings.map(b => (
-                        <tr key={b.id} id={`booking-card-${b.id}`} onClick={() => handleOpenDetail(b)} className={`cursor-pointer${isSpamWarningBooking(b) ? ' row-spam-warning' : ''}${isHoldBooking(b) ? ' is-hold-disabled' : ''}`}>
+                    bookings.map(b => {
+                      const groupInfo = groupInfoById.get(b.id);
+                      return (
+                        <tr
+                          key={b.id}
+                          id={`booking-card-${b.id}`}
+                          data-group-id={groupInfo?.groupId}
+                          onMouseEnter={groupInfo ? () => setGroupHighlight(groupInfo.groupId, true) : undefined}
+                          onMouseLeave={groupInfo ? () => setGroupHighlight(groupInfo.groupId, false) : undefined}
+                          onClick={() => handleOpenDetail(b)}
+                          className={`cursor-pointer${isSpamWarningBooking(b) ? ' row-spam-warning' : ''}${isHoldBooking(b) ? ' is-hold-disabled' : ''}`}
+                        >
                           <td>
-                            <div className="list-booking-name">{b.temporary_name || b.customers?.name || '-'}</div>
+                            <div className="list-booking-name">
+                              {b.temporary_name || b.customers?.name || '-'}
+                              {groupInfo && (
+                                <span className="group-chip" title={`Khách ${groupInfo.index} trong nhóm ${groupInfo.size} khách`}>
+                                  <FiUsers size={11} /> Nhóm {groupInfo.size}
+                                </span>
+                              )}
+                            </div>
                             <div className="list-booking-phone">{b.customers?.phone || ''}</div>
                           </td>
                           <td>{b.services?.name || '-'}</td>
@@ -91,7 +112,8 @@ export default function BookingListView({
                           </td>
                           <td className="list-booking-price">{formatPrice(b.total_price)}</td>
                         </tr>
-                      ))
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -130,28 +152,52 @@ export default function BookingListView({
                   <p>Chưa có lịch hẹn nào trong ngày này</p>
                 </div>
               ) : (
-                mobileListItems.map(({ key, lead, ids, guestCount, endTime, serviceNames, notes, internalNotes }) => {
-                  const isHold = isHoldBooking(lead);
+                mobileListItems.map(({ key, lead, members, ids, guestCount, status, hasSpamWarning, isHold, endTime, serviceNames, notes, internalNotes }) => {
+                  const isGroup = guestCount > 1;
                   return (
                     <div
                       key={key}
                       id={`booking-card-${lead.id}`}
                       data-booking-ids={ids.join(' ')}
-                      className={`booking-card-mobile${isSpamWarningBooking(lead) ? ' row-spam-warning' : ''}${isHold ? ' is-hold-disabled' : ''}`}
-                      onClick={() => { if (!isHold) handleOpenDetail(lead); }}
+                      className={`booking-card-mobile${hasSpamWarning ? ' row-spam-warning' : ''}${isHold ? ' is-hold-disabled' : ''}${isGroup ? ' is-group' : ''}`}
+                      // Thẻ nhóm: bấm vào từng dòng khách bên dưới để mở đúng lịch của người đó
+                      onClick={() => { if (!isHold && !isGroup) handleOpenDetail(lead); }}
                     >
                       <div className="booking-card-mobile-header">
                         <span className="booking-card-mobile-customer">{lead.temporary_name || lead.customers?.name || '-'}</span>
-                        <span className="booking-card-mobile-time">{formatTime(lead.start_time)} - {guestCount} khách</span>
+                        <span className="booking-card-mobile-time">{formatTime(lead.start_time)} - {formatTime(endTime)} · {guestCount} khách</span>
                       </div>
                       <div className="booking-card-mobile-body">
                         <span className="booking-card-mobile-service">
                           <span className="service-icon-dot sm" style={{ background: lead.services?.color || '#0d8a3f' }}></span>
                           {serviceNames || '-'}
                         </span>
-                        <span className={`badge badge-${lead.status}`}>{bookingStatusLabel(lead.status)}</span>
+                        <span className={`badge badge-${status}`}>{groupStatusLabel(status)}</span>
                       </div>
-                      
+
+                      {isGroup && (
+                        <div className="booking-card-mobile-members">
+                          {members.map(m => (
+                            <button
+                              key={m.id}
+                              type="button"
+                              className="booking-card-mobile-member"
+                              disabled={isHoldBooking(m)}
+                              onClick={(e) => { e.stopPropagation(); handleOpenDetail(m); }}
+                            >
+                              {isSpamWarningBooking(m) && <FiAlertTriangle size={12} className="cal-alert-icon" />}
+                              <span className="booking-card-mobile-member-staff">{m.employees?.name || 'Chưa xếp NV'}</span>
+                              <span className="booking-card-mobile-member-meta">
+                                {m.services?.name || '-'} · {formatTime(m.start_time)}–{formatTime(m.end_time)}
+                              </span>
+                              {status === 'mixed' && (
+                                <span className={`badge badge-${m.status}`}>{bookingStatusLabel(m.status)}</span>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
                       {notes.length > 0 && (
                         <div className="booking-card-mobile-footer">
                           <div className="booking-card-mobile-notes">{notes.join('\n')}</div>
