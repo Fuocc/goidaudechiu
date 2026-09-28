@@ -151,8 +151,10 @@ router.post('/send-test', async (req, res) => {
                 .filter(sub => !keepIds.has(sub.id))
                 .map(sub => sub.id);
             if (duplicateIds.length > 0) {
-                // Query của Supabase chỉ chạy khi được .then() → giữ .then, bỏ qua lỗi dọn dẹp
-                supabase.from('push_subscriptions').delete().in('id', duplicateIds).then(() => {}, () => {});
+                supabase.from('push_subscriptions').delete().in('id', duplicateIds)
+                    .then(({ error }) => {
+                        if (error) console.error('[push] Không xóa được subscription trùng:', error.message);
+                    });
             }
         }
 

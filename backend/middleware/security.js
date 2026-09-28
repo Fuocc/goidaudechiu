@@ -158,12 +158,15 @@ function securityHeaders(req, res, next) {
 
 /* ============================================================
  * 5. ẨN LỖI 500 (không lộ tên bảng/cột/câu lỗi DB ra ngoài)
+ * Lỗi gốc vẫn được ghi vào log Render kèm mã tra cứu.
  * ============================================================ */
 function hideInternalErrors(req, res, next) {
   const originalJson = res.json.bind(res);
   res.json = (body) => {
     if (res.statusCode === 500 && body && typeof body === 'object' && body.error) {
-      return originalJson({ success: false, error: 'Lỗi hệ thống, vui lòng thử lại.' });
+      const ref = crypto.randomBytes(4).toString('hex');
+      console.error(`[500 ${ref}] ${req.method} ${req.originalUrl}:`, body.error);
+      return originalJson({ success: false, error: `Lỗi hệ thống, vui lòng thử lại (mã ${ref}).` });
     }
     return originalJson(body);
   };
@@ -174,9 +177,14 @@ function hideInternalErrors(req, res, next) {
  * 6. NHẬT KÝ THAO TÁC (audit_log) — mọi thao tác ghi của người đã đăng nhập
  * Không ghi nội dung body (tránh lưu dữ liệu khách).
  * ============================================================ */
+let auditWarned = false;
 function writeAudit(entry) {
-  // Không ghi được audit_log (VD chưa tạo bảng) → bỏ qua, không làm hỏng request
-  supabase.from('audit_log').insert(entry).then(() => {}, () => {});
+  supabase.from('audit_log').insert(entry).then(({ error }) => {
+    if (error && !auditWarned) {
+      auditWarned = true;
+      console.warn('[audit] Không ghi được audit_log (đã chạy SQL Bước 3 chưa?):', error.message);
+    }
+  }, () => {});
 }
 
 function auditTrail(req, res, next) {

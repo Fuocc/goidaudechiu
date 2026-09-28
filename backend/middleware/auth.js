@@ -68,6 +68,7 @@ async function authenticate(req) {
   if (!header.startsWith('Bearer ')) throw new AuthError(401, 'Phiên đăng nhập không hợp lệ.');
 
   if (!process.env.CLERK_SECRET_KEY) {
+    console.error('[auth] Thiếu CLERK_SECRET_KEY — từ chối mọi request cần đăng nhập.');
     throw new AuthError(503, 'Hệ thống chưa cấu hình xác thực.');
   }
 
@@ -89,7 +90,8 @@ async function authenticate(req) {
   let role;
   try {
     role = await resolveRole(payload);
-  } catch {
+  } catch (err) {
+    console.error('[auth] Không lấy được role từ Clerk:', err.message);
     throw new AuthError(503, 'Không kiểm tra được quyền truy cập, vui lòng thử lại.');
   }
 

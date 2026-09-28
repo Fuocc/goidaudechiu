@@ -125,6 +125,7 @@ async function notifyNewBooking(bookingData) {
       .select('*');
 
     if (fetchErr) {
+      console.error('[push] Không đọc được push_subscriptions:', fetchErr.message);
       return;
     }
 
@@ -146,8 +147,10 @@ async function notifyNewBooking(bookingData) {
         .filter(sub => !keepIds.has(sub.id))
         .map(sub => sub.id);
       if (duplicateIds.length > 0) {
-        // Query của Supabase chỉ chạy khi được .then() → giữ .then, bỏ qua lỗi dọn dẹp
-        supabase.from('push_subscriptions').delete().in('id', duplicateIds).then(() => {}, () => {});
+        supabase.from('push_subscriptions').delete().in('id', duplicateIds)
+          .then(({ error }) => {
+            if (error) console.error('[push] Không xóa được subscription trùng:', error.message);
+          });
       }
     }
     // Phân tích dữ liệu khách hàng, dịch vụ và chi nhánh đồng bộ với Dashboard
@@ -197,10 +200,7 @@ async function notifyNewBooking(bookingData) {
               read: false
             });
 
-          if (dbErr) {
-          } else {
-          }
-        } else {
+          if (dbErr) console.error('[push] Không lưu được dashboard_notifications cho lịch', bookingData.id, dbErr.message);
         }
       }
 
@@ -211,8 +211,11 @@ async function notifyNewBooking(bookingData) {
         .from('dashboard_notifications')
         .delete()
         .lt('created_at', thirtyDaysAgo.toISOString())
-        .then(() => {}, () => {});
+        .then(({ error: pruneErr }) => {
+          if (pruneErr) console.error('[push] Không dọn được thông báo cũ:', pruneErr.message);
+        });
     } catch (dbEx) {
+      console.error('[push] Lỗi khi lưu thông báo dashboard:', dbEx.message);
     }
 
     const relativeDate = getRelativeDateLabel(bookingData.booking_date);
@@ -244,11 +247,15 @@ async function notifyNewBooking(bookingData) {
       webpush.sendNotification(pushConfig, payload)
         .catch(async (err) => {
           if (err.statusCode === 410 || err.statusCode === 404) {
+            // Thiết bị đã hủy đăng ký → xóa subscription (bình thường, không cần log)
             await supabase.from('push_subscriptions').delete().eq('id', sub.id);
+          } else {
+            console.error('[push] Gửi Web Push thất bại:', err.statusCode || '', err.message);
           }
         });
     });
   } catch (err) {
+    console.error('[push] Lỗi không mong muốn khi gửi thông báo lịch mới:', err.message);
   }
 }
 
@@ -676,6 +683,7 @@ router.post('/undo', async (req, res) => {
 
     res.json({ success: true, restored, deleted, skipped });
   } catch (err) {
+    console.error('[undo] error:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -914,7 +922,8 @@ router.put('/:id', async (req, res) => {
 
     if (upErr) {
       if (customerRollback) {
-        await supabase.from('customers').update(customerRollback.data).eq('id', customerRollback.id);
+        const { error: rbErr } = await supabase.from('customers').update(customerRollback.data).eq('id', customerRollback.id);
+        if (rbErr) console.error('[bookings PUT] Không hoàn lại được thông tin khách:', rbErr.message);
       }
       throw upErr;
     }
@@ -932,7 +941,10 @@ router.put('/:id', async (req, res) => {
         .eq('id', move.id)
         .select('*, employees(name), services(name), branches(name)')
         .single();
-      if (sibUpErr) continue; // tính vào group_failed_count trả về cho dashboard
+      if (sibUpErr) {
+        console.error('[bookings PUT] Không dời được lịch cùng nhóm', move.id, sibUpErr.message);
+        continue;
+      }
       broadcast('booking.updated', sib);
       groupUpdatedIds.push(move.id);
     }
@@ -1135,7 +1147,9 @@ router.post('/', bookingRateLimiter, async (req, res) => {
 
       // Fire webhooks async
       const webhookEvent = createdBookings.some(b => b.status === 'pending') ? 'booking.pending' : 'booking.confirmed';
-      fireWebhooks(webhookEvent, createdBookings).catch(() => {});
+      fireWebhooks(webhookEvent, createdBookings).catch(err =>
+        console.error('Webhook fire error:', err.message)
+      );
 
       // Broadcast SSE for live dashboard updates
       createdBookings.forEach(b => {
@@ -1440,7 +1454,8 @@ router.delete('/:id', async (req, res) => {
           .from('bookings')
           .update({ num_guests: remaining.length })
           .in('id', remaining.map(r => r.id));
-        if (!countErr) remaining.forEach(r => broadcast('booking.updated', { id: r.id, num_guests: remaining.length }));
+        if (countErr) console.warn('[bookings DELETE] Không cập nhật được num_guests của nhóm:', countErr.message);
+        else remaining.forEach(r => broadcast('booking.updated', { id: r.id, num_guests: remaining.length }));
       }
     }
 
@@ -1506,8 +1521,8 @@ async function fireWebhooks(event, bookings) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
-      } catch {
-        // Webhook lỗi / timeout: bỏ qua, vẫn gửi tiếp các webhook khác
+      } catch (err) {
+        console.warn(`[webhook] Gửi tới "${webhook.name}" thất bại:`, err.message);
       }
     }
   }
@@ -1551,7 +1566,8 @@ async function cleanupExpiredHolds(broadcast) {
       }
 
       if (expiredIds.length > 0) {
-        await supabase.from('bookings').delete().in('id', expiredIds);
+        const { error: delErr } = await supabase.from('bookings').delete().in('id', expiredIds);
+        if (delErr) console.error('[hold] Không xóa được giữ chỗ hết hạn:', delErr.message);
         if (typeof broadcast === 'function') {
           expiredIds.forEach(id => {
             broadcast('booking.hold_released', { id });
@@ -1560,6 +1576,7 @@ async function cleanupExpiredHolds(broadcast) {
       }
     }
   } catch (err) {
+    console.error('[hold] Lỗi khi dọn giữ chỗ hết hạn:', err.message);
   }
 }
 

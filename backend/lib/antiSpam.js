@@ -38,9 +38,15 @@ function normalizeVnPhone(raw) {
   return match ? `0${match[1]}` : null;
 }
 
+// Che bớt SĐT khi ghi log: "0912345678" → "0912***678"
+function maskPhone(phone) {
+  return typeof phone === 'string' && phone.length >= 7 ? `${phone.slice(0, 4)}***${phone.slice(-3)}` : '***';
+}
+
 // ---- Cột bookings.client_ip đã được tạo chưa? (kiểm tra 1 lần, chưa có thì 10 phút thử lại) ----
 let clientIpSupported = null;
 let clientIpCheckedAt = 0;
+let clientIpWarned = false;
 
 async function supportsClientIp(supabase) {
   if (clientIpSupported === true) return true;
@@ -49,6 +55,10 @@ async function supportsClientIp(supabase) {
   const { error } = await supabase.from('bookings').select('client_ip').limit(1);
   clientIpCheckedAt = Date.now();
   clientIpSupported = !error;
+  if (error && !clientIpWarned) {
+    clientIpWarned = true;
+    console.warn('[antiSpam] Chưa có cột bookings.client_ip (chạy backend/sql/2026-09-28_bookings_client_ip.sql) — tạm tắt giới hạn theo IP:', error.message);
+  }
   return clientIpSupported;
 }
 
@@ -65,7 +75,10 @@ async function releaseActiveHoldsForIp(supabase, ip) {
     .eq('status', 'pending')
     .like('internal_note', `${HOLD_NOTE_PREFIX}%`)
     .select('id');
-  if (error) return [];
+  if (error) {
+    console.warn('[antiSpam] Không nhả được giữ chỗ cũ của IP:', error.message);
+    return [];
+  }
   return (data || []).map(r => r.id);
 }
 
@@ -78,7 +91,10 @@ async function countIpSlots(supabase, ip) {
     .eq('client_ip', ip)
     .neq('status', 'cancelled')
     .gte('created_at', sinceIso(IP_SLOT_WINDOW_MS));
-  if (error) return 0; // lỗi DB → không chặn khách
+  if (error) {
+    console.warn('[antiSpam] Không đếm được slot theo IP:', error.message);
+    return 0; // lỗi DB → không chặn khách
+  }
   return count || 0;
 }
 
@@ -91,7 +107,10 @@ async function countPhoneSlots(supabase, phone) {
     .eq('customers.phone', phone)
     .neq('status', 'cancelled')
     .gte('created_at', sinceIso(PHONE_SLOT_WINDOW_MS));
-  if (error) return 0;
+  if (error) {
+    console.warn('[antiSpam] Không đếm được slot theo SĐT:', error.message);
+    return 0;
+  }
   return (data || []).length;
 }
 
@@ -101,8 +120,20 @@ async function countPhoneSlots(supabase, phone) {
  * @returns {Promise<string|null>} thông báo lỗi nếu vượt giới hạn
  */
 async function checkSlotBudget(supabase, { ip, phone, guestCount, checkIp = true }) {
-  if (checkIp && (await countIpSlots(supabase, ip)) + guestCount > IP_SLOT_LIMIT) return IP_LIMIT_MESSAGE;
-  if (phone && (await countPhoneSlots(supabase, phone)) + guestCount > PHONE_SLOT_LIMIT) return PHONE_LIMIT_MESSAGE;
+  if (checkIp) {
+    const used = await countIpSlots(supabase, ip);
+    if (used + guestCount > IP_SLOT_LIMIT) {
+      console.warn(`[antiSpam] Chặn IP ${ip}: đã chiếm ${used} slot/giờ, xin thêm ${guestCount} (giới hạn ${IP_SLOT_LIMIT})`);
+      return IP_LIMIT_MESSAGE;
+    }
+  }
+  if (phone) {
+    const used = await countPhoneSlots(supabase, phone);
+    if (used + guestCount > PHONE_SLOT_LIMIT) {
+      console.warn(`[antiSpam] Chặn SĐT ${maskPhone(phone)} (IP ${ip || '-'}): đã có ${used} slot/24h, xin thêm ${guestCount} (giới hạn ${PHONE_SLOT_LIMIT})`);
+      return PHONE_LIMIT_MESSAGE;
+    }
+  }
   return null;
 }
 
@@ -131,6 +162,7 @@ async function computeSpamFlag(supabase, { ip, phone }) {
         if (p && p !== PLACEHOLDER_PHONE) phones.add(p);
       }
       if (phones.size >= SPAM_DISTINCT_PHONES) {
+        console.warn(`[antiSpam] Gắn cờ chờ xác nhận: IP ${ip} đặt với ${phones.size} SĐT khác nhau trong 1 giờ`);
         return {
           status: 'pending',
           internalNote: `⚠️ Thiết bị này đã đặt lịch với ${phones.size} SĐT khác nhau trong 1 giờ qua (${[...phones].slice(0, 4).join(', ')}). Vui lòng gọi xác nhận trước khi giữ lịch.`
@@ -155,19 +187,21 @@ async function computeSpamFlag(supabase, { ip, phone }) {
       .eq('customers.phone', phone)
       .gte('created_at', since);
     if (!recentErr && recentBookings && recentBookings.length > 0) {
+      console.warn(`[antiSpam] Gắn cờ chờ xác nhận: SĐT ${maskPhone(phone)} có ${recentBookings.length} đơn trong 30 phút`);
       return {
         status: 'pending',
         internalNote: `⚠️ Khách hàng ${phone} đã có ${recentBookings.length} đơn trong 30 phút qua. Vui lòng xác nhận qua điện thoại.`
       };
     }
-  } catch {
-    // Kiểm tra spam lỗi → không gắn cờ, không chặn khách
+  } catch (err) {
+    console.warn('[antiSpam] Kiểm tra spam lỗi, bỏ qua:', err.message);
   }
   return clean;
 }
 
 module.exports = {
   MAX_ONLINE_GUESTS,
+  maskPhone,
   IP_SLOT_LIMIT,
   PHONE_SLOT_LIMIT,
   OVER_GUEST_LIMIT_MESSAGE,

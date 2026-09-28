@@ -24,8 +24,8 @@ async function generateForNext30Days() {
       }));
       await supabase.from('employee_schedules').upsert(records, { onConflict: 'employee_id,date', ignoreDuplicates: true });
     }
-  } catch {
-    // Lỗi tự tạo lịch nhân viên: bỏ qua, lần chạy sau thử lại
+  } catch (err) {
+    console.error('❌ Lỗi khi tự động tạo lịch nhân viên:', err);
   }
 }
 

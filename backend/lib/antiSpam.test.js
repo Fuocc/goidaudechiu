@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { normalizeVnPhone } = require('./antiSpam');
+const { normalizeVnPhone, maskPhone } = require('./antiSpam');
 
 test('chuẩn hóa SĐT di động Việt Nam về dạng 0xxxxxxxxx', () => {
   assert.equal(normalizeVnPhone('0912345678'), '0912345678');
@@ -20,4 +20,10 @@ test('từ chối số không phải di động Việt Nam', () => {
   assert.equal(normalizeVnPhone('abc'), null);
   assert.equal(normalizeVnPhone(undefined), null);
   assert.equal(normalizeVnPhone({}), null);
+});
+
+test('che bớt SĐT khi ghi log', () => {
+  assert.equal(maskPhone('0912345678'), '0912***678');
+  assert.equal(maskPhone('123'), '***');
+  assert.equal(maskPhone(null), '***');
 });

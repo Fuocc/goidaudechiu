@@ -316,7 +316,10 @@ async function executeTool(toolName, params, context) {
           .update(updatePayload)
           .eq('id', matched.id);
 
-        if (updErr) continue;
+        if (updErr) {
+          console.error(`Error updating employee ${matched.name}:`, updErr);
+          continue;
+        }
 
         matchedIds.push(matched.id);
         matchedNames.push(matched.name);
@@ -350,9 +353,10 @@ async function executeTool(toolName, params, context) {
       });
 
       if (scheduleRecords.length > 0) {
-        await supabase
+        const { error: schedErr } = await supabase
           .from('employee_schedules')
           .upsert(scheduleRecords, { onConflict: 'employee_id,date' });
+        if (schedErr) console.error('Error upserting employee schedules in set_staff_duty:', schedErr);
       }
 
       // Step 4: Persist tour order into settings
@@ -1231,7 +1235,7 @@ async function executeTool(toolName, params, context) {
       bookingEnd = bookingEnd || addMinutesToTime(bookingStart, 1);
     }
     // Step 1: Get active staff who are working today and their shift covers the booking time
-    const [{ data: onDutyStaff }, tourOrder] = await Promise.all([
+    const [{ data: onDutyStaff, error: scheduleError }, tourOrder] = await Promise.all([
       supabase
         .from('employee_schedules')
         .select('employee_id, start_time, end_time, employees!inner(id, name, branch_id)')  // add branch_id to select
@@ -1241,6 +1245,8 @@ async function executeTool(toolName, params, context) {
         .eq('employees.is_active', true),
       loadTourOrder(supabase, targetBranch)
     ]);
+
+    if (scheduleError) console.error('[get_available_staff] scheduleError:', scheduleError);
 
     if (!onDutyStaff || onDutyStaff.length === 0) {
       return { available: [], message: 'Không có nhân viên nào trực trong khung giờ này.' };
@@ -1587,8 +1593,9 @@ const TOOL_LIMITS_PER_COMMAND = {
 router.post('/', aiLimiter, async (req, res) => {
   try {
     await handleCommand(req, res);
-  } catch {
+  } catch (err) {
     // Trước đây lỗi không mong muốn bị throw ra ngoài handler async → Express 4 không bắt được → request treo mãi.
+    console.error('[command-v2] Lỗi không mong muốn:', err);
     if (!res.headersSent) {
       res.status(500).json({ success: false, error: 'Hệ thống AI gặp lỗi, vui lòng thử lại.' });
     }
@@ -1616,6 +1623,7 @@ async function handleCommand(req, res) {
   const vnNow = new Date(now.getTime() + vnOffset + now.getTimezoneOffset() * 60000);
   const todayDateStr = vnNow.toISOString().split('T')[0];
 
+  const startedAt = Date.now();
 
   // Tải sẵn dịch vụ + nhân viên chi nhánh hiện tại (kèm thứ tự tour) để nhúng vào prompt →
   // AI không phải tốn thêm 1-2 lượt gọi Gemini cho get_spa_context / get_available_staff.
@@ -1748,6 +1756,7 @@ ${employeesStr}
   // Kết quả trả về frontend: tool_log chỉ gồm tên tool (không gửi params/result thô chứa dữ liệu khách)
   const buildResponse = (reply) => {
     const lastTool = toolLog.at(-1);
+    console.log(`[command-v2] xong trong ${Date.now() - startedAt}ms — ${loopCount} lượt Gemini, tools: ${toolLog.map(t => t.tool).join(', ') || '(không)'}`);
     return {
       success: true,
       reply,
@@ -1785,6 +1794,7 @@ ${employeesStr}
           ? buildResponse('AI đang quá tải nên chưa hoàn tất lệnh.' + partialNote)
           : { success: false, error: 'AI đang quá tải, vui lòng thử lại sau 1-2 phút.' });
       }
+      console.error('[command-v2] Gemini error:', err.status, err.message);
       return res.status(actions.length ? 200 : 502).json(actions.length
         ? buildResponse('AI gặp lỗi nên chưa hoàn tất lệnh.' + partialNote)
         : { success: false, error: 'Không kết nối được AI, vui lòng thử lại.' });
@@ -1819,7 +1829,8 @@ ${employeesStr}
               req
             });
           }
-        } catch {
+        } catch (toolErr) {
+          console.error(`[command-v2] Tool ${toolCall.name} lỗi:`, toolErr);
           toolResult = { error: `Lỗi hệ thống khi chạy ${toolCall.name}. Hãy báo lại cho người dùng, không thử lại.` };
         }
 

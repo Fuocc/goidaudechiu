@@ -39,10 +39,10 @@ function broadcastSSE(event, data) {
     try {
       const bookingsRouter = require('./routes/bookings');
       if (bookingsRouter && typeof bookingsRouter.notifyNewBooking === 'function') {
-        bookingsRouter.notifyNewBooking(data).catch(() => {});
+        bookingsRouter.notifyNewBooking(data).catch(err => console.error('❌ Web Push notify error:', err));
       }
-    } catch {
-      // Gửi Web Push lỗi: bỏ qua, không ảnh hưởng SSE
+    } catch (err) {
+      console.error('❌ Web Push notify error:', err);
     }
   }
 }
@@ -197,10 +197,12 @@ app.use((err, req, res, next) => {
   if (err.type === 'entity.parse.failed') {
     return res.status(400).json({ success: false, error: 'Dữ liệu gửi lên không hợp lệ.' });
   }
+  console.error('[unhandled]', req.method, req.originalUrl, err);
   res.status(500).json({ success: false, error: 'Lỗi hệ thống, vui lòng thử lại.' });
 });
 
 app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server listening on port ${PORT}`);
   // Bật bộ tự động xếp lịch mỗi ngày
   startAutoScheduler();
 });

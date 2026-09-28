@@ -1,6 +1,6 @@
 const supabase = require('../supabaseClient');
 const { getClientIp } = require('./security');
-const { normalizeVnPhone } = require('../lib/antiSpam');
+const { normalizeVnPhone, maskPhone } = require('../lib/antiSpam');
 
 // In-memory store for IP rate limiting
 // Key: IP, Value: Array of timestamps of booking attempts
@@ -29,12 +29,14 @@ async function bookingRateLimiter(req, res, next) {
 
   // A. Environment Variable / Dev Mode Bypass
   // if (process.env.DISABLE_RATE_LIMITER === 'true' || process.env.NODE_ENV === 'development') {
+  //   console.log('⚡ Rate limiter bypassed: Development mode or DISABLE_RATE_LIMITER=true');
   //   return next();
   // }
 
   // B. Localhost Loopback Bypass (127.0.0.1, ::1)
   // const isLocalIp = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
   // if (isLocalIp) {
+  //   console.log(`⚡ Rate limiter bypassed: Localhost developer IP (${ip})`);
   //   return next();
   // }
 
@@ -53,7 +55,7 @@ async function bookingRateLimiter(req, res, next) {
   const recentIpAttempts = ipTimestamps.filter(t => now - t < WINDOW_MS);
 
   if (recentIpAttempts.length >= MAX_LIMIT) {
-
+    console.warn(`[rateLimit] Chặn IP ${ip}: quá ${MAX_LIMIT} lần đặt lịch / 5 phút`);
     return res.status(429).json({
       error: 'Bạn đã đặt lịch quá 3 lần trong vòng 5 phút từ thiết bị này. Vui lòng đợi 5 phút hoặc liên hệ hotline/Zalo để được hỗ trợ nhanh nhất.'
     });
@@ -78,10 +80,10 @@ async function bookingRateLimiter(req, res, next) {
           .gte('created_at', fiveMinAgo);
 
         if (error) {
-
           // Do not block the booking if database error occurs during check
+          console.error('[rateLimit] Không kiểm tra được giới hạn theo SĐT:', error.message);
         } else if (recentBookings && recentBookings.length >= MAX_LIMIT) {
-
+          console.warn(`[rateLimit] Chặn SĐT ${maskPhone(cleanPhone)} (IP ${ip}): đã có ${recentBookings.length} lịch / 5 phút`);
           return res.status(429).json({
             error: 'Số điện thoại này đã đặt 3 lịch hẹn trong 5 phút qua. Vui lòng đợi 5 phút hoặc liên hệ hotline/Zalo để được hỗ trợ nhanh nhất.'
           });
