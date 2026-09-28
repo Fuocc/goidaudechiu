@@ -242,7 +242,8 @@ router.get('/dashboard', async (req, res) => {
             const { data: groupBookings, error: grpError } = await supabase
                 .from('bookings')
                 .select('id, group_booking_id')
-                .in('group_booking_id', groupBookingIds);
+                .in('group_booking_id', groupBookingIds)
+                .neq('status', 'cancelled');
 
             if (!grpError && groupBookings) {
                 groupBookings.forEach(b => {

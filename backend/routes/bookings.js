@@ -1,11 +1,17 @@
+const crypto = require('crypto');
 const express = require('express');
 const router = express.Router();
 const supabase = require('../supabaseClient');
 const webpush = require('web-push');
 const bookingRateLimiter = require('../middleware/rateLimiter');
-const { holdLimiter } = require('../middleware/security');
+const { holdLimiter, getClientIp } = require('../middleware/security');
 const { safeWebhookFetch } = require('../lib/safeUrl');
-const { sortByTourOrder } = require('../lib/tourOrder');
+const { planGroupAssignment } = require('../lib/groupPlanner');
+const {
+  MAX_ONLINE_GUESTS, OVER_GUEST_LIMIT_MESSAGE, normalizeVnPhone, supportsClientIp,
+  releaseActiveHoldsForIp, checkSlotBudget, computeSpamFlag
+} = require('../lib/antiSpam');
+const { TURNSTILE_FAILED_MESSAGE, verifyTurnstile } = require('../lib/turnstile');
 const { UNDO_RESTORE_FIELDS, UNDO_MAX_AGE_MS, fingerprintRow, verifyUndoAction } = require('../lib/undoToken');
 
 // ---- Kiểm tra dữ liệu đầu vào (dùng cho request từ landing page / chưa đăng nhập) ----
@@ -257,9 +263,6 @@ function getBroadcast(req) {
   return req.app.get('broadcastSSE') || (() => { });
 }
 
-// Normalize Vietnamese diacritics for Latin search
-const normalize = (str) => (str || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-
 // Lịch giữ chỗ tạm thời (POST /hold) — cùng điều kiện với các truy vấn LIKE '[GIỮ CHỖ TẠM THỜI]%' bên dưới
 const HOLD_NOTE_PREFIX = '[GIỮ CHỖ TẠM THỜI]';
 const isHoldBooking = (b) =>
@@ -310,7 +313,7 @@ router.post('/hold', holdLimiter, async (req, res) => {
 
     const {
       branch_id, service_id, num_guests,
-      booking_date, start_time, hold_duration
+      booking_date, start_time, hold_duration, turnstile_token
     } = req.body || {};
 
     if (!branch_id || !booking_date || !start_time) {
@@ -322,9 +325,25 @@ router.post('/hold', holdLimiter, async (req, res) => {
     }
 
     const guestCount = toGuestCount(num_guests);
+    const isPublic = !req.auth;
+    const ip = isPublic ? getClientIp(req) : null;
+
+    // Chống spam (khách tự đặt): giới hạn số khách, captcha, 1 bộ giữ chỗ / IP, ngân sách slot theo IP
+    if (isPublic) {
+      if (guestCount > MAX_ONLINE_GUESTS) {
+        return res.status(400).json({ code: 'TOO_MANY_GUESTS', error: OVER_GUEST_LIMIT_MESSAGE });
+      }
+      if (!(await verifyTurnstile(turnstile_token, ip))) {
+        return res.status(403).json({ code: 'TURNSTILE_FAILED', error: TURNSTILE_FAILED_MESSAGE });
+      }
+      const releasedIds = await releaseActiveHoldsForIp(supabase, ip);
+      releasedIds.forEach(id => broadcast('booking.hold_released', { id }));
+
+      const budgetError = await checkSlotBudget(supabase, { ip, guestCount });
+      if (budgetError) return res.status(429).json({ error: budgetError });
+    }
 
     // 1) Resolve service-like data (duration + price)
-    let resolvedService = null;
     let duration = 60;
     let price = 0;
     let currentServiceId = service_id;
@@ -337,7 +356,6 @@ router.post('/hold', holdLimiter, async (req, res) => {
         .single();
 
       if (!serviceErr && service) {
-        resolvedService = service;
         duration = service.duration_minutes || 60;
         price = service.price || 0;
       }
@@ -351,7 +369,6 @@ router.post('/hold', holdLimiter, async (req, res) => {
         .maybeSingle();
 
       if (placeholderService) {
-        resolvedService = placeholderService;
         currentServiceId = placeholderService.id;
         duration = placeholderService.duration_minutes || 60;
         price = placeholderService.price || 0;
@@ -446,110 +463,64 @@ router.post('/hold', holdLimiter, async (req, res) => {
 
     if (bedErr) throw bedErr;
 
-    // 6) Assign employee & bed
+    // 6) Xếp nhân viên & giường cho CẢ NHÓM trước, đủ người mới ghi (không để lại giữ chỗ dở dang)
     const { data: settingsData } = await supabase.from('settings').select('*');
     const settings = (settingsData || []).reduce((acc, curr) => {
       acc[curr.key] = curr.value;
       return acc;
     }, {});
 
-    const bufferTime = parseInt(settings.buffer_time) || 15;
-    const tourOrder = settings[`tour_order_${branch_id}`] || [];
-
-    const createdHoldIds = [];
-    const assignedEmpIds = [];
-    const assignedBedIds = [];
-
-    const crypto = require('crypto');
-    const groupBookingId = guestCount > 1 ? crypto.randomUUID() : null;
-
-    for (let g = 0; g < guestCount; g++) {
-      const busyEmployeeIds = new Set();
-      // Combine dayBookings with already created holds in this loop to prevent double assignment of the same staff/bed
-      const allRelevantBookings = [...dayBookings, ...createdHoldIds.map(id => {
-        return {
-          employee_id: employees.find(emp => emp.id === createdHoldIds[g - 1])?.id, // fallback/mock
-          bed_id: beds[0]?.id // mock
-        };
-      })];
-
-      for (const booking of dayBookings) {
-        const bStart = timeToMinutes(booking.start_time);
-        const bEnd = timeToMinutes(booking.end_time) + bufferTime;
-        if (startMinutes < bEnd && bStart < endMinutes) {
-          busyEmployeeIds.add(booking.employee_id);
-        }
-      }
-
-      const availableEmployees = sortByTourOrder(
-        employees.filter(e => !busyEmployeeIds.has(e.id) && !assignedEmpIds.includes(e.id)),
-        tourOrder
-      );
-      if (availableEmployees.length === 0) {
-        return res.status(409).json({ error: 'Không có nhân viên trống cho khung giờ này.' });
-      }
-
-      const assignedEmployee = availableEmployees[0];
-      assignedEmpIds.push(assignedEmployee.id);
-
-      // Beds
-      const busyBedIds = new Set();
-      for (const booking of dayBookings) {
-        const bStart = timeToMinutes(booking.start_time);
-        const bEnd = timeToMinutes(booking.end_time);
-        if (startMinutes < bEnd && bStart < endMinutes) {
-          busyBedIds.add(booking.bed_id);
-        }
-      }
-
-      const availableBeds = beds.filter(b => !busyBedIds.has(b.id) && !assignedBedIds.includes(b.id));
-      if (availableBeds.length === 0) {
-        return res.status(409).json({ error: 'Không còn giường trống cho khung giờ này.' });
-      }
-
-      const bedBookingCount = {};
-      for (const bed of beds) bedBookingCount[bed.id] = 0;
-      for (const booking of dayBookings) {
-        if (bedBookingCount[booking.bed_id] !== undefined) bedBookingCount[booking.bed_id]++;
-      }
-
-      availableBeds.sort((a, b) => (bedBookingCount[a.id] || 0) - (bedBookingCount[b.id] || 0));
-      const assignedBed = availableBeds[0];
-      assignedBedIds.push(assignedBed.id);
-
-      // Giới hạn thời gian giữ chỗ tối đa 10 phút (trước đây client tự đặt bao lâu cũng được → khóa slot vĩnh viễn)
-      const requestedMs = parseInt(hold_duration, 10);
-      const durationMs = Number.isFinite(requestedMs) && requestedMs > 0
-        ? Math.min(requestedMs, MAX_HOLD_MS)
-        : 5 * 60 * 1000;
-      const expiresAt = Date.now() + durationMs;
-
-      const insertPayload = {
-        customer_id: customer.id,
-        service_id: currentServiceId || null,
-        employee_id: assignedEmployee.id,
-        bed_id: assignedBed.id,
-        branch_id,
-        num_guests: guestCount,
-        booking_date,
-        start_time,
-        end_time,
-        status: 'pending',
-        total_price: price,
-        internal_note: `[GIỮ CHỖ TẠM THỜI] Giữ chỗ tạm thời cho khách đang đặt online. Tự động hủy lịch sau 5 phút. EXPIRES:${expiresAt}`,
-        group_booking_id: groupBookingId
-      };
-
-
-      const { data: booking, error: bookErr } = await supabase
-        .from('bookings')
-        .insert([insertPayload])
-        .select()
-        .single();
-
-      if (bookErr) throw bookErr;
-      createdHoldIds.push(booking.id);
+    const plan = planGroupAssignment({
+      guestCount,
+      startMinutes,
+      endMinutes,
+      dayBookings,
+      employees,
+      beds,
+      bufferTime: parseInt(settings.buffer_time) || 15,
+      tourOrder: settings[`tour_order_${branch_id}`] || []
+    });
+    if (!plan.ok) {
+      return res.status(409).json({
+        error: plan.reason === 'no_bed' ? 'Không còn giường trống cho khung giờ này.' : 'Không có nhân viên trống cho khung giờ này.'
+      });
     }
+
+    // Giới hạn thời gian giữ chỗ tối đa 10 phút (trước đây client tự đặt bao lâu cũng được → khóa slot vĩnh viễn)
+    const requestedMs = parseInt(hold_duration, 10);
+    const durationMs = Number.isFinite(requestedMs) && requestedMs > 0
+      ? Math.min(requestedMs, MAX_HOLD_MS)
+      : 5 * 60 * 1000;
+    const expiresAt = Date.now() + durationMs;
+
+    const groupBookingId = guestCount > 1 ? crypto.randomUUID() : null;
+    const clientIpField = ip && (await supportsClientIp(supabase)) ? { client_ip: ip } : {};
+
+    const rows = plan.assignments.map(({ employee_id, bed_id }) => ({
+      customer_id: customer.id,
+      service_id: currentServiceId || null,
+      employee_id,
+      bed_id,
+      branch_id,
+      num_guests: guestCount,
+      booking_date,
+      start_time,
+      end_time,
+      status: 'pending',
+      total_price: price,
+      internal_note: `${HOLD_NOTE_PREFIX} Giữ chỗ tạm thời cho khách đang đặt online. Tự động hủy lịch sau 5 phút. EXPIRES:${expiresAt}`,
+      group_booking_id: groupBookingId,
+      ...clientIpField
+    }));
+
+    // 1 lệnh insert nhiều dòng = 1 câu SQL → hoặc vào đủ cả nhóm, hoặc không dòng nào
+    const { data: inserted, error: bookErr } = await supabase
+      .from('bookings')
+      .insert(rows)
+      .select('id');
+
+    if (bookErr) throw bookErr;
+    const createdHoldIds = inserted.map(b => b.id);
 
     // Broadcast SSE for live dashboard updates
     createdHoldIds.forEach(id => {
@@ -823,22 +794,64 @@ router.put('/:id', async (req, res) => {
       || targetDate !== booking.booking_date
       || timeToMinutes(start_time) !== timeToMinutes(String(booking.start_time || '0:0'))
       || timeToMinutes(end_time) !== timeToMinutes(String(booking.end_time || '0:0'));
-    if (placementChanged && req.body.allow_conflict !== true) {
-      const { data: sameDay, error: sameDayErr } = await supabase
-        .from('bookings')
-        .select('id, start_time, end_time, temporary_name, customers(name)')
-        .eq('employee_id', employee_id)
-        .eq('booking_date', targetDate)
-        .neq('status', 'cancelled')
-        .neq('id', req.params.id);
-      if (sameDayErr) throw sameDayErr;
 
-      const newStart = timeToMinutes(start_time);
-      const newEnd = timeToMinutes(end_time);
-      const conflicts = (sameDay || []).filter(b =>
-        b.start_time && b.end_time &&
-        timeToMinutes(String(b.start_time)) < newEnd && newStart < timeToMinutes(String(b.end_time))
-      );
+    // 5.0) Dời cả nhóm (dashboard gửi apply_to_group khi người dùng chọn "Dời cả nhóm"):
+    // các lịch cùng nhóm dời sang cùng ngày và lệch giờ đúng bằng lịch này; mỗi người giữ nguyên
+    // thời lượng + nhân viên của mình (dùng độ lệch vì giờ trong nhóm có thể đã khác nhau từ trước).
+    const shiftMinutes = timeToMinutes(start_time) - timeToMinutes(String(booking.start_time || '0:0'));
+    const siblingMoves = [];
+    if (req.body.apply_to_group === true && booking.group_booking_id &&
+      (shiftMinutes !== 0 || targetDate !== booking.booking_date)) {
+      const { data: siblings, error: sibErr } = await supabase
+        .from('bookings')
+        .select('id, employee_id, start_time, end_time')
+        .eq('group_booking_id', booking.group_booking_id)
+        .neq('id', req.params.id)
+        .neq('status', 'cancelled');
+      if (sibErr) throw sibErr;
+
+      for (const s of siblings || []) {
+        const newStart = timeToMinutes(String(s.start_time)) + shiftMinutes;
+        const newEnd = timeToMinutes(String(s.end_time)) + shiftMinutes;
+        if (newStart < 0 || newEnd > 24 * 60) {
+          return res.status(400).json({ error: 'Dời cả nhóm làm lịch của khách khác trong nhóm vượt qua nửa đêm. Hãy chọn giờ khác hoặc "Chỉ khách này".' });
+        }
+        siblingMoves.push({
+          id: s.id,
+          employee_id: s.employee_id,
+          booking_date: targetDate,
+          start_time: minutesToTime(newStart),
+          end_time: minutesToTime(newEnd)
+        });
+      }
+    }
+
+    if ((placementChanged || siblingMoves.length > 0) && req.body.allow_conflict !== true) {
+      // Các lịch trong nhóm đang cùng dời → không tính là trùng với vị trí cũ của nhau
+      const movingIds = [req.params.id, ...siblingMoves.map(m => m.id)];
+      const placements = [
+        ...(placementChanged ? [{ employee_id, booking_date: targetDate, start_time, end_time }] : []),
+        ...siblingMoves
+      ].filter(p => p.employee_id);
+
+      const conflicts = [];
+      for (const p of placements) {
+        const { data: sameDay, error: sameDayErr } = await supabase
+          .from('bookings')
+          .select('id, start_time, end_time, temporary_name, customers(name)')
+          .eq('employee_id', p.employee_id)
+          .eq('booking_date', p.booking_date)
+          .neq('status', 'cancelled')
+          .not('id', 'in', `(${movingIds.join(',')})`);
+        if (sameDayErr) throw sameDayErr;
+
+        const newStart = timeToMinutes(p.start_time);
+        const newEnd = timeToMinutes(p.end_time);
+        conflicts.push(...(sameDay || []).filter(b =>
+          b.start_time && b.end_time &&
+          timeToMinutes(String(b.start_time)) < newEnd && newStart < timeToMinutes(String(b.end_time))
+        ));
+      }
       if (conflicts.length > 0) {
         return res.status(409).json({
           code: 'BOOKING_CONFLICT',
@@ -920,9 +933,28 @@ router.put('/:id', async (req, res) => {
     const broadcast = getBroadcast(req);
     broadcast('booking.updated', updated);
 
+    // 7) Dời các lịch còn lại của nhóm (đã kiểm tra trùng giờ ở bước 5.1)
+    const groupUpdatedIds = [];
+    for (const move of siblingMoves) {
+      const { data: sib, error: sibUpErr } = await supabase
+        .from('bookings')
+        .update({ booking_date: move.booking_date, start_time: move.start_time, end_time: move.end_time })
+        .eq('id', move.id)
+        .select('*, employees(name), services(name), branches(name)')
+        .single();
+      if (sibUpErr) {
+        console.error('[bookings PUT] Không dời được lịch cùng nhóm', move.id, sibUpErr.message);
+        continue;
+      }
+      broadcast('booking.updated', sib);
+      groupUpdatedIds.push(move.id);
+    }
+
     res.json({
       ...updated,
-      oldBooking: booking 
+      oldBooking: booking,
+      group_updated_ids: groupUpdatedIds,
+      group_failed_count: siblingMoves.length - groupUpdatedIds.length
     });
 
   } catch (err) {
@@ -942,21 +974,30 @@ router.put('/:id', async (req, res) => {
  */
 router.post('/', bookingRateLimiter, async (req, res) => {
   try {
+    const isPublic = !req.auth;
+    const ip = isPublic ? getClientIp(req) : null;
+    const broadcast = getBroadcast(req);
+
     // Khách tự đặt từ landing page (chưa đăng nhập) → CHỈ nhận đúng các field khách được phép gửi.
     // Các field nội bộ (employee_id, temporary_name, customer_id, end_time, duration...) bị bỏ qua
     // để người ngoài không tự chọn nhân viên, sửa hồ sơ khách khác hay đặt giờ kết thúc tùy ý.
-    if (!req.auth) {
+    if (isPublic) {
       const b = req.body || {};
       const name = cleanText(b.customer_name, 80);
-      const phone = cleanText(b.customer_phone, 20);
-      const phoneDigits = phone.replace(/[\s().-]/g, '');
+      const phone = normalizeVnPhone(b.customer_phone);
 
-      if (!name || !/^\+?\d{8,15}$/.test(phoneDigits)) {
-        return res.status(400).json({ error: 'Vui lòng nhập họ tên và số điện thoại hợp lệ.' });
+      if (!name || !phone) {
+        return res.status(400).json({ error: 'Vui lòng nhập họ tên và số điện thoại di động hợp lệ.' });
       }
       if (typeof b.branch_id !== 'string' || (b.service_id && typeof b.service_id !== 'string') ||
         !isDateStr(b.booking_date) || !isTimeStr(b.start_time) || !isReasonableBookingDate(b.booking_date)) {
         return res.status(400).json({ error: 'Thông tin đặt lịch không hợp lệ.' });
+      }
+      if (toGuestCount(b.num_guests) > MAX_ONLINE_GUESTS) {
+        return res.status(400).json({ code: 'TOO_MANY_GUESTS', error: OVER_GUEST_LIMIT_MESSAGE });
+      }
+      if (!(await verifyTurnstile(b.turnstile_token, ip))) {
+        return res.status(403).json({ code: 'TURNSTILE_FAILED', error: TURNSTILE_FAILED_MESSAGE });
       }
 
       const rawHoldIds = Array.isArray(b.hold_ids) ? b.hold_ids : (typeof b.hold_ids === 'string' ? [b.hold_ids] : []);
@@ -989,6 +1030,15 @@ router.post('/', bookingRateLimiter, async (req, res) => {
 
     const guestCount = toGuestCount(num_guests);
 
+    // Chống spam (chỉ khách tự đặt): ngân sách slot theo SĐT, rồi tính trạng thái/cảnh báo MỘT LẦN cho cả nhóm.
+    // Làm trước khi tạo/sửa hồ sơ khách để request bị chặn không để lại dữ liệu.
+    let spamFlag = { status: 'confirmed', internalNote: null };
+    if (isPublic) {
+      const phoneBudgetError = await checkSlotBudget(supabase, { phone: customer_phone, guestCount, checkIp: false });
+      if (phoneBudgetError) return res.status(429).json({ error: phoneBudgetError });
+      spamFlag = await computeSpamFlag(supabase, { ip, phone: customer_phone });
+    }
+
     let isTemporary = false;
     let finalTemporaryName = temporary_name || null;
 
@@ -1000,7 +1050,6 @@ router.post('/', bookingRateLimiter, async (req, res) => {
     }
 
     // 1) Resolve service-like data (duration + price)
-    let resolvedService = null;
     let duration = null;
     let price = 0;
 
@@ -1015,7 +1064,6 @@ router.post('/', bookingRateLimiter, async (req, res) => {
         return res.status(404).json({ error: 'Service not found' });
       }
 
-      resolvedService = service;
       duration = service.duration_minutes;
       price = service.price || 0;
     } else {
@@ -1083,81 +1131,90 @@ router.post('/', bookingRateLimiter, async (req, res) => {
       }
     }
 
-    // --- If hold_ids are provided, update them instead of creating new bookings ---
-    if (req.body.hold_ids && (Array.isArray(req.body.hold_ids) || typeof req.body.hold_ids === 'string')) {
-      const ids = Array.isArray(req.body.hold_ids) ? req.body.hold_ids : [req.body.hold_ids];
-      const updatedBookings = [];
+    const bookingSelect = `
+      *,
+      customers(name, phone, email),
+      services(name, duration_minutes, price),
+      employees(name),
+      beds(name),
+      branches(name)
+    `;
 
-      for (const id of ids) {
-        // --- Anti-Spam Check ---
-        let bookingStatus = 'confirmed';
-        let internalNote = null;
+    const respondCreated = (createdBookings, statusCode) => {
+      const result = createdBookings.length === 1 ? createdBookings[0] : createdBookings;
 
-        const isWalkIn = !isTemporary && normalize(customer_name).includes('khach la') && (!customer_phone || /^0+$/.test(customer_phone));
+      // Fire webhooks async
+      const webhookEvent = createdBookings.some(b => b.status === 'pending') ? 'booking.pending' : 'booking.confirmed';
+      fireWebhooks(webhookEvent, createdBookings).catch(err =>
+        console.error('Webhook fire error:', err.message)
+      );
 
-        if (!isTemporary && !isWalkIn && customer_phone) {
-          try {
-            const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
-            const { data: recentBookings, error: recentErr } = await supabase
-              .from('bookings')
-              .select('id, created_at, customers!inner(phone)')
-              .eq('customers.phone', customer_phone)
-              .gte('created_at', thirtyMinAgo);
+      // Broadcast SSE for live dashboard updates
+      createdBookings.forEach(b => {
+        broadcast('booking.created', b);
+      });
 
-            if (!recentErr && recentBookings && recentBookings.length > 0) {
-              bookingStatus = 'pending';
-              internalNote = `⚠️ Khách hàng ${customer_phone} đã có ${recentBookings.length} đơn trong 30 phút qua. Vui lòng xác nhận qua điện thoại.`;
-            }
-          } catch (spamCheckErr) {
-          }
-        }
+      return res.status(statusCode).json(result);
+    };
 
-        const { data: updated, error: upErr } = await supabase
+    // --- Có hold_ids: chốt các lịch giữ chỗ thay vì tạo mới — CHỈ khi còn đủ giữ chỗ cho cả nhóm ---
+    const holdIds = Array.isArray(req.body.hold_ids)
+      ? req.body.hold_ids
+      : (typeof req.body.hold_ids === 'string' ? [req.body.hold_ids] : []);
+
+    if (holdIds.length > 0) {
+      const { data: validHolds, error: holdErr } = await supabase
+        .from('bookings')
+        .select('id')
+        .in('id', holdIds)
+        .eq('status', 'pending')
+        .like('internal_note', `${HOLD_NOTE_PREFIX}%`)
+        .eq('branch_id', branch_id)
+        .eq('booking_date', booking_date);
+      if (holdErr) throw holdErr;
+
+      const validIds = (validHolds || []).map(h => h.id);
+      let leftoverIds = validIds;
+
+      if (validIds.length === guestCount) {
+        const { data: updatedBookings, error: upErr } = await supabase
           .from('bookings')
           .update({
             customer_id: isTemporary ? null : customer.id,
             temporary_name: isTemporary ? finalTemporaryName : null,
-            status: bookingStatus,
+            status: spamFlag.status,
             notes: notes || null,
-            internal_note: internalNote // clear the GIỮ CHỖ TẠM THỜI note!
+            internal_note: spamFlag.internalNote, // xóa ghi chú GIỮ CHỖ TẠM THỜI
+            num_guests: guestCount
           })
-          .eq('id', id)
+          .in('id', validIds)
           // Chỉ được "chốt" đúng lịch GIỮ CHỖ TẠM THỜI — trước đây truyền ID của bất kỳ lịch nào
           // vào hold_ids là ghi đè được tên khách / trạng thái của lịch đó.
           .eq('status', 'pending')
-          .like('internal_note', '[GIỮ CHỖ TẠM THỜI]%')
-          .select(`
-            *,
-            customers(name, phone, email),
-            services(name, duration_minutes, price),
-            employees(name),
-            beds(name),
-            branches(name)
-          `)
-          .single();
+          .like('internal_note', `${HOLD_NOTE_PREFIX}%`)
+          .select(bookingSelect);
+        if (upErr) throw upErr;
 
-        if (!upErr && updated) {
-          updatedBookings.push(updated);
+        if ((updatedBookings || []).length === validIds.length) {
+          return respondCreated(updatedBookings, 200);
         }
+        // Có giữ chỗ vừa hết hạn đúng lúc chốt → gỡ phần đã chốt, tạo lại đủ cả nhóm bên dưới
+        leftoverIds = (updatedBookings || []).map(b => b.id);
       }
 
-      if (updatedBookings.length > 0) {
-        const result = updatedBookings.length === 1 ? updatedBookings[0] : updatedBookings;
-
-        // Fire webhooks async
-        const webhookEvent = updatedBookings.some(b => b.status === 'pending') ? 'booking.pending' : 'booking.confirmed';
-        fireWebhooks(webhookEvent, updatedBookings).catch(err =>
-          console.error('Webhook fire error:', err.message)
-        );
-
-        // Broadcast SSE for live dashboard updates
-        const broadcast = getBroadcast(req);
-        updatedBookings.forEach(b => {
-          broadcast('booking.created', b);
-        });
-
-        return res.status(200).json(result);
+      // Thiếu giữ chỗ (đã hết hạn / không khớp số khách) → nhả phần còn lại, tạo mới bên dưới
+      // (luồng tạo mới tự kiểm tra lại chỗ trống: còn chỗ thì khách vẫn đặt được, hết chỗ thì báo rõ ràng).
+      if (leftoverIds.length > 0) {
+        const { error: releaseErr } = await supabase.from('bookings').delete().in('id', leftoverIds);
+        if (releaseErr) throw releaseErr;
+        leftoverIds.forEach(id => broadcast('booking.hold_released', { id }));
       }
+    }
+
+    // Tạo mới từ landing page → kiểm tra ngân sách slot theo IP (khi chốt giữ chỗ thì đã tính lúc giữ chỗ)
+    if (isPublic) {
+      const ipBudgetError = await checkSlotBudget(supabase, { ip, guestCount });
+      if (ipBudgetError) return res.status(429).json({ error: ipBudgetError });
     }
 
     // 4) Load existing bookings in branch/day
@@ -1219,168 +1276,63 @@ router.post('/', bookingRateLimiter, async (req, res) => {
 
     if (bedErr) throw bedErr;
 
-    // 7) Create bookings for each guest (auto assign employee/bed)
-    const createdBookings = [];
-
-    // 7.0) Load settings (buffer time and tour order)
+    // 7) Load settings (buffer time and tour order)
     const { data: settingsData } = await supabase.from('settings').select('*');
     const settings = (settingsData || []).reduce((acc, curr) => {
       acc[curr.key] = curr.value;
       return acc;
     }, {});
 
-    const bufferTime = parseInt(settings.buffer_time) || 15;
-    const tourOrder = settings[`tour_order_${branch_id}`] || [];
-
-    const crypto = require('crypto');
-    const groupBookingId = guestCount > 1 ? crypto.randomUUID() : null;
-
-    for (let g = 0; g < guestCount; g++) {
-      const busyEmployeeIds = new Set();
-      const allRelevantBookings = [...dayBookings, ...createdBookings.map(b => ({
-        employee_id: b.employee_id,
-        bed_id: b.bed_id,
-        start_time: b.start_time,
-        end_time: b.end_time
-      }))];
-
-      for (const booking of allRelevantBookings) {
-        const bStart = timeToMinutes(booking.start_time);
-        const bEnd = timeToMinutes(booking.end_time) + bufferTime;
-        if (startMinutes < bEnd && bStart < endMinutes) {
-          busyEmployeeIds.add(booking.employee_id);
-        }
-      }
-
-      // Sort by Tour Order from Settings
-      const availableEmployees = sortByTourOrder(employees.filter(e => !busyEmployeeIds.has(e.id)), tourOrder);
-      if (availableEmployees.length === 0) {
-        return res.status(409).json({ error: 'No employees available for this time slot' });
-      }
-
-      let assignedEmployee = availableEmployees[0];
-
-      // If employee_id is explicitly requested (e.g. from admin click), try to use it for the first guest
-      if (g === 0 && req.body.employee_id) {
-        const requestedEmp = availableEmployees.find(e => e.id === req.body.employee_id);
-        if (requestedEmp) {
-          assignedEmployee = requestedEmp;
-        }
-      }
-
-      // Beds
-      const busyBedIds = new Set();
-      for (const booking of allRelevantBookings) {
-        const bStart = timeToMinutes(booking.start_time);
-        const bEnd = timeToMinutes(booking.end_time);
-        if (startMinutes < bEnd && bStart < endMinutes) {
-          busyBedIds.add(booking.bed_id);
-        }
-      }
-
-      const availableBeds = beds.filter(b => !busyBedIds.has(b.id));
-      if (availableBeds.length === 0) {
-        return res.status(409).json({ error: 'No beds available for this time slot' });
-      }
-
-      const bedBookingCount = {};
-      for (const bed of beds) bedBookingCount[bed.id] = 0;
-      for (const booking of allRelevantBookings) {
-        if (bedBookingCount[booking.bed_id] !== undefined) bedBookingCount[booking.bed_id]++;
-      }
-
-      availableBeds.sort((a, b) => (bedBookingCount[a.id] || 0) - (bedBookingCount[b.id] || 0));
-      const assignedBed = availableBeds[0];
-
-      // --- Anti-Spam Check: query recent bookings by same phone in last 30 min ---
-      // Skip for "Khách Lạ" (walk-in) customers with placeholder phone numbers
-      let bookingStatus = 'confirmed';
-      let internalNote = null;
-
-      const isWalkIn = !isTemporary && normalize(customer_name).includes('khach la') && (!customer_phone || /^0+$/.test(customer_phone));
-
-      if (!isTemporary && !isWalkIn && customer_phone) {
-        try {
-          const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
-          
-          const { data: oldBookings } = await supabase
-            .from('bookings')
-            .select('id, customers!inner(phone)')
-            .eq('customers.phone', customer_phone)
-            .lt('created_at', thirtyMinAgo)
-            .limit(1);
-
-          const isOldCustomer = oldBookings && oldBookings.length > 0;
-
-          if (!isOldCustomer) {
-            const { data: recentBookings, error: recentErr } = await supabase
-              .from('bookings')
-              .select('id, created_at, customers!inner(phone)')
-              .eq('customers.phone', customer_phone)
-              .gte('created_at', thirtyMinAgo);
-
-            if (!recentErr && recentBookings && recentBookings.length > 0) {
-              bookingStatus = 'pending';
-              internalNote = `⚠️ Khách hàng ${customer_phone} đã có ${recentBookings.length} đơn trong 30 phút qua. Vui lòng xác nhận qua điện thoại.`;
-            }
-          }
-        } catch (spamCheckErr) {
-          // Don't block booking if spam check fails, just log
-        }
-      }
-
-      // Create booking row
-      const insertPayload = {
-        customer_id: isTemporary ? null : customer.id,
-        temporary_name: isTemporary ? finalTemporaryName : null,
-        service_id: service_id || null,
-        employee_id: assignedEmployee.id,
-        bed_id: assignedBed.id,
-        branch_id,
-        num_guests: guestCount,
-        booking_date,
-        start_time,
-        end_time,
-        status: bookingStatus,
-        total_price: price,
-        notes: notes || null,
-        internal_note: internalNote,
-        group_booking_id: groupBookingId
-      };
-
-
-      const { data: booking, error: bookErr } = await supabase
-        .from('bookings')
-        .insert([insertPayload])
-        .select(`
-          *,
-          customers(name, phone, email),
-          services(name, duration_minutes, price),
-          employees(name),
-          beds(name),
-          branches(name)
-        `)
-        .single();
-
-      if (bookErr) throw bookErr;
-      createdBookings.push(booking);
+    // 8) Xếp nhân viên & giường cho CẢ NHÓM trước; thiếu 1 người là báo lỗi, chưa ghi gì vào DB
+    const plan = planGroupAssignment({
+      guestCount,
+      startMinutes,
+      endMinutes,
+      dayBookings,
+      employees,
+      beds,
+      bufferTime: parseInt(settings.buffer_time) || 15,
+      tourOrder: settings[`tour_order_${branch_id}`] || [],
+      // Nhân viên được chỉ định (VD admin kéo tạo lịch trên cột của nhân viên) → dùng cho khách đầu tiên
+      requestedEmployeeId: req.body.employee_id || null
+    });
+    if (!plan.ok) {
+      return res.status(409).json({
+        error: plan.reason === 'no_bed' ? 'No beds available for this time slot' : 'No employees available for this time slot'
+      });
     }
 
-    const result = createdBookings.length === 1 ? createdBookings[0] : createdBookings;
+    const groupBookingId = guestCount > 1 ? crypto.randomUUID() : null;
+    const clientIpField = ip && (await supportsClientIp(supabase)) ? { client_ip: ip } : {};
 
-    // Fire webhooks async (keep your old logic)
-    const webhookEvent = createdBookings.some(b => b.status === 'pending') ? 'booking.pending' : 'booking.confirmed';
-    fireWebhooks(webhookEvent, createdBookings).catch(err =>
-      console.error('Webhook fire error:', err.message)
-    );
+    const rows = plan.assignments.map(({ employee_id, bed_id }) => ({
+      customer_id: isTemporary ? null : customer.id,
+      temporary_name: isTemporary ? finalTemporaryName : null,
+      service_id: service_id || null,
+      employee_id,
+      bed_id,
+      branch_id,
+      num_guests: guestCount,
+      booking_date,
+      start_time,
+      end_time,
+      status: spamFlag.status,
+      total_price: price,
+      notes: notes || null,
+      internal_note: spamFlag.internalNote,
+      group_booking_id: groupBookingId,
+      ...clientIpField
+    }));
 
-    // Broadcast SSE for live dashboard updates
-    const broadcast = getBroadcast(req);
-    createdBookings.forEach(b => {
-      broadcast('booking.created', b);
-    });
+    // 1 lệnh insert nhiều dòng = 1 câu SQL → hoặc vào đủ cả nhóm, hoặc không dòng nào
+    const { data: createdBookings, error: bookErr } = await supabase
+      .from('bookings')
+      .insert(rows)
+      .select(bookingSelect);
 
-    res.status(201).json(result);
+    if (bookErr) throw bookErr;
+
+    return respondCreated(createdBookings, 201);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1465,21 +1417,50 @@ router.put('/:id/status', async (req, res) => {
 
 /**
  * DELETE /api/bookings/:id
+ * Query: group=1 → xóa luôn các lịch cùng nhóm (group_booking_id).
+ * Chỉ xóa 1 người trong nhóm → cập nhật num_guests của những người còn lại cho đúng số thực tế.
  */
 router.delete('/:id', async (req, res) => {
   try {
-    const { error } = await supabase
+    const { data: booking } = await supabase
       .from('bookings')
-      .delete()
-      .eq('id', req.params.id);
+      .select('id, group_booking_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+
+    const groupId = booking?.group_booking_id || null;
+    const deleteWholeGroup = groupId && (req.query.group === '1' || req.query.group === 'true');
+
+    let query = supabase.from('bookings').delete();
+    query = deleteWholeGroup ? query.eq('group_booking_id', groupId) : query.eq('id', req.params.id);
+    const { data: deletedRows, error } = await query.select('id');
 
     if (error) throw error;
+    const deletedIds = (deletedRows || []).map(r => r.id);
+    if (deletedIds.length === 0) deletedIds.push(req.params.id);
+
+    const broadcast = getBroadcast(req);
+
+    if (groupId && !deleteWholeGroup) {
+      const { data: remaining, error: remErr } = await supabase
+        .from('bookings')
+        .select('id')
+        .eq('group_booking_id', groupId)
+        .neq('status', 'cancelled');
+      if (!remErr && remaining?.length) {
+        const { error: countErr } = await supabase
+          .from('bookings')
+          .update({ num_guests: remaining.length })
+          .in('id', remaining.map(r => r.id));
+        if (countErr) console.warn('[bookings DELETE] Không cập nhật được num_guests của nhóm:', countErr.message);
+        else remaining.forEach(r => broadcast('booking.updated', { id: r.id, num_guests: remaining.length }));
+      }
+    }
 
     // Broadcast SSE for live dashboard updates
-    const broadcast = getBroadcast(req);
-    broadcast('booking.deleted', { id: req.params.id });
+    deletedIds.forEach(id => broadcast('booking.deleted', { id }));
 
-    res.json({ message: 'Booking deleted successfully' });
+    res.json({ message: 'Booking deleted successfully', deleted_ids: deletedIds });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1488,6 +1469,10 @@ router.delete('/:id', async (req, res) => {
 function timeToMinutes(timeStr) {
   const parts = timeStr.split(':');
   return parseInt(parts[0]) * 60 + parseInt(parts[1]);
+}
+
+function minutesToTime(totalMinutes) {
+  return `${String(Math.floor(totalMinutes / 60)).padStart(2, '0')}:${String(totalMinutes % 60).padStart(2, '0')}`;
 }
 
 async function fireWebhooks(event, bookings) {

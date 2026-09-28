@@ -1,5 +1,6 @@
 const supabase = require('../supabaseClient');
 const { getClientIp } = require('./security');
+const { normalizeVnPhone } = require('../lib/antiSpam');
 
 // In-memory store for IP rate limiting
 // Key: IP, Value: Array of timestamps of booking attempts
@@ -62,7 +63,8 @@ async function bookingRateLimiter(req, res, next) {
 
   // 2) --- Phone-based Rate Limiting ---
   if (customer_phone) {
-    const cleanPhone = customer_phone.trim();
+    // So theo dạng đã chuẩn hóa (route lưu SĐT dạng 0xxxxxxxxx) → '0912 345 678' và '0912345678' là cùng 1 số
+    const cleanPhone = normalizeVnPhone(customer_phone) || customer_phone.trim();
     // Do not rate limit placeholder walk-in phones (e.g. 0000000000)
     const isWalkIn = /^0+$/.test(cleanPhone);
 

@@ -15,6 +15,7 @@ const ACCESS_RULES = [
 
   // ---- Public: landing page + tiện ích ----
   { method: 'GET', path: /^\/health$/, role: 'public' },
+  { method: 'GET', path: /^\/turnstile\/config$/, role: 'public' },
   { method: 'GET', path: new RegExp(`^/branches(/${ID})?$`), role: 'public' },
   { method: 'GET', path: new RegExp(`^/services(/${ID})?$`), role: 'public' },
   { method: 'GET', path: /^\/availability(\/merged)?$/, role: 'public' },

@@ -733,6 +733,7 @@ async function executeTool(toolName, params, context) {
         return {
           ...bookingParams,
           branch_id,
+          num_guests,
           group_booking_id,
           employee_id: empId
         };
