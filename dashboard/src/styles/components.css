@@ -131,6 +131,38 @@
   background-color: transparent;
 }
 
+/* ---- Nút đang xử lý / bị khóa ---- */
+.btn:disabled,
+.btn-icon:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  pointer-events: none; /* không hover/scale khi đang khóa */
+}
+
+button[aria-busy="true"] {
+  cursor: progress;
+}
+
+.btn-busy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+/* Vòng xoay nhỏ trong nút, lấy màu theo chữ của nút */
+.btn-spinner {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  vertical-align: -2px;
+  animation: spin 0.7s linear infinite;
+}
+
 /* ---- Cards ---- */
 .card {
   background-color: var(--white);

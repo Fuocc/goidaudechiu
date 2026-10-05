@@ -8,6 +8,8 @@ import { useIsMobile } from '../hooks/useIsMobile';
 import { toDateStr } from '../utils/time';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useModalA11y } from '../hooks/useModalA11y';
+import { useBusy } from '../hooks/useBusy';
+import BusyLabel from '../components/BusyLabel';
 import { DEFAULT_SHIFT } from '../config/business';
 import '../styles/schedules.css';
 
@@ -52,7 +54,7 @@ function EmployeeSchedules() {
     is_day_off: false, note: '', selectedDays: []
   });
 
-  const [creatingDefault, setCreatingDefault] = useState(false);
+  const { run, isBusy } = useBusy();
   const [loading, setLoading] = useState(true);
   const loadSeqRef = useRef(0);
 
@@ -153,37 +155,44 @@ function EmployeeSchedules() {
       toast.warn('Vui lòng chọn ít nhất 1 ngày');
       return;
     }
-    try {
-      await createBulkSchedule({
-        employee_id: scheduleForm.employee_id,
-        dates: scheduleForm.selectedDays,
-        start_time: scheduleForm.start_time,
-        end_time: scheduleForm.end_time,
-        is_day_off: scheduleForm.is_day_off,
-        note: scheduleForm.note
-      });
-      setModalOpen(false);
-      notify(`Thêm lịch làm thành công`);
-      loadData();
-    } catch (err) {
-      toast.error(err.message);
-    }
+    await run('save', async () => {
+      try {
+        await createBulkSchedule({
+          employee_id: scheduleForm.employee_id,
+          dates: scheduleForm.selectedDays,
+          start_time: scheduleForm.start_time,
+          end_time: scheduleForm.end_time,
+          is_day_off: scheduleForm.is_day_off,
+          note: scheduleForm.note
+        });
+        setModalOpen(false);
+        notify(`Thêm lịch làm thành công`);
+        loadData();
+      } catch (err) {
+        toast.error(err.message);
+      }
+    });
   };
 
   const handleDeleteSchedule = async (id) => {
+    if (isBusy(`delete:${id}`)) return;
     if (!(await confirmDialog({ message: 'Xóa lịch này?', confirmText: 'Xóa', danger: true }))) return;
-    try {
-      await deleteEmployeeSchedule(id);
-      notify(`Xóa lịch làm thành công`);
-      loadData();
-    } catch (err) {
-      toast.error(err.message);
-    }
+    await run(`delete:${id}`, async () => {
+      try {
+        await deleteEmployeeSchedule(id);
+        notify(`Xóa lịch làm thành công`);
+        setModalOpen(false); // lịch đã xóa → không để modal mở trên lịch không còn tồn tại
+        loadData();
+      } catch (err) {
+        toast.error(err.message);
+      }
+    });
   };
 
   // Tạo lịch mặc định 09:00-22:00 cho các nhân viên đang hiển thị trong 30 ngày tới.
   // Chỉ tạo cho ngày CHƯA có lịch (skip_existing) → không ghi đè ngày nghỉ / ca đặc biệt đã xếp tay.
   const createDefaultSchedulesFor30Days = async () => {
+    if (isBusy('createDefault')) return;
     if (employees.length === 0) {
       toast.warn('Chưa có nhân viên');
       return;
@@ -191,8 +200,7 @@ function EmployeeSchedules() {
 
     if (!(await confirmDialog({ message: 'Tạo lịch mặc định 09:00 AM - 10:00 PM cho TẤT CẢ nhân viên trong 30 ngày tới?\n\nChỉ tạo cho những ngày chưa có lịch — ngày nghỉ và ca đã xếp trước sẽ được giữ nguyên.', confirmText: 'Tạo lịch' }))) return;
 
-    setCreatingDefault(true);
-    try {
+    await run('createDefault', async () => {
       const dates = Array.from({ length: 30 }, (_, i) => {
         const d = new Date();
         d.setDate(d.getDate() + i);
@@ -224,10 +232,13 @@ function EmployeeSchedules() {
       } else {
         toast.error(`Không tạo được lịch cho: ${failed.join(', ')}. Vui lòng thử lại.`, { position: 'bottom-right' });
       }
-    } finally {
-      setCreatingDefault(false);
-    }
+    });
   };
+
+  const creatingDefault = isBusy('createDefault');
+  // Đang lưu / đang xóa lịch trong modal → khóa cả 2 nút để không vừa lưu vừa xóa
+  const saving = isBusy('save');
+  const deletingInModal = !!scheduleForm.id && isBusy(`delete:${scheduleForm.id}`);
 
   const weekLabel = `${weekDates[0].getDate()}/${weekDates[0].getMonth() + 1} – ${weekDates[6].getDate()}/${weekDates[6].getMonth() + 1}/${weekDates[6].getFullYear()}`;
   const todayStr = toDateStr(new Date());
@@ -242,8 +253,8 @@ function EmployeeSchedules() {
           <p className="page-subtitle">Quản lý lịch làm việc, ca làm, ngày nghỉ</p>
         </div>
         <div className="schedule-filters" style={isMobile ? { flexDirection: 'column', width: '100%' } : {}}>
-          <button className="btn btn-secondary" onClick={createDefaultSchedulesFor30Days} disabled={creatingDefault} style={isMobile ? { fontSize: 12 } : {}}>
-            {creatingDefault ? 'Đang tạo...' : 'Tạo lịch mặc định (9:00AM - 10:00PM)'}
+          <button className="btn btn-secondary" onClick={createDefaultSchedulesFor30Days} disabled={creatingDefault} aria-busy={creatingDefault} style={isMobile ? { fontSize: 12 } : {}}>
+            <BusyLabel busy={creatingDefault} text="Đang tạo...">Tạo lịch mặc định (9:00AM - 10:00PM)</BusyLabel>
           </button>
           <button className="btn btn-primary" onClick={() => openScheduleModal()}>
             <FiPlus /> Xếp lịch
@@ -462,9 +473,14 @@ function EmployeeSchedules() {
               </div>
               <div className="modal-footer">
                 {scheduleForm.id && (
-                  <button type="button" className="btn btn-danger" onClick={() => handleDeleteSchedule(scheduleForm.id)}>Xóa lịch làm</button>
+                  <button type="button" className="btn btn-danger" onClick={() => handleDeleteSchedule(scheduleForm.id)}
+                    disabled={saving || deletingInModal} aria-busy={deletingInModal}>
+                    <BusyLabel busy={deletingInModal} text="Đang xóa...">Xóa lịch làm</BusyLabel>
+                  </button>
                 )}
-                <button type="submit" className="btn btn-primary btn-save">Lưu lịch</button>
+                <button type="submit" className="btn btn-primary btn-save" disabled={saving || deletingInModal} aria-busy={saving}>
+                  <BusyLabel busy={saving} text="Đang lưu...">Lưu lịch</BusyLabel>
+                </button>
               </div>
             </form>
           </div>

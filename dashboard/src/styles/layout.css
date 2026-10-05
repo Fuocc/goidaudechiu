@@ -61,6 +61,9 @@
 @media only screen and (max-width: 768px) {
   .main-content {
     margin-left: 0;
+    /* Flex item mặc định min-width: auto → bị nội dung rộng (lưới lịch nhiều NV) kéo giãn, cả trang cuộn ngang
+       và thanh menu dưới (position: fixed) bị giãn/lệch theo. Khóa bằng bề ngang màn hình. */
+    min-width: 0;
     /* Chừa vùng tai thỏ / Dynamic Island để nội dung không bị che */
     padding-top: var(--safe-area-top);
     padding-bottom: calc(var(--mobile-bottom-nav-height, 64px) + env(safe-area-inset-bottom, 0px));

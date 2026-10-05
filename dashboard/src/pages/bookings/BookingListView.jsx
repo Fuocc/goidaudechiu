@@ -154,14 +154,15 @@ export default function BookingListView({
               ) : (
                 mobileListItems.map(({ key, lead, members, ids, guestCount, status, hasSpamWarning, isHold, endTime, serviceNames, notes, internalNotes }) => {
                   const isGroup = guestCount > 1;
+                  // Thẻ nhóm: mở lịch đầu tiên (không phải giữ chỗ) ở chế độ nhóm → sửa ngày/giờ, hủy áp dụng cho cả nhóm
+                  const target = isGroup ? (members.find(m => !isHoldBooking(m)) || lead) : lead;
                   return (
                     <div
                       key={key}
                       id={`booking-card-${lead.id}`}
                       data-booking-ids={ids.join(' ')}
                       className={`booking-card-mobile${hasSpamWarning ? ' row-spam-warning' : ''}${isHold ? ' is-hold-disabled' : ''}${isGroup ? ' is-group' : ''}`}
-                      // Thẻ nhóm: bấm vào từng dòng khách bên dưới để mở đúng lịch của người đó
-                      onClick={() => { if (!isHold && !isGroup) handleOpenDetail(lead); }}
+                      onClick={() => { if (!isHold) handleOpenDetail(target, { groupMode: isGroup }); }}
                     >
                       <div className="booking-card-mobile-header">
                         <span className="booking-card-mobile-customer">{lead.temporary_name || lead.customers?.name || '-'}</span>
@@ -174,29 +175,6 @@ export default function BookingListView({
                         </span>
                         <span className={`badge badge-${status}`}>{groupStatusLabel(status)}</span>
                       </div>
-
-                      {isGroup && (
-                        <div className="booking-card-mobile-members">
-                          {members.map(m => (
-                            <button
-                              key={m.id}
-                              type="button"
-                              className="booking-card-mobile-member"
-                              disabled={isHoldBooking(m)}
-                              onClick={(e) => { e.stopPropagation(); handleOpenDetail(m); }}
-                            >
-                              {isSpamWarningBooking(m) && <FiAlertTriangle size={12} className="cal-alert-icon" />}
-                              <span className="booking-card-mobile-member-staff">{m.employees?.name || 'Chưa xếp NV'}</span>
-                              <span className="booking-card-mobile-member-meta">
-                                {m.services?.name || '-'} · {formatTime(m.start_time)}–{formatTime(m.end_time)}
-                              </span>
-                              {status === 'mixed' && (
-                                <span className={`badge badge-${m.status}`}>{bookingStatusLabel(m.status)}</span>
-                              )}
-                            </button>
-                          ))}
-                        </div>
-                      )}
 
                       {notes.length > 0 && (
                         <div className="booking-card-mobile-footer">

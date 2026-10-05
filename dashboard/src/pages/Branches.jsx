@@ -7,6 +7,8 @@ import { notifyError } from '../utils/notify';
 import { toast } from 'react-toastify';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useModalA11y } from '../hooks/useModalA11y';
+import { useBusy } from '../hooks/useBusy';
+import BusyLabel from '../components/BusyLabel';
 import { DEFAULT_OPENING_HOURS, DEFAULT_DAY_HOURS, DISPLAY_FALLBACK_DAY_HOURS } from '../config/business';
 import '../styles/branches.css';
 
@@ -38,7 +40,7 @@ function Branches() {
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [saving, setSaving] = useState(false);
+  const { run, isBusy } = useBusy();
   const [form, setForm] = useState({ name: '', address: '', phone: '', image_url: '', google_map_url: '', opening_hours: DEFAULT_OPENING_HOURS, bed_count: 10 });
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -105,26 +107,25 @@ function Branches() {
     setModalOpen(true);
   };
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault();
-    if (saving) return;
-    setSaving(true);
-    try {
-      if (editing) {
-        await updateBranch(editing.id, form);
-      } else {
-        await createBranch(form);
+    return run('save', async () => {
+      try {
+        if (editing) {
+          await updateBranch(editing.id, form);
+        } else {
+          await createBranch(form);
+        }
+        setModalOpen(false);
+        loadBranches();
+      } catch (err) {
+        toast.error(err.message);
       }
-      setModalOpen(false);
-      loadBranches();
-    } catch (err) {
-      toast.error(err.message);
-    } finally {
-      setSaving(false);
-    }
+    });
   };
 
   const handleDelete = async (id) => {
+    if (isBusy(`delete:${id}`)) return;
     const isConfirmed = await confirmDialog({ 
       message: 'Bạn có chắc muốn xóa chi nhánh này? Điều này có thể ảnh hưởng đến nhân viên và giường thuộc chi nhánh.', 
       confirmText: 'Xóa', 
@@ -133,16 +134,22 @@ function Branches() {
 
     if (!isConfirmed) return;
     
-    try {
-      await deleteBranch(id);
-      setEditing(null); 
-      setModalOpen(false); 
+    await run(`delete:${id}`, async () => {
+      try {
+        await deleteBranch(id);
+        setEditing(null); 
+        setModalOpen(false); 
 
-      loadBranches();
-    } catch (err) {
-      toast.error(err.message);
-    }
+        loadBranches();
+      } catch (err) {
+        toast.error(err.message);
+      }
+    });
   };
+
+  // Đang lưu / đang xóa chi nhánh trong modal → khóa cả 2 nút để không vừa lưu vừa xóa
+  const saving = isBusy('save');
+  const deleting = !!editing && isBusy(`delete:${editing.id}`);
 
   const modalRef = useModalA11y(modalOpen, () => setModalOpen(false));
 
@@ -336,17 +343,21 @@ function Branches() {
                     <button 
                       type="button" 
                       className="btn btn-danger" 
+                      disabled={saving || deleting}
+                      aria-busy={deleting}
                       onClick={(e) => { 
                         e.preventDefault(); 
                         e.stopPropagation(); 
                         handleDelete(editing.id); 
                       }}
                     >
-                      Xoá
+                      <BusyLabel busy={deleting} text="Đang xóa...">Xoá</BusyLabel>
                     </button>
                   )}
-                  <button type="submit" className="btn btn-primary" disabled={saving}>
-                    {saving ? 'Đang cập nhật...' : (editing ? 'Cập nhật' : 'Thêm')}
+                  <button type="submit" className="btn btn-primary" disabled={saving || deleting} aria-busy={saving}>
+                    <BusyLabel busy={saving} text={editing ? 'Đang cập nhật...' : 'Đang thêm...'}>
+                      {editing ? 'Cập nhật' : 'Thêm'}
+                    </BusyLabel>
                   </button>
                 </div>
               </form>

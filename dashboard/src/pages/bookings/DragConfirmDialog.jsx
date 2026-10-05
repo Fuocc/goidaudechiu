@@ -1,4 +1,5 @@
 import { getInitial } from '../../utils/format';
+import BusyLabel from '../../components/BusyLabel';
 
 // Popup xác nhận đổi giờ / nhân viên sau khi kéo-thả thẻ lịch
 // Component trình bày: state + handler vẫn nằm ở Bookings.jsx, truyền vào qua props.
@@ -6,8 +7,10 @@ export default function DragConfirmDialog({
   dragConfirm,
   dragConfirmRef,
   handleDragCancel,
-  handleDragConfirm
+  handleDragConfirm,
+  dragSavingMode // 'single' | 'group' khi đang lưu → khóa các nút, nút vừa bấm hiện "Đang lưu..."
 }) {
+  const saving = !!dragSavingMode;
   // Kéo lịch thuộc nhóm sang giờ khác → hỏi dời cả nhóm hay chỉ khách này (chỉ đổi nhân viên thì không hỏi)
   const askGroup = !!dragConfirm && dragConfirm.groupSize > 1 && dragConfirm.timingChanged;
   return (
@@ -17,7 +20,7 @@ export default function DragConfirmDialog({
           <div className="drag-confirm-popup" ref={dragConfirmRef} onClick={e => e.stopPropagation()}>
             <div className="drag-confirm-header">
               <h3 className="drag-confirm-title">Xác nhận thay đổi?</h3>
-              <button className="modal-close" aria-label="Đóng" onClick={handleDragCancel}>
+              <button className="modal-close" aria-label="Đóng" onClick={handleDragCancel} disabled={saving}>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                   <path d="M19 5L5 19" stroke="black" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"></path>
                   <path d="M5 5L19 19" stroke="black" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"></path>
@@ -54,14 +57,20 @@ export default function DragConfirmDialog({
               </p>
             )}
             <div className="drag-confirm-actions">
-              <button className="drag-confirm-cancel" onClick={handleDragCancel}>Hủy, giữ nguyên</button>
+              <button className="drag-confirm-cancel" onClick={handleDragCancel} disabled={saving}>Hủy, giữ nguyên</button>
               {askGroup ? (
                 <>
-                  <button className="drag-confirm-alt" onClick={() => handleDragConfirm(false)}>Chỉ khách này</button>
-                  <button className="drag-confirm-submit" onClick={() => handleDragConfirm(true)}>Dời cả nhóm ({dragConfirm.groupSize})</button>
+                  <button className="drag-confirm-alt" onClick={() => handleDragConfirm(false)} disabled={saving} aria-busy={dragSavingMode === 'single'}>
+                    <BusyLabel busy={dragSavingMode === 'single'} text="Đang lưu...">Chỉ khách này</BusyLabel>
+                  </button>
+                  <button className="drag-confirm-submit" onClick={() => handleDragConfirm(true)} disabled={saving} aria-busy={dragSavingMode === 'group'}>
+                    <BusyLabel busy={dragSavingMode === 'group'} text="Đang dời nhóm...">Dời cả nhóm ({dragConfirm.groupSize})</BusyLabel>
+                  </button>
                 </>
               ) : (
-                <button className="drag-confirm-submit" onClick={() => handleDragConfirm(false)}>Thay Đổi</button>
+                <button className="drag-confirm-submit" onClick={() => handleDragConfirm(false)} disabled={saving} aria-busy={saving}>
+                  <BusyLabel busy={saving} text="Đang lưu...">Thay Đổi</BusyLabel>
+                </button>
               )}
             </div>
           </div>

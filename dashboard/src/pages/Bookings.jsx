@@ -14,7 +14,8 @@ import { describeError } from '../utils/notify';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useModalA11y } from '../hooks/useModalA11y';
 import { useAppUI } from '../context/AppUIContext';
-import { WALK_IN_CUSTOMER_NAME } from '../config/business';
+import { WALK_IN_CUSTOMER_NAME, TIME_PICKER_MIN_HOUR } from '../config/business';
+import { useBusy } from '../hooks/useBusy';
 import { useIsMobile, MOBILE_BREAKPOINT } from '../hooks/useIsMobile';
 import {
   OPEN_HOUR, ROW_HEIGHT, toDateStr, timeToMinutes, normalize, normalizeName,
@@ -62,7 +63,8 @@ function Bookings() {
   const [modalOpen, setModalOpen] = useState(false);
   const [detailModal, setDetailModal] = useState(null);
   const [detailEdit, setDetailEdit] = useState(null);
-  const [detailSaving, setDetailSaving] = useState(false);
+  // Mở từ thẻ nhóm (mobile): đổi ngày/giờ và hủy lịch áp dụng cho cả nhóm, không hỏi từng khách
+  const [detailGroupMode, setDetailGroupMode] = useState(false);
   const [detailCustomerView, setDetailCustomerView] = useState('selected'); // 'selected', 'searching', 'creating'
   const [bookForm, setBookForm] = useState({
     branch_id: '', service_id: '', num_guests: 1,
@@ -76,10 +78,12 @@ function Bookings() {
   const [detailTab, setDetailTab] = useState('schedule'); // 'schedule' or 'customer'
   const [employeeSchedules, setEmployeeSchedules] = useState([]);
   const [showDetailMore, setShowDetailMore] = useState(false);
-  const [isCreating, setIsCreating] = useState(false);
+  // Thao tác đang chạy (lưu / tạo / hủy / kéo-thả / tắt cảnh báo) → khóa nút + hiện "Đang ..."
+  const { run, isBusy } = useBusy();
   // Drag-and-drop reorder state
   const [cardDrag, setCardDrag] = useState(null); // { booking, startCol, startTop }
   const [dragConfirm, setDragConfirm] = useState(null); // { booking, fromStaff, fromTime, toStaff, toTime, toStaffId, newDate, newStart, newEnd }
+  const [dragSavingMode, setDragSavingMode] = useState(null); // nút đang lưu trong popup kéo-thả: 'single' | 'group' | null
   // Drag-to-create state
   const [dragInfo, setDragInfo] = useState(null); // { startY, currentY, staffId, staffName, columnEl }
   const [hoverInfo, setHoverInfo] = useState(null); // { staffId, y, colLeft, colWidth }
@@ -482,12 +486,17 @@ function Bookings() {
     }
   };
 
-  const handleCancel = async (id) => {
+  const handleCancel = (id) => run('cancelFlow', async () => {
     const booking = bookings.find(b => b.id === id) || detailModal;
     const groupSize = getGroupMembers(booking).length;
 
     let group = false;
-    if (groupSize > 1) {
+    if (groupSize > 1 && detailGroupMode && detailModal?.id === id) {
+      if (!(await confirmDialog({ message: `Hủy lịch cho cả nhóm ${groupSize} khách?`, confirmText: `Hủy cả nhóm (${groupSize})`, cancelText: 'Không', danger: true }))) {
+        return;
+      }
+      group = true;
+    } else if (groupSize > 1) {
       const choice = await confirmDialog({
         title: 'Hủy lịch nhóm',
         message: `Lịch này thuộc nhóm ${groupSize} khách. Hủy cả nhóm hay chỉ khách này?`,
@@ -502,15 +511,18 @@ function Bookings() {
       return;
     }
 
-    try {
-      await deleteBooking(id, { group });
-      notify(group ? `Đã hủy cả nhóm ${groupSize} khách!` : 'Đã hủy lịch hẹn thành công!');
-      loadBookings();
-      setDetailModal(null);
-    } catch (err) {
-      toast.error(err.message);
-    }
-  };
+    await run('cancel', async () => {
+      try {
+        await deleteBooking(id, { group });
+        notify(group ? `Đã hủy cả nhóm ${groupSize} khách!` : 'Đã hủy lịch hẹn thành công!');
+        loadBookings();
+        setDetailModal(null);
+        setShowDetailMore(false);
+      } catch (err) {
+        toast.error(err.message);
+      }
+    });
+  });
 
   // --- Drag-to-create helpers ---
   const handleDragStart = (e, emp) => {
@@ -605,8 +617,9 @@ function Bookings() {
     }
   };
 
-  const handleDragConfirm = async (applyToGroup = false) => {
+  const handleDragConfirm = (applyToGroup = false) => run('dragConfirm', async () => {
     if (!dragConfirm) return;
+    setDragSavingMode(applyToGroup ? 'group' : 'single');
     try {
       const bk = dragConfirm.booking;
       const saved = await updateBookingConfirmingConflict(bk.id, {
@@ -626,9 +639,12 @@ function Bookings() {
       toast.error('Lỗi: ' + err.message);
     }
     setDragConfirm(null);
-  };
+    setDragSavingMode(null);
+  });
 
+  // Đang lưu thay đổi kéo-thả → không cho đóng popup (bấm ra ngoài / Esc / "Hủy, giữ nguyên")
   const handleDragCancel = () => {
+    if (isBusy('dragConfirm')) return;
     setDragConfirm(null);
   };
 
@@ -722,7 +738,7 @@ function Bookings() {
 
   const detailModalRef = useModalA11y(!!detailModal, handleDetailModalEscape);
   const bookModalRef = useModalA11y(modalOpen, handleBookModalEscape);
-  const dragConfirmRef = useModalA11y(!!dragConfirm, () => setDragConfirm(null));
+  const dragConfirmRef = useModalA11y(!!dragConfirm, handleDragCancel);
 
 
   const handleBookFormServiceChange = (service) => {
@@ -898,10 +914,13 @@ function Bookings() {
     setSearchSuggestions({ type: null, data: [], loading: false });
   };
 
-  const handleBookSubmit = async (e) => {
+  const handleBookSubmit = (e) => {
     e.preventDefault();
-    if (isCreating) return;
+    // Khóa ngay từ đầu (kể cả bước tìm "Khách lạ") → bấm "Tạo" liên tục không sinh nhiều lịch trùng
+    return run('create', () => submitBooking());
+  };
 
+  const submitBooking = async () => {
     // Auto-assign "Khách lạ" if customer is empty
     let finalCustomerId = bookForm.customer_id;
     let finalCustomerName = bookForm.customer_name;
@@ -932,7 +951,6 @@ function Bookings() {
       return;
     }
 
-    setIsCreating(true);
     try {
       let finalServiceId = bookForm.service_id;
       let finalEndTime = bookForm.end_time;
@@ -946,7 +964,6 @@ function Bookings() {
           }
         } else {
           toast.warn('Vui lòng chọn dịch vụ hoặc tạo dịch vụ "Giữ chỗ" để tiếp tục.');
-          setIsCreating(false);
           return;
         }
       }
@@ -973,12 +990,11 @@ function Bookings() {
       loadBookings();
     } catch (err) {
       toast.error('Lỗi: ' + err.message);
-    } finally {
-      setIsCreating(false);
     }
   };
 
-  const handleSaveDetail = async () => {
+  // 'saveDetailFlow' khóa cả luồng (kể cả lúc hỏi dời nhóm); 'saveDetail' chỉ phần gửi lên server → nút hiện "Đang cập nhật..."
+  const handleSaveDetail = () => run('saveDetailFlow', async () => {
     if (!detailModal || !detailEdit) return;
 
     if (!detailEdit.service_id || !detailEdit.branch_id || !detailEdit.start_time || !detailEdit.employee_id) {
@@ -991,71 +1007,74 @@ function Bookings() {
     const groupSize = getGroupMembers(detailModal).length;
     const timingChanged = detailEdit.booking_date !== detailModal.booking_date
       || detailEdit.start_time !== (detailModal.start_time || '').substring(0, 5);
-    if (groupSize > 1 && timingChanged) {
+    if (groupSize > 1 && timingChanged && detailGroupMode) {
+      applyToGroup = true;
+    } else if (groupSize > 1 && timingChanged) {
       const choice = await askMoveGroup(groupSize);
       if (choice === null) return;
       applyToGroup = choice;
     }
 
-    setDetailSaving(true);
-    try {
-      // 1. Update Booking
-      const bookingUpdate = {
-        service_id: detailEdit.service_id,
-        branch_id: detailEdit.branch_id,
-        start_time: detailEdit.start_time,
-        booking_date: detailEdit.booking_date,
-        end_time: detailEdit.end_time,
-        employee_id: detailEdit.employee_id,
-        notes: detailEdit.notes,
-        customer_id: detailEdit.customer_id || null,
-        apply_to_group: applyToGroup
-      };
-
-      if (!bookingUpdate.customer_id && detailEdit.customer_name) {
-        bookingUpdate.temporary_name = detailEdit.customer_name;
-      } else {
-        bookingUpdate.temporary_name = null;
-      }
-
-      // 2. Cùng khách nhưng thông tin khách đổi → gửi kèm customer_update trong CÙNG request
-      // (backend cập nhật khách + lịch, lỗi thì hoàn lại thông tin khách — không còn cập nhật nửa vời)
-      const cust = detailModal.customers;
-      if (bookingUpdate.customer_id && cust && (
-        detailEdit.customer_name !== cust.name ||
-        detailEdit.customer_phone !== (cust.phone || '') ||
-        detailEdit.customer_habits !== (cust.habits || '') ||
-        detailEdit.customer_email !== (cust.email || '')
-      )) {
-        bookingUpdate.customer_update = {
-          name: detailEdit.customer_name,
-          phone: detailEdit.customer_phone,
-          email: detailEdit.customer_email,
-          habits: detailEdit.customer_habits
+    await run('saveDetail', async () => {
+      try {
+        // 1. Update Booking
+        const bookingUpdate = {
+          service_id: detailEdit.service_id,
+          branch_id: detailEdit.branch_id,
+          start_time: detailEdit.start_time,
+          booking_date: detailEdit.booking_date,
+          end_time: detailEdit.end_time,
+          employee_id: detailEdit.employee_id,
+          notes: detailEdit.notes,
+          customer_id: detailEdit.customer_id || null,
+          apply_to_group: applyToGroup
         };
+
+        if (!bookingUpdate.customer_id && detailEdit.customer_name) {
+          bookingUpdate.temporary_name = detailEdit.customer_name;
+        } else {
+          bookingUpdate.temporary_name = null;
+        }
+
+        // 2. Cùng khách nhưng thông tin khách đổi → gửi kèm customer_update trong CÙNG request
+        // (backend cập nhật khách + lịch, lỗi thì hoàn lại thông tin khách — không còn cập nhật nửa vời)
+        const cust = detailModal.customers;
+        if (bookingUpdate.customer_id && cust && (
+          detailEdit.customer_name !== cust.name ||
+          detailEdit.customer_phone !== (cust.phone || '') ||
+          detailEdit.customer_habits !== (cust.habits || '') ||
+          detailEdit.customer_email !== (cust.email || '')
+        )) {
+          bookingUpdate.customer_update = {
+            name: detailEdit.customer_name,
+            phone: detailEdit.customer_phone,
+            email: detailEdit.customer_email,
+            habits: detailEdit.customer_habits
+          };
+        }
+
+        const updated = await updateBookingConfirmingConflict(detailModal.id, bookingUpdate);
+        if (!updated) return; // chọn không lưu khi trùng lịch → giữ modal để chỉnh tiếp
+
+        // update list in UI immediately
+        loadBookings();
+
+        notifySaved(updated, 'Cập nhật thành công!');
+
+        setDetailModal(null);
+      } catch (err) {
+        toast.error(err.message);
       }
+    });
+  });
 
-      const updated = await updateBookingConfirmingConflict(detailModal.id, bookingUpdate);
-      if (!updated) return; // chọn không lưu khi trùng lịch → giữ modal để chỉnh tiếp
-
-      // update list in UI immediately
-      loadBookings();
-
-      notifySaved(updated, 'Cập nhật thành công!');
-
-      setDetailModal(null);
-    } catch (err) {
-      toast.error(err.message);
-    } finally {
-      setDetailSaving(false);
-    }
-  };
-
-  const handleOpenDetail = async (booking) => {
+  const handleOpenDetail = async (booking, { groupMode = false } = {}) => {
     // Prevent opening detail view for temporary slot holds
     if (isHoldBooking(booking)) return;
 
+    cancelDetailAvailabilityCheck();
     setDetailModal(booking);
+    setDetailGroupMode(groupMode && getGroupMembers(booking).length > 1);
 
     setDetailEdit({
       service_id: booking.service_id || booking.services?.id || '',
@@ -1081,52 +1100,87 @@ function Bookings() {
     setShowDetailMore(false);
   };
 
+  // Giờ đã nhập xong? Ô giờ báo onChange theo TỪNG phím: đang gõ "14" sẽ đi qua "01:30", xóa ô thì thành "--:30".
+  // Các giá trị dở dang đó không phải giờ thật → không đem đi kiểm tra ca (trước đây bị coi là ngoài ca).
+  const isCompleteTime = (t) => {
+    if (!/^\d{2}:\d{2}$/.test(t || '')) return false;
+    return timeToMinutes(t) >= TIME_PICKER_MIN_HOUR * 60; // giờ nhỏ hơn giờ tối thiểu = đang gõ dở (ô giờ tự sửa khi rời ô)
+  };
+
   const checkStaffAvailability = async (empId, date, start, end) => {
-    if (!empId || !date || !start || !end) return true;
+    if (!empId || !date || !isCompleteTime(start) || !isCompleteTime(end)) return true;
     try {
       const resp = await getEmployeeSchedules({
         employee_id: empId,
         date_from: date,
         date_to: date
       });
-      const sched = (resp || [])[0];
-      if (!sched || sched.is_day_off) return false;
-
       const startMin = timeToMinutes(start);
       const endMin = timeToMinutes(end);
-      const sStart = timeToMinutes(String(sched.start_time).substring(0, 5));
-      const sEnd = timeToMinutes(String(sched.end_time).substring(0, 5));
-
-      return startMin >= sStart && endMin <= sEnd;
+      // Một ngày có thể có nhiều ca → hợp lệ khi lọt trọn trong ít nhất một ca làm việc
+      return (resp || []).some(sched => {
+        if (sched.is_day_off || !sched.start_time || !sched.end_time) return false;
+        const sStart = timeToMinutes(String(sched.start_time).substring(0, 5));
+        const sEnd = timeToMinutes(String(sched.end_time).substring(0, 5));
+        return startMin >= sStart && endMin <= sEnd;
+      });
     } catch (err) {
 
       return true;
     }
   };
 
-  const handleDateChange = async (newDate) => {
-    setDetailEdit(prev => ({ ...prev, booking_date: newDate }));
+  // Kiểm tra ca của nhân viên sau khi sửa ngày/giờ trong modal chi tiết.
+  // - Chờ người dùng ngừng gõ 400ms rồi mới gọi API (không bắn 1 request mỗi phím).
+  // - Chỉ áp kết quả của lần kiểm tra MỚI NHẤT và khi form vẫn đúng ngày/giờ/nhân viên đã kiểm tra:
+  //   trước đây kết quả của giá trị gõ dở ("01:30") về sau vẫn xóa nhân viên dù giờ cuối cùng hợp lệ.
+  const detailEditRef = useRef(detailEdit);
+  detailEditRef.current = detailEdit;
+  const availabilityCheckRef = useRef({ seq: 0, timer: null });
 
-    const isAvail = await checkStaffAvailability(detailEdit.employee_id, newDate, detailEdit.start_time, detailEdit.end_time);
-    if (!isAvail) {
-      setDetailEdit(prev => ({ ...prev, employee_id: '' }));
-      toast.warn('Nhân viên không làm việc hoặc không có ca trực vào ngày đã chọn.', { position: 'bottom-right' });
-    }
+  const cancelDetailAvailabilityCheck = () => {
+    const ref = availabilityCheckRef.current;
+    ref.seq++;
+    clearTimeout(ref.timer);
   };
 
-  const handleTimeChange = async (type, newVal) => {
+  const scheduleDetailAvailabilityCheck = (next, message) => {
+    cancelDetailAvailabilityCheck();
+    const ref = availabilityCheckRef.current;
+    const seq = ref.seq;
+    ref.timer = setTimeout(async () => {
+      const isAvail = await checkStaffAvailability(next.employee_id, next.booking_date, next.start_time, next.end_time);
+      const cur = detailEditRef.current;
+      if (isAvail || seq !== ref.seq || !cur) return;
+      const sameInput = ['employee_id', 'booking_date', 'start_time', 'end_time'].every(k => cur[k] === next[k]);
+      if (!sameInput) return;
+      setDetailEdit(prev => (prev && prev.employee_id === next.employee_id
+        ? { ...prev, employee_id: '', employee_search: '' }
+        : prev));
+      toast.warn(message, { position: 'bottom-right' });
+    }, 400);
+  };
+
+  // Đóng modal / rời trang → bỏ lượt kiểm tra đang chờ
+  useEffect(() => {
+    if (!detailModal) cancelDetailAvailabilityCheck();
+  }, [detailModal]);
+  useEffect(() => () => cancelDetailAvailabilityCheck(), []);
+
+  const handleDateChange = (newDate) => {
+    const updated = { ...detailEdit, booking_date: newDate };
+    setDetailEdit(prev => ({ ...prev, booking_date: newDate }));
+    scheduleDetailAvailabilityCheck(updated, 'Nhân viên không làm việc hoặc không có ca trực vào ngày đã chọn.');
+  };
+
+  const handleTimeChange = (type, newVal) => {
     const updated = { ...detailEdit, [type]: newVal };
     if (type === 'start_time') {
       const duration = services.find(s => s.id === detailEdit.service_id)?.duration_minutes || 0;
       updated.end_time = calculateEndTime(newVal, duration);
     }
     setDetailEdit(updated);
-
-    const isAvail = await checkStaffAvailability(updated.employee_id, updated.booking_date, updated.start_time, updated.end_time);
-    if (!isAvail) {
-      setDetailEdit(prev => ({ ...prev, employee_id: '' }));
-      toast.warn('Nhân viên không làm việc hoặc không có ca trực vào khung giờ mới.', { position: 'bottom-right' });
-    }
+    scheduleDetailAvailabilityCheck(updated, 'Nhân viên không làm việc hoặc không có ca trực vào khung giờ mới.');
   };
 
   const isDetailModified = useMemo(() => {
@@ -1146,7 +1200,7 @@ function Bookings() {
     );
   }, [detailModal, detailEdit]);
 
-  const handleDismissWarning = async (e, booking) => {
+  const handleDismissWarning = (e, booking) => {
     if (e) {
       e.stopPropagation();
       e.preventDefault();
@@ -1154,32 +1208,34 @@ function Bookings() {
     // Lịch giữ chỗ tạm thời: xóa internal_note sẽ khiến job dọn giữ chỗ không nhận ra → chiếm slot vĩnh viễn
     if (!booking || isHoldBooking(booking)) return;
 
-    try {
-      const bookingUpdate = {
-        service_id: booking.service_id || booking.services?.id || '',
-        branch_id: booking.branch_id || booking.branches?.id || '',
-        employee_id: booking.employee_id || booking.employees?.id || '',
-        booking_date: booking.booking_date || '',
-        start_time: (booking.start_time || '').substring(0, 5),
-        end_time: (booking.end_time || '').substring(0, 5),
-        customer_id: booking.customer_id || booking.customers?.id || null,
-        temporary_name: booking.temporary_name || null,
-        notes: booking.notes || '',
-        internal_note: null // Clear warning
-      };
+    return run(`dismiss:${booking.id}`, async () => {
+      try {
+        const bookingUpdate = {
+          service_id: booking.service_id || booking.services?.id || '',
+          branch_id: booking.branch_id || booking.branches?.id || '',
+          employee_id: booking.employee_id || booking.employees?.id || '',
+          booking_date: booking.booking_date || '',
+          start_time: (booking.start_time || '').substring(0, 5),
+          end_time: (booking.end_time || '').substring(0, 5),
+          customer_id: booking.customer_id || booking.customers?.id || null,
+          temporary_name: booking.temporary_name || null,
+          notes: booking.notes || '',
+          internal_note: null // Clear warning
+        };
 
-      await updateBooking(booking.id, bookingUpdate);
+        await updateBooking(booking.id, bookingUpdate);
 
-      if (detailModal && detailModal.id === booking.id) {
-        setDetailEdit(prev => ({ ...prev, internal_note: '' }));
+        if (detailModal && detailModal.id === booking.id) {
+          setDetailEdit(prev => ({ ...prev, internal_note: '' }));
+        }
+
+        notify('Đã tắt cảnh báo và khôi phục màu dịch vụ!');
+        loadBookings();
+      } catch (err) {
+
+        toast.error('Không thể tắt cảnh báo: ' + err.message);
       }
-
-      notify('Đã tắt cảnh báo và khôi phục màu dịch vụ!');
-      loadBookings();
-    } catch (err) {
-
-      toast.error('Không thể tắt cảnh báo: ' + err.message);
-    }
+    });
   };
 
 
@@ -1325,7 +1381,11 @@ function Bookings() {
         detailEdit={detailEdit}
         detailModal={detailModal}
         detailModalRef={detailModalRef}
-        detailSaving={detailSaving}
+        detailGroupSize={detailGroupMode ? getGroupMembers(detailModal).length : 0}
+        detailSaving={isBusy('saveDetail')}
+        detailBusy={isBusy('saveDetailFlow') || isBusy('cancelFlow')}
+        cancelling={isBusy('cancel')}
+        dismissingWarning={!!detailModal && isBusy(`dismiss:${detailModal.id}`)}
         detailTab={detailTab}
         handleCancel={handleCancel}
         handleDateChange={handleDateChange}
@@ -1361,7 +1421,7 @@ function Bookings() {
         handleBookSubmit={handleBookSubmit}
         handleGenericSearch={handleGenericSearch}
         handleSelectSuggestion={handleSelectSuggestion}
-        isCreating={isCreating}
+        isCreating={isBusy('create')}
         modalOpen={modalOpen}
         requestCloseBookModal={requestCloseBookModal}
         searchSuggestions={searchSuggestions}
@@ -1380,6 +1440,7 @@ function Bookings() {
         dragConfirmRef={dragConfirmRef}
         handleDragCancel={handleDragCancel}
         handleDragConfirm={handleDragConfirm}
+        dragSavingMode={dragSavingMode}
       />
     </div >
   );

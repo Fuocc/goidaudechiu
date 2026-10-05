@@ -9,6 +9,8 @@ import { clickableProps } from '../utils/a11y';
 import { useConfirm } from './ConfirmDialog';
 import { useAppUI } from '../context/AppUIContext';
 import { toast } from 'react-toastify';
+import { useBusy } from '../hooks/useBusy';
+import BusyLabel from './BusyLabel';
 
 const BRANCH_STORAGE_KEY = 'yoi_ai_branch';
 const CHAT_STORAGE_KEY = 'yoi_ai_chat_messages';
@@ -50,7 +52,10 @@ function AIChatPanel({ onClose, currentBranchId }) {
   });
   const [inputText, setInputText] = useState('');
   const [selectedBranch, setSelectedBranch] = useState(currentBranchId);
-  const [loading, setLoading] = useState(false);
+  // Gửi lệnh / hoàn tác đang chạy. run() khóa đồng bộ bằng ref → Enter/bấm đúp nhanh
+  // (trước khi React kịp render lại `disabled`) không gửi lệnh hay hoàn tác 2 lần.
+  const { run, isBusy } = useBusy();
+  const loading = isBusy('send');
   const messagesEndRef = useRef(null);
 
   // Command History States
@@ -69,7 +74,6 @@ function AIChatPanel({ onClose, currentBranchId }) {
   // States for Custom UI and Actions
   const [isBranchSelectOpen, setIsBranchSelectOpen] = useState(false);
   const [replyingTo, setReplyingTo] = useState(null); // { bookingId, label }
-  const [undoLoadingId, setUndoLoadingId] = useState(null); // Message ID currently performing undo
 
   const branchDropdownRef = useRef(null);
   const textareaRef = useRef(null);
@@ -163,13 +167,15 @@ function AIChatPanel({ onClose, currentBranchId }) {
     return `LỊCH ${base.toUpperCase()}`;
   };
 
-  const handleSend = async (e) => {
-  if (e) e.preventDefault();
-  if (!inputText.trim() || loading) return;
+  // Enter và nút gửi đều đi qua đây; đang gửi thì run() bỏ qua lần gọi thứ 2
+  const handleSend = (e) => {
+    if (e) e.preventDefault();
+    if (!inputText.trim() || loading) return;
+    return run('send', () => sendCommand(inputText));
+  };
 
-  const commandText = inputText;
+  const sendCommand = async (commandText) => {
   setInputText('');
-  setLoading(true);
 
   // 1. Append User Message
   const userMsg = {
@@ -259,16 +265,17 @@ function AIChatPanel({ onClose, currentBranchId }) {
       isError: true,
       time: getNowTime()
     }].slice(-50));
-  } finally {
-    setLoading(false);
   }
 };
 
   // Hoàn tác được thực hiện ở server dựa trên danh sách `actions` (tạo → xóa lịch vừa tạo,
   // sửa / check-in / hủy → khôi phục đầy đủ dữ liệu cũ kể cả trạng thái).
-  const handleUndo = async (msg) => {
+  const handleUndo = (msg) => {
     if (!msg.actions || msg.actions.length === 0) return;
-    setUndoLoadingId(msg.id);
+    return run(`undo:${msg.id}`, () => undoMessage(msg));
+  };
+
+  const undoMessage = async (msg) => {
     const messageId = msg.id;
     try {
       const result = await request('/bookings/undo', {
@@ -302,8 +309,6 @@ function AIChatPanel({ onClose, currentBranchId }) {
     } catch (err) {
       console.error('Undo booking error:', err);
       toast.error(`Không thể hoàn tác đặt lịch: ${err.message}`);
-    } finally {
-      setUndoLoadingId(null);
     }
   };
 
@@ -391,7 +396,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
                                     label: getReplyLabel(msg.text)
                                   });
                                 }}
-                                disabled={loading || undoLoadingId}
+                                disabled={isBusy()}
                               >
                                 <FiCornerUpLeft size={13} /> Trả lời
                               </button>
@@ -399,10 +404,13 @@ function AIChatPanel({ onClose, currentBranchId }) {
                                 type="button"
                                 className="ai-action-btn undo"
                                 onClick={() => handleUndo(msg)}
-                                disabled={loading || undoLoadingId === msg.id}
+                                disabled={loading || isBusy(`undo:${msg.id}`)}
+                                aria-busy={isBusy(`undo:${msg.id}`)}
                               >
-                                <FiRotateCcw size={12} className={undoLoadingId === msg.id ? 'spin' : ''} />
-                                {undoLoadingId === msg.id ? 'Đang hoàn...' : 'Hoàn tác'}
+                                <BusyLabel busy={isBusy(`undo:${msg.id}`)} text="Đang hoàn tác...">
+                                  <FiRotateCcw size={12} />
+                                  Hoàn tác
+                                </BusyLabel>
                               </button>
                             </div>
                           )}
@@ -589,7 +597,7 @@ function AIChatPanel({ onClose, currentBranchId }) {
               )}
             </div>
 
-            <button type="submit" className="ai-chat-arrow-btn" aria-label="Gửi" disabled={!inputText.trim() || loading}>
+            <button type="submit" className="ai-chat-arrow-btn" aria-label="Gửi" disabled={!inputText.trim() || loading} aria-busy={loading}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="12" y1="19" x2="12" y2="5"></line>
                 <polyline points="5 12 12 5 19 12"></polyline>

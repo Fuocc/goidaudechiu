@@ -329,3 +329,9 @@ input:not(:checked)+.us-slider:hover:before {
     gap: 16px;
   }
 }
+/* Đang cập nhật / đăng xuất → khóa nút */
+.us-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  pointer-events: none;
+}

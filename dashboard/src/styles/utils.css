@@ -35,7 +35,6 @@
 .Toastify__toast-icon svg {
   width: 20px;
   height: 20px;
-  fill: var(--toastify-color-progress-error) !important;
 }
 
 /* Nút đóng (X) */

@@ -1114,3 +1114,11 @@
     right: auto;
   }
 }
+/* Đang xử lý (đăng xuất / đánh dấu đã đọc / xóa thông báo) → khóa nút */
+.logout-popover-btn:disabled,
+.btn-mark-all-read-top:disabled,
+.btn-card-action:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  pointer-events: none;
+}

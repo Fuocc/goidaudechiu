@@ -6,14 +6,19 @@ import { FiEdit2, FiLogOut, FiLoader } from 'react-icons/fi';
 import userPlaceholder from '../assets/userPlaceholder.jpg';
 import { getBranches, updateNotificationPreferences } from '../api';
 import { getMutedBranchIds, getCurrentPushEndpoint } from '../utils/notificationPrefs';
+import { useBusy } from '../hooks/useBusy';
 
 const UserSettings = () => {
   const { user } = useUser();
   const { signOut } = useAuth();
 
   const fileInputRef = useRef(null);
-  const [isUploading, setIsUploading] = useState(false);
-  const [isUpdatingInfo, setIsUpdatingInfo] = useState(false);
+  // Chặn bấm đúp (khóa đồng bộ bằng ref trong useBusy); giữ nguyên vòng xoay FiLoader của trang này
+  const { run, isBusy } = useBusy();
+  const isUploading = isBusy('avatar');
+  const isUpdatingInfo = isBusy('info');
+  const isUpdatingNotifs = isBusy('notifs');
+  const isLoggingOut = isBusy('logout');
 
   const [formData, setFormData] = useState({
     name: user?.fullName || '',
@@ -30,19 +35,19 @@ const UserSettings = () => {
       return;
     }
 
-    try {
-      setIsUploading(true);
-      await user.setProfileImage({ file });
-      toast.success('Cập nhật ảnh đại diện thành công!');
-    } catch (error) {
-      console.error('Lỗi khi tải ảnh:', error);
-      toast.error('Có lỗi xảy ra khi tải ảnh lên.');
-    } finally {
-      setIsUploading(false);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
+    await run('avatar', async () => {
+      try {
+        await user.setProfileImage({ file });
+        toast.success('Cập nhật ảnh đại diện thành công!');
+      } catch (error) {
+        console.error('Lỗi khi tải ảnh:', error);
+        toast.error('Có lỗi xảy ra khi tải ảnh lên.');
+      } finally {
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
       }
-    }
+    });
   };
 
   const handleUpdateUserInfo = async () => {
@@ -51,33 +56,32 @@ const UserSettings = () => {
       return;
     }
 
-    try {
-      setIsUpdatingInfo(true);
-      const nameParts = formData.name.trim().split(' ');
-      const lastName = nameParts.length > 1 ? nameParts.pop() : '';
-      const firstName = nameParts.join(' ');
+    await run('info', async () => {
+      try {
+        const nameParts = formData.name.trim().split(' ');
+        const lastName = nameParts.length > 1 ? nameParts.pop() : '';
+        const firstName = nameParts.join(' ');
 
-      await user.update({
-        firstName: firstName || formData.name.trim(),
-        lastName: lastName || undefined,
-        unsafeMetadata: {
-          ...user.unsafeMetadata,
-          phone: formData.phone
+        await user.update({
+          firstName: firstName || formData.name.trim(),
+          lastName: lastName || undefined,
+          unsafeMetadata: {
+            ...user.unsafeMetadata,
+            phone: formData.phone
+          }
+        });
+
+        const originalEmail = user.primaryEmailAddress?.emailAddress || '';
+        if (formData.email !== originalEmail) {
+          toast.info('Tên và SĐT đã lưu. Đổi Email yêu cầu xác thực qua Clerk Portal.', { autoClose: 5000 });
+        } else {
+          toast.success('Cập nhật thông tin thành công!');
         }
-      });
-
-      const originalEmail = user.primaryEmailAddress?.emailAddress || '';
-      if (formData.email !== originalEmail) {
-        toast.info('Tên và SĐT đã lưu. Đổi Email yêu cầu xác thực qua Clerk Portal.', { autoClose: 5000 });
-      } else {
-        toast.success('Cập nhật thông tin thành công!');
+      } catch (error) {
+        console.error('Lỗi khi cập nhật:', error);
+        toast.error('Có lỗi xảy ra khi cập nhật thông tin.');
       }
-    } catch (error) {
-      console.error('Lỗi khi cập nhật:', error);
-      toast.error('Có lỗi xảy ra khi cập nhật thông tin.');
-    } finally {
-      setIsUpdatingInfo(false);
-    }
+    });
   };
 
   // Công tắc thông báo theo từng chi nhánh thật (theo ID), lưu danh sách chi nhánh đã TẮT
@@ -95,11 +99,8 @@ const UserSettings = () => {
     setMutedIds(prev => (enabled ? prev.filter(id => id !== branchId) : [...new Set([...prev, branchId])]));
   };
 
-  const [isUpdatingNotifs, setIsUpdatingNotifs] = useState(false);
-
-  const handleUpdateNotifications = async () => {
+  const handleUpdateNotifications = () => run('notifs', async () => {
     try {
-      setIsUpdatingNotifs(true);
       // Chỉ giữ ID của chi nhánh còn tồn tại
       const muted = branches.length ? mutedIds.filter(id => branches.some(b => b.id === id)) : mutedIds;
       await user.update({
@@ -125,15 +126,13 @@ const UserSettings = () => {
     } catch (error) {
       console.error('Lỗi khi lưu cài đặt thông báo:', error);
       toast.error('Có lỗi xảy ra khi lưu cài đặt.');
-    } finally {
-      setIsUpdatingNotifs(false);
     }
-  };
+  });
 
-  const handleLogout = async () => {
+  const handleLogout = () => run('logout', async () => {
     await signOut();
     localStorage.removeItem('sb_access_token');
-  };
+  });
 
   return (
     <div className="user-settings-page">
@@ -182,6 +181,7 @@ const UserSettings = () => {
               style={{ marginTop: '10px' }}
               onClick={handleUpdateUserInfo}
               disabled={isUpdatingInfo}
+              aria-busy={isUpdatingInfo}
             >
               {isUpdatingInfo ? (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -210,6 +210,7 @@ const UserSettings = () => {
                 title="Chỉnh sửa hình đại diện"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isUploading}
+                aria-busy={isUploading}
               >
                 {isUploading ? (
                   <FiLoader size={14} className="icon-spin" />
@@ -262,11 +263,12 @@ const UserSettings = () => {
           className="us-btn us-btn-primary"
           onClick={handleUpdateNotifications}
           disabled={isUpdatingNotifs || branchesState !== 'ready'}
+          aria-busy={isUpdatingNotifs}
         >
           {isUpdatingNotifs ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <FiLoader size={16} className="icon-spin" />
-              <span>Đang lưu...</span>
+              <span>Đang cập nhật...</span>
             </div>
           ) : (
             'Cập nhật'
@@ -278,9 +280,14 @@ const UserSettings = () => {
       <div className="user-settings-section">
         <div className="us-logout-section">
           <h2 className="user-settings-title" style={{ marginBottom: 0 }}>Đăng xuất tài khoản</h2>
-          <button className="us-btn us-btn-outline" onClick={handleLogout}>
-            <FiLogOut size={16} />
-            <span>Đăng xuất</span>
+          <button
+            className="us-btn us-btn-outline"
+            onClick={handleLogout}
+            disabled={isLoggingOut}
+            aria-busy={isLoggingOut}
+          >
+            {isLoggingOut ? <FiLoader size={16} className="icon-spin" /> : <FiLogOut size={16} />}
+            <span>{isLoggingOut ? 'Đang đăng xuất...' : 'Đăng xuất'}</span>
           </button>
         </div>
       </div>

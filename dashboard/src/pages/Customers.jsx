@@ -10,6 +10,8 @@ import { useIsMobile } from '../hooks/useIsMobile';
 import { normalizeName } from '../utils/format';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useModalA11y } from '../hooks/useModalA11y';
+import { useBusy } from '../hooks/useBusy';
+import BusyLabel from '../components/BusyLabel';
 
 import noteIcon from '../assets/note-icon.svg';
 
@@ -30,6 +32,7 @@ function Customers() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState(null);
   const [form, setForm] = useState({ name: '', phone: '', email: '', habits: '' });
+  const { run, isBusy } = useBusy();
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -103,38 +106,47 @@ function Customers() {
     setModalOpen(true);
   };
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault();
-    try {
-      const finalForm = {
-        ...form,
-        name: normalizeName(form.name)
-      };
-      if (editingCustomer) {
-        await updateCustomer(editingCustomer.id, finalForm);
-        notify(`Cập nhật khách hàng ${finalForm.name} thành công`);
-      } else {
-        await createCustomer(finalForm);
-        notify(`Thêm khách hàng thành công`);
+    return run('save', async () => {
+      try {
+        const finalForm = {
+          ...form,
+          name: normalizeName(form.name)
+        };
+        if (editingCustomer) {
+          await updateCustomer(editingCustomer.id, finalForm);
+          notify(`Cập nhật khách hàng ${finalForm.name} thành công`);
+        } else {
+          await createCustomer(finalForm);
+          notify(`Thêm khách hàng thành công`);
+        }
+        setModalOpen(false);
+        loadCustomers();
+      } catch (err) {
+        toast.error(err.message);
       }
-      setModalOpen(false);
-      loadCustomers();
-    } catch (err) {
-      toast.error(err.message);
-    }
+    });
   };
 
   const handleDelete = async (id) => {
+    if (isBusy(`delete:${id}`)) return;
     if (!(await confirmDialog({ message: 'Bạn có chắc muốn xóa khách hàng này?', confirmText: 'Xóa', danger: true }))) return;
-    try {
-      await deleteCustomer(id);
-      notify('Đã xóa thành công');
-      if (editingCustomer?.id === id) setModalOpen(false); // xóa từ trong modal → đóng modal
-      loadCustomers();
-    } catch (err) {
-      toast.error(err.message);
-    }
+    await run(`delete:${id}`, async () => {
+      try {
+        await deleteCustomer(id);
+        notify('Đã xóa thành công');
+        if (editingCustomer?.id === id) setModalOpen(false); // xóa từ trong modal → đóng modal
+        loadCustomers();
+      } catch (err) {
+        toast.error(err.message);
+      }
+    });
   };
+
+  // Đang lưu / đang xóa khách trong modal → khóa cả 2 nút để không vừa lưu vừa xóa
+  const saving = isBusy('save');
+  const deletingInModal = !!editingCustomer && isBusy(`delete:${editingCustomer.id}`);
 
   const formatDate = (dateStr) => {
     if (!dateStr) return '-';
@@ -230,8 +242,9 @@ function Customers() {
                             <FiEdit2 size={14} />
                           </button>
                           {canDelete && (
-                            <button className="btn-icon btn-danger" aria-label="Xóa" onClick={() => handleDelete(c.id)} title="Xóa">
-                              <FiTrash2 size={14} />
+                            <button className="btn-icon btn-danger" aria-label="Xóa" onClick={() => handleDelete(c.id)} title="Xóa"
+                              disabled={isBusy(`delete:${c.id}`)} aria-busy={isBusy(`delete:${c.id}`)}>
+                              <BusyLabel busy={isBusy(`delete:${c.id}`)}><FiTrash2 size={14} /></BusyLabel>
                             </button>
                           )}
                         </div>
@@ -257,7 +270,10 @@ function Customers() {
                     <div className="mobile-card-actions" onClick={e => e.stopPropagation()}>
                       <button className="btn-icon" aria-label="Sửa" onClick={() => openEdit(c)}><FiEdit2 size={14} /></button>
                       {canDelete && (
-                        <button className="btn-icon btn-danger" aria-label="Xóa" onClick={() => handleDelete(c.id)}><FiTrash2 size={14} /></button>
+                        <button className="btn-icon btn-danger" aria-label="Xóa" onClick={() => handleDelete(c.id)}
+                          disabled={isBusy(`delete:${c.id}`)} aria-busy={isBusy(`delete:${c.id}`)}>
+                          <BusyLabel busy={isBusy(`delete:${c.id}`)}><FiTrash2 size={14} /></BusyLabel>
+                        </button>
                       )}
                     </div>
                   </div>
@@ -363,10 +379,17 @@ function Customers() {
 
               <div className="modal-footer">
                 {editingCustomer && canDelete && (
-                  <button type="button" className="btn btn-danger" onClick={() => handleDelete(editingCustomer.id)} style={{ marginRight: 'auto' }}>Xóa khách hàng</button>
+                  <button type="button" className="btn btn-danger" onClick={() => handleDelete(editingCustomer.id)} style={{ marginRight: 'auto' }}
+                    disabled={saving || deletingInModal} aria-busy={deletingInModal}>
+                    <BusyLabel busy={deletingInModal} text="Đang xóa...">Xóa khách hàng</BusyLabel>
+                  </button>
                 )}
                 <button type="button" className="btn btn-secondary" onClick={() => setModalOpen(false)}>Hủy</button>
-                <button type="submit" className="btn btn-primary">{editingCustomer ? 'Cập nhật' : 'Thêm'}</button>
+                <button type="submit" className="btn btn-primary" disabled={saving || deletingInModal} aria-busy={saving}>
+                  <BusyLabel busy={saving} text={editingCustomer ? 'Đang cập nhật...' : 'Đang thêm...'}>
+                    {editingCustomer ? 'Cập nhật' : 'Thêm'}
+                  </BusyLabel>
+                </button>
               </div>
             </form>
           </div>

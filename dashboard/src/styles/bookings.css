@@ -1103,60 +1103,6 @@ tr.is-group-highlight td {
   padding: 2px 8px;
 }
 
-/* Thẻ nhóm trên mobile: mỗi khách 1 dòng, bấm để mở đúng lịch của người đó */
-.booking-card-mobile.is-group {
-  cursor: default;
-}
-
-.booking-card-mobile.is-group:active {
-  transform: none;
-}
-
-.booking-card-mobile-members {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.booking-card-mobile-member {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  padding: 8px 10px;
-  border: 1px solid var(--chip-gray);
-  border-radius: 8px;
-  background: #fafafa;
-  font: inherit;
-  font-size: 13px;
-  text-align: left;
-  color: var(--body-gray);
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.booking-card-mobile-member:active {
-  background: var(--chip-gray);
-}
-
-.booking-card-mobile-member:disabled {
-  cursor: not-allowed;
-}
-
-.booking-card-mobile-member-staff {
-  font-weight: 600;
-  color: var(--black);
-  white-space: nowrap;
-}
-
-.booking-card-mobile-member-meta {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .list-booking-phone {
   font-size: 12px;
   color: var(--muted-gray, #afafaf);
@@ -1409,6 +1355,24 @@ tr.is-group-highlight td {
   background: #f5f5f5;
 }
 
+/* Popup kéo-thả / menu "..." đang lưu → khóa các nút */
+.drag-confirm-cancel:disabled,
+.drag-confirm-submit:disabled,
+.drag-confirm-alt:disabled,
+.more-menu-item:disabled,
+.anti-spam-dismiss-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.drag-confirm-submit[aria-busy="true"],
+.drag-confirm-alt[aria-busy="true"],
+.more-menu-item[aria-busy="true"] {
+  opacity: 0.8;
+  cursor: progress;
+}
+
 /* Disabled submit button style */
 .btn-submit-booking:disabled {
   opacity: 0.6;
@@ -1464,6 +1428,19 @@ tr.is-group-highlight td {
   background: #92400e !important;
   color: white !important;
   transform: rotate(90deg);
+}
+
+/* Modal mở từ thẻ nhóm (mobile): sửa áp dụng cho cả nhóm */
+.detail-group-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  border-radius: 10px;
+  background: var(--chip-gray);
+  color: var(--body-gray);
+  font-size: 13px;
 }
 
 .anti-spam-alert {
@@ -1696,15 +1673,22 @@ tr.is-group-highlight td {
 
 /* Mobile Bookings (≤768px) */
 @media only screen and (max-width: 768px) {
+  /* Trang lịch tự cuộn cả 2 chiều trong khung này (không cuộn cả document):
+     document cuộn ngang làm thanh menu dưới bị giãn và lệch trên trình duyệt mobile. */
   .full-view-bookings {
-    min-height: calc(100vh - var(--mobile-header-height, 56px) - var(--mobile-bottom-nav-height, 64px));
+    height: calc(100dvh - var(--safe-area-top) - var(--mobile-bottom-offset));
+    overflow: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
   }
 
   .cal-toolbar {
     position: sticky;
-    /* Dính ngay dưới vùng tai thỏ / Dynamic Island khi cuộn */
-    top: var(--safe-area-top);
-    left: 0;
+    top: 0;
+    /* Toolbar trải theo bề ngang lưới để hàng tên NV cuộn ngang cùng lưới */
+    left: auto;
+    width: max-content;
+    min-width: 100%;
   }
 
   .cal-toolbar-mobile {
@@ -1876,16 +1860,17 @@ tr.is-group-highlight td {
     text-align: center;
   }
 
-  /* ---- Mobile Freeze Pane (Excel-style) ---- */
-  .full-view-bookings {
-    overflow-x: clip;
+  /* ---- Mobile Freeze Pane (Excel-style) ----
+     Chỉ .full-view-bookings được là khung cuộn: wrapper/container mà overflow auto/hidden
+     sẽ "bắt" position: sticky của cột giờ và hàng tên NV → không còn đóng băng được. */
+  .cal-scroll-wrapper {
+    overflow: visible;
+    width: max-content;
+    min-width: 100%;
   }
 
-  .cal-scroll-wrapper {
-    overflow-x: auto;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    max-width: 100%;
+  .cal-container {
+    overflow: visible;
   }
 
   /* Give staff columns enough width so content isn't cramped */
@@ -1895,10 +1880,21 @@ tr.is-group-highlight td {
     min-width: 100%;
   }
 
+  /* Ô góc trên-trái đứng yên cùng cột giờ khi cuộn ngang */
+  .cal-staff-header-wrap > .cal-staff-header:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+  }
+
   .calendar-grid {
     grid-template-columns: 60px repeat(var(--staff-count, 1), 12em);
-    width: 100px;
+    width: max-content;
     min-width: 100%;
+    /* overflow-y: hidden (desktop) biến lưới thành khung cuộn → cột giờ sticky bị kẹt trong lưới.
+       clip vẫn cắt phần thừa nhưng không tạo khung cuộn. */
+    overflow: visible;
+    overflow-y: clip;
   }
 
   /* Freeze the time column on the left */

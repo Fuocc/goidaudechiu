@@ -14,6 +14,8 @@ import { isHoldBooking } from '../utils/booking';
 import { shortBranchName } from '../utils/format';
 import { clickableProps } from '../utils/a11y';
 import { useAppUI } from '../context/AppUIContext';
+import { useBusy } from '../hooks/useBusy';
+import BusyLabel from './BusyLabel';
 import { CalendarIcon, BellIcon, SmileIcon, TagIcon, StoreIcon, UsersIcon, UserIcon, ClockIcon, ExternalLinkIcon, SettingsIcon, LogOutIcon } from './sidebar/SidebarIcons';
 import MobileBottomNav from './sidebar/MobileBottomNav';
 import NotificationPanel from './sidebar/NotificationPanel';
@@ -264,14 +266,18 @@ function Sidebar({ user, onLogout }) {
     return groups;
   };
 
-  const toggleReadStatus = async (id, currentRead) => {
+  // Đăng xuất / đánh dấu đọc / xóa thông báo đang chạy → khóa nút (chặn bấm đúp gửi 2 request).
+  // Key kèm id thông báo để chỉ khóa đúng thẻ đang xử lý.
+  const { run, isBusy } = useBusy();
+
+  const toggleReadStatus = (id, currentRead) => run(`notif:read:${id}`, async () => {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: !currentRead } : n));
     try {
       await markNotificationRead(id, !currentRead);
     } catch (err) {
       console.error('Error toggling read status:', err);
     }
-  };
+  });
 
   const markAsRead = async (id) => {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
@@ -282,16 +288,18 @@ function Sidebar({ user, onLogout }) {
     }
   };
 
-  const markAllAsRead = async () => {
+  const markAllAsRead = () => run('notif:readAll', async () => {
     setNotifications(prev => prev.map(n => ({ ...n, read: true })));
     try {
       await markAllNotificationsRead();
     } catch (err) {
       console.error('Error marking all as read:', err);
     }
-  };
+  });
 
-  const deleteNotif = async (id) => {
+  // Bấm đúp xóa trước khi thẻ kịp biến mất → lần 2 lỗi và khôi phục danh sách cũ (thẻ hiện lại);
+  // run() theo id chặn lần gọi thứ 2.
+  const deleteNotif = (id) => run(`notif:delete:${id}`, async () => {
     const originalNotifications = [...notifications];
     setNotifications(prev => prev.filter(n => n.id !== id));
     try {
@@ -300,7 +308,9 @@ function Sidebar({ user, onLogout }) {
       console.error('Error deleting notification:', err);
       setNotifications(originalNotifications);
     }
-  };
+  });
+
+  const handleLogout = () => run('logout', onLogout);
 
 
   // Dedup set: prevent same booking from being processed by both Supabase Realtime & SSE
@@ -581,9 +591,16 @@ function Sidebar({ user, onLogout }) {
               </div>
 
               <div className="logout-popover-bottom">
-                <button className="logout-popover-btn" onClick={onLogout}>
-                  <LogOutIcon />
-                  <span>Đăng xuất</span>
+                <button
+                  className="logout-popover-btn"
+                  onClick={handleLogout}
+                  disabled={isBusy('logout')}
+                  aria-busy={isBusy('logout')}
+                >
+                  <BusyLabel busy={isBusy('logout')} text="Đang đăng xuất...">
+                    <LogOutIcon />
+                    <span>Đăng xuất</span>
+                  </BusyLabel>
                 </button>
               </div>
 
@@ -643,6 +660,7 @@ function Sidebar({ user, onLogout }) {
         deleteNotif={deleteNotif}
         getGroupedNotifications={getGroupedNotifications}
         handleNotifClick={handleNotifClick}
+        isBusy={isBusy}
         isClosing={isClosing}
         loadingNotifs={loadingNotifs}
         markAllAsRead={markAllAsRead}

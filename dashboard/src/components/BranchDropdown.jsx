@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useUser } from '@clerk/clerk-react';
 import { FiCheck, FiPlus } from 'react-icons/fi';
 import { HiOutlineSelector } from 'react-icons/hi';
 import { clickableProps } from '../utils/a11y';
@@ -9,6 +10,10 @@ export default function BranchDropdown({ branches, value, onChange }) {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef(null);
   const navigate = useNavigate();
+  const { user } = useUser();
+  // Chỉ admin/dev được thêm chi nhánh (trang /branches cũng chỉ dành cho admin)
+  const role = user?.publicMetadata?.role;
+  const isAdmin = role === 'admin' || role === 'dev';
 
   const selectedBranch = branches.find((b) => b.id === value) || branches[0];
 
@@ -90,16 +95,20 @@ export default function BranchDropdown({ branches, value, onChange }) {
             })}
           </div>
 
-          <div className="branch-dropdown-divider" />
+          {isAdmin && (
+            <>
+              <div className="branch-dropdown-divider" />
 
-          <div
-            onClick={goAddBranch}
-            {...clickableProps(goAddBranch)}
-            className="branch-dropdown-add"
-          >
-            <FiPlus size={20} className="add-icon" />
-            <span>Thêm Chi Nhánh</span>
-          </div>
+              <div
+                onClick={goAddBranch}
+                {...clickableProps(goAddBranch)}
+                className="branch-dropdown-add"
+              >
+                <FiPlus size={20} className="add-icon" />
+                <span>Thêm Chi Nhánh</span>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

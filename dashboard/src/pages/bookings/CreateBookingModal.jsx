@@ -5,6 +5,7 @@ import { FiPlus } from 'react-icons/fi';
 import { toast } from 'react-toastify';
 import { formatPrice, calculateEndTime } from './helpers';
 import TimePickerInput from '../../components/TimePickerInput';
+import BusyLabel from '../../components/BusyLabel';
 import userIcon from '../../assets/user-icon.svg';
 import shopIcon from '../../assets/shop-icon.svg';
 import clockIcon from '../../assets/clock-icon.svg';
@@ -325,8 +326,8 @@ export default function CreateBookingModal({
                 </div>
 
                 <div className="modal-footer">
-                  <button type="submit" className="btn btn-primary btn-submit-booking" disabled={isCreating}>
-                    {isCreating ? 'Đang Tạo...' : 'Tạo'}
+                  <button type="submit" className="btn btn-primary btn-submit-booking" disabled={isCreating} aria-busy={isCreating}>
+                    <BusyLabel busy={isCreating} text="Đang tạo...">Tạo</BusyLabel>
                   </button>
                 </div>
               </form>

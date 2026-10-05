@@ -213,6 +213,16 @@
   opacity: 0.9;
 }
 
+/* Đang lưu / đang xóa trong modal → mờ đi để thấy nút đang bị khóa */
+.btn-save.active:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-save[aria-busy="true"] {
+  cursor: progress;
+}
+
 /* Replaced Inline Styles */
 .service-color-dot {
   width: 14px;

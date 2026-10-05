@@ -1,10 +1,11 @@
 import { getInitial } from '../../utils/format';
 import { clickableProps } from '../../utils/a11y';
 import { DatePicker, parseDate } from '@chakra-ui/react';
-import { FiPlus, FiMoreVertical, FiX } from 'react-icons/fi';
+import { FiPlus, FiMoreVertical, FiX, FiUsers } from 'react-icons/fi';
 import { toast } from 'react-toastify';
 import { formatPrice } from './helpers';
 import TimePickerInput from '../../components/TimePickerInput';
+import BusyLabel from '../../components/BusyLabel';
 import userIcon from '../../assets/user-icon.svg';
 import shopIcon from '../../assets/shop-icon.svg';
 import clockIcon from '../../assets/clock-icon.svg';
@@ -15,12 +16,16 @@ import noteIcon from '../../assets/note-icon.svg';
 export default function BookingDetailModal({
   branches,
   calendarRef,
+  cancelling,
+  detailBusy,
   detailCustomerView,
   detailEdit,
+  detailGroupSize,
   detailModal,
   detailModalRef,
   detailSaving,
   detailTab,
+  dismissingWarning,
   handleCancel,
   handleDateChange,
   handleDismissWarning,
@@ -74,6 +79,13 @@ export default function BookingDetailModal({
             </div>
 
             <div className="modal-body modal-body-clean">
+              {detailGroupSize > 1 && (
+                <div className="detail-group-banner">
+                  <FiUsers size={14} />
+                  <span>Lịch nhóm {detailGroupSize} khách — đổi ngày/giờ hoặc hủy sẽ áp dụng cho cả nhóm.</span>
+                </div>
+              )}
+
               {/* Anti-spam warning banner */}
               {detailEdit.internal_note && (
                 <div className="anti-spam-alert" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
@@ -81,11 +93,13 @@ export default function BookingDetailModal({
                   <button
                     className="anti-spam-dismiss-btn"
                     onClick={(e) => handleDismissWarning(e, detailModal)}
+                    disabled={dismissingWarning}
+                    aria-busy={dismissingWarning}
                     style={{
                       background: 'rgba(245, 158, 11, 0.15)',
                       border: 'none',
                       color: '#92400e',
-                      cursor: 'pointer',
+                      cursor: dismissingWarning ? 'progress' : 'pointer',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
@@ -98,7 +112,7 @@ export default function BookingDetailModal({
                     }}
                     title="Tắt cảnh báo"
                   >
-                    <FiX size={14} />
+                    <BusyLabel busy={dismissingWarning}><FiX size={14} /></BusyLabel>
                   </button>
                 </div>
               )}
@@ -446,11 +460,16 @@ export default function BookingDetailModal({
                 </button>
                 {showDetailMore && (
                   <div className="more-menu">
-                    <button className="more-menu-item" onClick={handleDuplicate}>
+                    <button className="more-menu-item" onClick={handleDuplicate} disabled={detailBusy}>
                       Nhân bản
                     </button>
-                    <button className="more-menu-item danger-item" onClick={() => handleCancel(detailModal.id)}>
-                      Hủy lịch
+                    <button
+                      className="more-menu-item danger-item"
+                      onClick={() => handleCancel(detailModal.id)}
+                      disabled={detailBusy}
+                      aria-busy={cancelling}
+                    >
+                      <BusyLabel busy={cancelling} text="Đang hủy...">Hủy lịch</BusyLabel>
                     </button>
                   </div>
                 )}
@@ -459,9 +478,10 @@ export default function BookingDetailModal({
               <button
                 className="btn btn-primary btn-save-detail"
                 onClick={handleSaveDetail}
-                disabled={detailSaving || !isDetailModified}
+                disabled={detailBusy || !isDetailModified}
+                aria-busy={detailSaving}
               >
-                {detailSaving ? 'Đang lưu...' : 'Lưu'}
+                <BusyLabel busy={detailSaving} text="Đang lưu...">Lưu</BusyLabel>
               </button>
             </div>
           </div>

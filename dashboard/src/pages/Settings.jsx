@@ -10,6 +10,8 @@ import { getInitial } from '../utils/format';
 import { notifyError } from '../utils/notify';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useModalA11y } from '../hooks/useModalA11y';
+import { useBusy } from '../hooks/useBusy';
+import BusyLabel from '../components/BusyLabel';
 import { clickableProps } from '../utils/a11y';
 import '../styles/webhooks.css';
 import '../styles/settings.css';
@@ -23,7 +25,8 @@ function Settings() {
     buffer_time: 15
   });
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  // Thao tác đang chạy (lưu / thêm / xóa / test...) → khóa nút + chữ "Đang ..."
+  const { run, isBusy } = useBusy();
 
   // Webhooks State
   const [webhooks, setWebhooks] = useState([]);
@@ -73,17 +76,18 @@ function Settings() {
   };
 
   const handleSaveSetting = async (key, value) => {
-    setSaving(true);
     try {
       await updateSetting({ key, value });
       setSettings(prev => ({ ...prev, [key]: value }));
       toast.success('Cập nhật cài đặt thành công!');
     } catch (err) {
       toast.error('Lỗi khi lưu cài đặt: ' + err.message);
-    } finally {
-      setSaving(false);
     }
   };
+
+  // Mỗi nút một key riêng: buffer_time và tour_order_<chi nhánh> là 2 dòng cài đặt khác nhau
+  // (updateSetting chỉ ghi đúng 1 key) → lưu cái này không cần khóa / hiện "Đang lưu..." ở cái kia.
+  const saveBufferTime = () => run('save:buffer_time', () => handleSaveSetting('buffer_time', settings.buffer_time));
 
   // Webhook Functions
   const loadWebhooks = async () => {
@@ -110,35 +114,39 @@ function Settings() {
     setWebhookModalOpen(true);
   };
 
-  const handleWebhookSubmit = async (e) => {
+  const handleWebhookSubmit = (e) => {
     e.preventDefault();
-    try {
-      if (editingWebhook) {
-        await updateWebhook(editingWebhook.id, webhookForm);
-        toast.success('Cập nhật webhook thành công!');
-      } else {
-        await createWebhook(webhookForm);
-        toast.success('Thêm webhook thành công!');
+    return run('webhook:submit', async () => {
+      try {
+        if (editingWebhook) {
+          await updateWebhook(editingWebhook.id, webhookForm);
+          toast.success('Cập nhật webhook thành công!');
+        } else {
+          await createWebhook(webhookForm);
+          toast.success('Thêm webhook thành công!');
+        }
+        setWebhookModalOpen(false);
+        loadWebhooks();
+      } catch (err) {
+        toast.error(err.message);
       }
-      setWebhookModalOpen(false);
-      loadWebhooks();
-    } catch (err) {
-      toast.error(err.message);
-    }
+    });
   };
 
   const handleDeleteWebhook = async (id) => {
     if (!(await confirmDialog({ message: 'Xóa webhook này?', confirmText: 'Xóa', danger: true }))) return;
-    try {
-      await deleteWebhook(id);
-      toast.success('Xóa webhook thành công!');
-      loadWebhooks();
-    } catch (err) {
-      toast.error(err.message);
-    }
+    await run(`webhook:delete:${id}`, async () => {
+      try {
+        await deleteWebhook(id);
+        toast.success('Xóa webhook thành công!');
+        loadWebhooks();
+      } catch (err) {
+        toast.error(err.message);
+      }
+    });
   };
 
-  const handleTestWebhook = async (id) => {
+  const handleTestWebhook = (id) => run(`webhook:test:${id}`, async () => {
     setTestResult(null);
     try {
       const result = await testWebhook(id);
@@ -148,16 +156,17 @@ function Settings() {
       setTestResult({ id, success: false, message: err.message });
       setTimeout(() => setTestResult(null), 5000);
     }
-  };
+  });
 
-  const handleToggleWebhook = async (webhook) => {
+  // Công tắc là <div role="switch"> (không có `disabled`) → run() chặn bấm lại khi đang lưu
+  const handleToggleWebhook = (webhook) => run(`webhook:toggle:${webhook.id}`, async () => {
     try {
       await updateWebhook(webhook.id, { ...webhook, is_active: !webhook.is_active });
       loadWebhooks();
     } catch (err) {
       toast.error(err.message);
     }
-  };
+  });
 
   // Tour Functions
   const loadTourData = async () => {
@@ -241,13 +250,13 @@ function Settings() {
     setDraggedIndex(null);
   };
 
-  const saveTourOrder = async () => {
+  const saveTourOrder = () => run('save:tour', async () => {
     if (!selectedBranch) return;
     const tourKey = `tour_order_${selectedBranch}`;
     const orderIds = tourStaff.map(s => s.id);
     await handleSaveSetting(tourKey, orderIds);
     setInitialTourOrder(orderIds);
-  };
+  });
 
   const isTourModified = JSON.stringify(tourStaff.map(s => s.id)) !== JSON.stringify(initialTourOrder);
 
@@ -315,11 +324,14 @@ function Settings() {
                   <span className="settings-input-suffix">phút</span>
                   <button
                     className="btn btn-primary btn-save"
-                    onClick={() => handleSaveSetting('buffer_time', settings.buffer_time)}
-                    disabled={saving}
+                    onClick={saveBufferTime}
+                    disabled={isBusy('save:buffer_time')}
+                    aria-busy={isBusy('save:buffer_time')}
                   >
-                    <FiSave className="btn-icon" />
-                    {saving ? 'Đang lưu...' : 'Lưu cài đặt'}
+                    <BusyLabel busy={isBusy('save:buffer_time')} text="Đang lưu...">
+                      <FiSave className="btn-icon" />
+                      Lưu cài đặt
+                    </BusyLabel>
                   </button>
                 </div>
               </div>
@@ -403,6 +415,8 @@ function Settings() {
                                 {...clickableProps(() => handleToggleWebhook(w))}
                                 role="switch"
                                 aria-checked={!!w.is_active}
+                                aria-busy={isBusy(`webhook:toggle:${w.id}`)}
+                                aria-disabled={isBusy(`webhook:toggle:${w.id}`)}
                                 aria-label={`Bật/tắt webhook ${w.name}`}>
                                 <div className="toggle-knob"></div>
                               </div>
@@ -413,14 +427,26 @@ function Settings() {
                           </td>
                           <td>
                             <div className="actions-cell">
-                              <button className="btn-icon" onClick={() => handleTestWebhook(w.id)} title="Test">
-                                <FiPlay size={14} />
+                              <button
+                                className="btn-icon"
+                                onClick={() => handleTestWebhook(w.id)}
+                                title="Test"
+                                disabled={isBusy(`webhook:test:${w.id}`)}
+                                aria-busy={isBusy(`webhook:test:${w.id}`)}
+                              >
+                                <BusyLabel busy={isBusy(`webhook:test:${w.id}`)}><FiPlay size={14} /></BusyLabel>
                               </button>
                               <button className="btn-icon" onClick={() => openEditWebhook(w)} title="Sửa">
                                 <FiEdit2 size={14} />
                               </button>
-                              <button className="btn-icon btn-danger" onClick={() => handleDeleteWebhook(w.id)} title="Xóa">
-                                <FiTrash2 size={14} />
+                              <button
+                                className="btn-icon btn-danger"
+                                onClick={() => handleDeleteWebhook(w.id)}
+                                title="Xóa"
+                                disabled={isBusy(`webhook:delete:${w.id}`)}
+                                aria-busy={isBusy(`webhook:delete:${w.id}`)}
+                              >
+                                <BusyLabel busy={isBusy(`webhook:delete:${w.id}`)}><FiTrash2 size={14} /></BusyLabel>
                               </button>
                             </div>
                             {testResult?.id === w.id && (
@@ -477,12 +503,15 @@ function Settings() {
                   ))}
                 </select>
                 <button
-                  className={`btn btn-primary ${saving || !isTourModified ? 'opacity-50' : ''}`}
+                  className={`btn btn-primary ${isBusy('save:tour') || !isTourModified ? 'opacity-50' : ''}`}
                   onClick={saveTourOrder}
-                  disabled={saving || !isTourModified}
+                  disabled={isBusy('save:tour') || !isTourModified}
+                  aria-busy={isBusy('save:tour')}
                 >
-                  <FiSave className="btn-icon" />
-                  {saving ? 'Đang lưu...' : 'Lưu thứ tự'}
+                  <BusyLabel busy={isBusy('save:tour')} text="Đang lưu...">
+                    <FiSave className="btn-icon" />
+                    Lưu thứ tự
+                  </BusyLabel>
                 </button>
               </div>
             </div>
@@ -563,7 +592,16 @@ function Settings() {
                 </div>
               </div>
               <div className="modal-footer">
-                <button type="submit" className="btn btn-primary">{editingWebhook ? 'Cập nhật' : 'Thêm'}</button>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={isBusy('webhook:submit')}
+                  aria-busy={isBusy('webhook:submit')}
+                >
+                  <BusyLabel busy={isBusy('webhook:submit')} text={editingWebhook ? 'Đang cập nhật...' : 'Đang thêm...'}>
+                    {editingWebhook ? 'Cập nhật' : 'Thêm'}
+                  </BusyLabel>
+                </button>
               </div>
             </form>
           </div>

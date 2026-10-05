@@ -7,9 +7,11 @@ import { notifyError } from '../utils/notify';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useModalA11y } from '../hooks/useModalA11y';
+import { useBusy } from '../hooks/useBusy';
+import BusyLabel from '../components/BusyLabel';
 import '../styles/employees.css';
 
-function EmployeeTable({ title, employees, loading, isMobile, openEdit, handleDelete, emptyTitle, emptyText, showBranchColumn }) {
+function EmployeeTable({ title, employees, loading, isMobile, openEdit, handleDelete, isBusy, emptyTitle, emptyText, showBranchColumn }) {
   return (
     <div className="card">
       <div className="card-header">
@@ -62,7 +64,10 @@ function EmployeeTable({ title, employees, loading, isMobile, openEdit, handleDe
                     <td>
                       <div className="actions-cell">
                         <button className="btn-icon" aria-label="Sửa" onClick={() => openEdit(emp)}><FiEdit2 size={14} /></button>
-                        <button className="btn-icon btn-danger" aria-label="Xóa" onClick={() => handleDelete(emp.id)}><FiTrash2 size={14} /></button>
+                        <button className="btn-icon btn-danger" aria-label="Xóa" onClick={() => handleDelete(emp.id)}
+                          disabled={isBusy(`delete:${emp.id}`)} aria-busy={isBusy(`delete:${emp.id}`)}>
+                          <BusyLabel busy={isBusy(`delete:${emp.id}`)}><FiTrash2 size={14} /></BusyLabel>
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -92,7 +97,10 @@ function EmployeeTable({ title, employees, loading, isMobile, openEdit, handleDe
                 </span>
                 <div className="mobile-card-actions" onClick={e => e.stopPropagation()}>
                   <button className="btn-icon" aria-label="Sửa" onClick={() => openEdit(emp)}><FiEdit2 size={14} /></button>
-                  <button className="btn-icon btn-danger" aria-label="Xóa" onClick={() => handleDelete(emp.id)}><FiTrash2 size={14} /></button>
+                  <button className="btn-icon btn-danger" aria-label="Xóa" onClick={() => handleDelete(emp.id)}
+                    disabled={isBusy(`delete:${emp.id}`)} aria-busy={isBusy(`delete:${emp.id}`)}>
+                    <BusyLabel busy={isBusy(`delete:${emp.id}`)}><FiTrash2 size={14} /></BusyLabel>
+                  </button>
                 </div>
               </div>
             ))
@@ -111,6 +119,7 @@ function Employees() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ name: '', phone: '', branch_id: '', is_active: true });
+  const { run, isBusy } = useBusy();
 
   // Responsive
   const isMobile = useIsMobile();
@@ -159,32 +168,41 @@ function Employees() {
     setModalOpen(true);
   };
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault();
-    try {
-      if (editing) {
-        await updateEmployee(editing.id, form);
-        notify(`Cập nhật nhân viên ${editing.name} thành công`);
-      } else {
-        await createEmployee(form);
-        notify(`Thêm nhân viên thành công`);
+    return run('save', async () => {
+      try {
+        if (editing) {
+          await updateEmployee(editing.id, form);
+          notify(`Cập nhật nhân viên ${editing.name} thành công`);
+        } else {
+          await createEmployee(form);
+          notify(`Thêm nhân viên thành công`);
+        }
+        setModalOpen(false);
+        loadEmployees();
+      } catch (err) {
+        toast.error(err.message);
       }
-      setModalOpen(false);
-      loadEmployees();
-    } catch (err) {
-      toast.error(err.message);
-    }
+    });
   };
 
   const handleDelete = async (id) => {
+    if (isBusy(`delete:${id}`)) return;
     if (!(await confirmDialog({ message: 'Bạn có chắc muốn vô hiệu hóa nhân viên này?', confirmText: 'Vô hiệu hóa', danger: true }))) return;
-    try {
-      await deleteEmployee(id);
-      loadEmployees();
-    } catch (err) {
-      toast.error(err.message);
-    }
+    await run(`delete:${id}`, async () => {
+      try {
+        await deleteEmployee(id);
+        loadEmployees();
+      } catch (err) {
+        toast.error(err.message);
+      }
+    });
   };
+
+  // Đang lưu / đang xóa nhân viên trong modal → khóa cả 2 nút để không vừa lưu vừa xóa
+  const saving = isBusy('save');
+  const deletingInModal = !!editing && isBusy(`delete:${editing.id}`);
 
   const validBranchIds = new Set(branches.map(b => b.id));
   const unassignedEmployees = employees.filter(e => !validBranchIds.has(e.branch_id));
@@ -212,6 +230,7 @@ function Employees() {
           isMobile={isMobile}
           openEdit={openEdit}
           handleDelete={handleDelete}
+          isBusy={isBusy}
           emptyTitle="Chưa có nhân viên"
           emptyText="Thêm nhân viên để bắt đầu nhận lịch đặt"
           showBranchColumn={false}
@@ -226,6 +245,7 @@ function Employees() {
           isMobile={isMobile}
           openEdit={openEdit}
           handleDelete={handleDelete}
+          isBusy={isBusy}
           emptyTitle="Không có nhân viên"
           emptyText=""
           showBranchColumn={true}
@@ -276,10 +296,17 @@ function Employees() {
               </div>
               <div className="modal-footer">
                 {editing && (
-                  <button type="button" className="btn btn-danger" onClick={() => handleDelete(editing.id)} style={{ marginRight: 'auto' }}>Xóa nhân viên</button>
+                  <button type="button" className="btn btn-danger" onClick={() => handleDelete(editing.id)} style={{ marginRight: 'auto' }}
+                    disabled={saving || deletingInModal} aria-busy={deletingInModal}>
+                    <BusyLabel busy={deletingInModal} text="Đang xóa...">Xóa nhân viên</BusyLabel>
+                  </button>
                 )}
                 <button type="button" className="btn btn-secondary" onClick={() => setModalOpen(false)}>Hủy</button>
-                <button type="submit" className="btn btn-primary">{editing ? 'Cập nhật' : 'Thêm'}</button>
+                <button type="submit" className="btn btn-primary" disabled={saving || deletingInModal} aria-busy={saving}>
+                  <BusyLabel busy={saving} text={editing ? 'Đang cập nhật...' : 'Đang thêm...'}>
+                    {editing ? 'Cập nhật' : 'Thêm'}
+                  </BusyLabel>
+                </button>
               </div>
             </form>
           </div>

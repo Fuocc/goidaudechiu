@@ -7,6 +7,8 @@ import { notifyError } from '../utils/notify';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useConfirm } from '../components/ConfirmDialog';
 import { useModalA11y } from '../hooks/useModalA11y';
+import { useBusy } from '../hooks/useBusy';
+import BusyLabel from '../components/BusyLabel';
 import { clickableProps } from '../utils/a11y';
 import { SERVICE_CATEGORIES as CATEGORIES, SERVICE_COLORS as COLORS } from '../config/business';
 import '../styles/services.css';
@@ -31,6 +33,7 @@ function Services() {
   const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
   const colorPickerRef = useRef(null);
   const categoryRef = useRef(null);
+  const { run, isBusy } = useBusy();
 
   // Responsive
   const isMobile = useIsMobile();
@@ -100,39 +103,47 @@ function Services() {
     if (e) e.preventDefault();
     if (!form.name || form.price < 0 || !form.duration_minutes < 0) return;
 
-    try {
-      const payload = {
-        ...form,
-        price: parseInt(form.price),
-        duration_minutes: parseInt(form.duration_minutes)
-      };
-      if (editing) {
-        await updateService(editing.id, payload);
-        toast.success(`Cập nhật ${editing.name} thành công`);
-      } else {
-        await createService(payload);
-        toast.success('Thêm dịch vụ mới thành công');
+    await run('save', async () => {
+      try {
+        const payload = {
+          ...form,
+          price: parseInt(form.price),
+          duration_minutes: parseInt(form.duration_minutes)
+        };
+        if (editing) {
+          await updateService(editing.id, payload);
+          toast.success(`Cập nhật ${editing.name} thành công`);
+        } else {
+          await createService(payload);
+          toast.success('Thêm dịch vụ mới thành công');
+        }
+        setModalOpen(false);
+        loadServices();
+      } catch (err) {
+        toast.error(err.message);
       }
-      setModalOpen(false);
-      loadServices();
-    } catch (err) {
-      toast.error(err.message);
-    }
+    });
   };
 
   const handleDelete = async (id) => {
+    if (isBusy(`delete:${id}`)) return;
     if (!(await confirmDialog({ message: 'Bạn có chắc muốn vô hiệu hóa dịch vụ này?', confirmText: 'Vô hiệu hóa', danger: true }))) return;
-    try {
-      await deleteService(id);
-      setModalOpen(false);
-      toast.success('Đã vô hiệu hóa dịch vụ');
-      loadServices();
-    } catch (err) {
-      toast.error(err.message);
-    }
+    await run(`delete:${id}`, async () => {
+      try {
+        await deleteService(id);
+        setModalOpen(false);
+        toast.success('Đã vô hiệu hóa dịch vụ');
+        loadServices();
+      } catch (err) {
+        toast.error(err.message);
+      }
+    });
   };
 
   const isFormValid = form.name && form.price >= 0 && form.duration_minutes >= 0;
+  // Đang lưu / đang xóa dịch vụ trong modal → khóa cả 2 nút để không vừa lưu vừa xóa
+  const saving = isBusy('save');
+  const deletingInModal = !!editing && isBusy(`delete:${editing.id}`);
 
   // Esc: đóng bảng chọn màu / nhóm đang mở trước, rồi mới đóng modal
   const modalRef = useModalA11y(modalOpen, () => {
@@ -205,7 +216,10 @@ function Services() {
                       <td>
                         <div className="actions-cell">
                           <button className="btn-icon" aria-label="Sửa" onClick={() => openEdit(svc)}><FiEdit2 size={14} /></button>
-                          <button className="btn-icon btn-danger" aria-label="Xóa" onClick={() => handleDelete(svc.id)}><FiTrash2 size={14} /></button>
+                          <button className="btn-icon btn-danger" aria-label="Xóa" onClick={() => handleDelete(svc.id)}
+                            disabled={isBusy(`delete:${svc.id}`)} aria-busy={isBusy(`delete:${svc.id}`)}>
+                            <BusyLabel busy={isBusy(`delete:${svc.id}`)}><FiTrash2 size={14} /></BusyLabel>
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -230,7 +244,10 @@ function Services() {
                     </div>
                     <div className="mobile-card-actions" onClick={e => e.stopPropagation()}>
                       <button className="btn-icon" aria-label="Sửa" onClick={() => openEdit(svc)}><FiEdit2 size={14} /></button>
-                      <button className="btn-icon btn-danger" aria-label="Xóa" onClick={() => handleDelete(svc.id)}><FiTrash2 size={14} /></button>
+                      <button className="btn-icon btn-danger" aria-label="Xóa" onClick={() => handleDelete(svc.id)}
+                        disabled={isBusy(`delete:${svc.id}`)} aria-busy={isBusy(`delete:${svc.id}`)}>
+                        <BusyLabel busy={isBusy(`delete:${svc.id}`)}><FiTrash2 size={14} /></BusyLabel>
+                      </button>
                     </div>
                   </div>
                   <div className="service-card-details">
@@ -447,14 +464,18 @@ function Services() {
 
               <div className="service-modal-footer">
                 {editing && (
-                  <button type="button" className="btn btn-danger" onClick={() => handleDelete(editing.id)} style={{ marginRight: 'auto', padding: '10px 16px', fontSize: '13px' }}>Xóa dịch vụ</button>
+                  <button type="button" className="btn btn-danger" onClick={() => handleDelete(editing.id)} style={{ marginRight: 'auto', padding: '10px 16px', fontSize: '13px' }}
+                    disabled={saving || deletingInModal} aria-busy={deletingInModal}>
+                    <BusyLabel busy={deletingInModal} text="Đang xóa...">Xóa dịch vụ</BusyLabel>
+                  </button>
                 )}
                 <button
                   type="submit"
                   className={`btn-save ${isFormValid ? 'active' : ''}`}
-                  disabled={!isFormValid}
+                  disabled={!isFormValid || saving || deletingInModal}
+                  aria-busy={saving}
                 >
-                  Lưu
+                  <BusyLabel busy={saving} text="Đang lưu...">Lưu</BusyLabel>
                 </button>
               </div>
             </form>
