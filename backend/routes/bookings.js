@@ -11,6 +11,7 @@ const {
   MAX_ONLINE_GUESTS, OVER_GUEST_LIMIT_MESSAGE, normalizeVnPhone, supportsClientIp,
   releaseActiveHoldsForIp, checkSlotBudget, computeSpamFlag
 } = require('../lib/antiSpam');
+const { checkInBooking } = require('../lib/checkIn');
 const { UNDO_RESTORE_FIELDS, UNDO_MAX_AGE_MS, fingerprintRow, verifyUndoAction } = require('../lib/undoToken');
 
 // ---- Kiểm tra dữ liệu đầu vào (dùng cho request từ landing page / chưa đăng nhập) ----
@@ -1412,6 +1413,19 @@ router.put('/:id/status', async (req, res) => {
       oldBooking
     });
     
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/bookings/:id/check-in — khách đã đến (dùng chung logic với AI check_in_booking)
+ */
+router.post('/:id/check-in', async (req, res) => {
+  try {
+    const result = await checkInBooking(req.params.id, getBroadcast(req));
+    if (result.error) return res.status(404).json({ error: result.error });
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

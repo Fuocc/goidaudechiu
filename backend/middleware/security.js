@@ -30,6 +30,7 @@ const ACCESS_RULES = [
   { method: 'GET', path: new RegExp(`^/bookings(/${ID})?$`), role: 'staff' },
   { method: 'PUT', path: new RegExp(`^/bookings/${ID}(/status)?$`), role: 'staff' },
   { method: 'DELETE', path: new RegExp(`^/bookings/${ID}$`), role: 'staff' },
+  { method: 'POST', path: new RegExp(`^/bookings/${ID}/check-in$`), role: 'staff' },
   { method: 'GET', path: new RegExp(`^/customers(/${ID})?$`), role: 'staff' },
   { method: 'POST', path: /^\/customers$/, role: 'staff' },
   { method: 'PUT', path: new RegExp(`^/customers/${ID}$`), role: 'staff' },

@@ -95,6 +95,7 @@ export const createBooking = (data) => request('/bookings', { method: 'POST', bo
 export const updateBookingStatus = (id, status) => request(`/bookings/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) });
 export const updateBooking = (id, data) => request(`/bookings/${id}`, { method: 'PUT', body: JSON.stringify(data) });
 // { group: true } → xóa luôn các lịch cùng nhóm khách
+export const checkInBooking = (id) => request(`/bookings/${id}/check-in`, { method: 'POST' });
 export const deleteBooking = (id, { group = false } = {}) =>
   request(`/bookings/${id}${group ? '?group=1' : ''}`, { method: 'DELETE' });
 

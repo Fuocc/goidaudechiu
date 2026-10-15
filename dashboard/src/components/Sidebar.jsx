@@ -28,7 +28,9 @@ function Sidebar({ user, onLogout }) {
 
   const [aiChatOpen, setAiChatOpen] = useState(false);
   const toggleAiChat = () => setAiChatOpen(prev => !prev);
-  const { gotoBooking } = useAppUI();
+  const { gotoBooking, aiReplyTarget } = useAppUI();
+  // "Chat AI" từ thẻ lịch → mở chat panel (AIChatPanel tự gắn ngữ cảnh)
+  useEffect(() => { if (aiReplyTarget) setAiChatOpen(true); }, [aiReplyTarget]);
 
   const profileRef = useRef(null);
   const popoverRef = useRef(null);

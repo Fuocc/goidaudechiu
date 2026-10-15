@@ -1090,11 +1090,11 @@
 
 /* Rê chuột vào 1 lịch → tô sáng các lịch cùng nhóm */
 .cal-booking-card-wrapper.is-group-highlight .cal-booking-card {
-  box-shadow: 0 0 0 2px rgba(17, 17, 17, 0.55);
+  box-shadow: 0 0 0 2px rgba(37, 131, 107, 0.55);
 }
 
 tr.is-group-highlight td {
-  background: rgba(237, 211, 169, 0.25);
+  background: rgba(37, 131, 107, 0.15);
 }
 
 .badge-mixed {
@@ -1666,6 +1666,8 @@ tr.is-group-highlight td {
   }
 
   .cal-staff-header {
+    background-color: transparent;
+    border: none;
     font-size: 13px;
     height: 44px;
   }
@@ -1715,7 +1717,7 @@ tr.is-group-highlight td {
 
   .cal-week-label {
     font-size: 14px;
-    padding: 6px 4px;
+    padding: 6px;
   }
 
   .cal-toolbar-middle .btn-icon {
@@ -1774,6 +1776,13 @@ tr.is-group-highlight td {
   .booking-card-mobile:active {
     transform: scale(0.98);
     border-color: var(--chip-gray);
+  }
+
+  /* Giữ lâu mở context menu riêng → tắt menu copy/chọn chữ mặc định của iOS/Android */
+  .booking-list-mobile .booking-card-mobile {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
   }
 
   .booking-card-mobile-header {
@@ -1918,5 +1927,88 @@ tr.is-group-highlight td {
   .cal-week-label {
     font-size: 13px;
     width: 100%;
+  }
+}
+
+/* Context menu kiểu iOS khi giữ lâu thẻ lịch (mobile list view) */
+.card-context-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.25);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  animation: card-context-fade 0.18s ease-out;
+}
+
+/* top/left/width đặt inline theo vị trí thẻ gốc */
+.card-context-stack {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transform-origin: top center;
+  animation: card-context-pop 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+.card-context-preview {
+  max-height: 40vh;
+  overflow: hidden;
+  cursor: default;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+}
+
+.card-context-preview:active {
+  transform: none;
+}
+
+.card-context-menu {
+  align-self: flex-start;
+  min-width: 230px;
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+}
+
+.card-context-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 16px;
+  border: none;
+  background: transparent;
+  font-size: 15px;
+  color: var(--black);
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.card-context-item + .card-context-item {
+  border-top: 0.5px solid rgba(0, 0, 0, 0.12);
+}
+
+.card-context-item:active {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.card-context-item.danger {
+  color: var(--error);
+}
+
+@keyframes card-context-fade {
+  from { opacity: 0; }
+}
+
+@keyframes card-context-pop {
+  from { transform: scale(0.97); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-context-overlay,
+  .card-context-stack {
+    animation: none;
   }
 }

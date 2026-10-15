@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { toast } from 'react-toastify';
 
 import {
-  getBookingsRange, createBooking, updateBooking, deleteBooking,
+  getBookingsRange, createBooking, updateBooking, deleteBooking, checkInBooking,
   getBranches, getServices, getEmployees, getCustomers, getEmployeeSchedules,
   getSettings
 } from '../api';
@@ -48,7 +48,7 @@ function Bookings() {
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(new Date());
   const loadBookingsRef = useRef(null);
-  const { bookingsRefreshKey, gotoTarget, clearGotoTarget } = useAppUI();
+  const { bookingsRefreshKey, gotoTarget, clearGotoTarget, askAI } = useAppUI();
 
   // AI chat vừa đổi lịch → tải lại. Bỏ qua lần mount đầu (trang tự tải) và các lần đã xử lý.
   const handledRefreshKeyRef = useRef(bookingsRefreshKey);
@@ -522,6 +522,41 @@ function Bookings() {
         toast.error(err.message);
       }
     });
+  });
+
+  // --- Context menu khi giữ lâu thẻ lịch (mobile list view). item = 1 phần tử của mobileListItems ---
+  const handleCheckInItem = (item) => run(`checkin:${item.key}`, async () => {
+    try {
+      // Backend tự check-in cả nhóm nếu lịch thuộc nhóm
+      await checkInBooking(item.lead.id);
+      notify(item.guestCount > 1 ? `Đã báo cả nhóm ${item.guestCount} khách tới!` : 'Đã báo khách tới!');
+      loadBookings();
+    } catch (err) {
+      toast.error(err.message);
+    }
+  });
+
+  const handleCancelItem = (item) => run(`cancel:${item.key}`, async () => {
+    const group = item.guestCount > 1;
+    const ok = await confirmDialog({
+      message: group ? `Hủy lịch cho cả nhóm ${item.guestCount} khách?` : 'Bạn có chắc muốn hủy lịch hẹn này?',
+      confirmText: group ? `Hủy cả nhóm (${item.guestCount})` : 'Hủy lịch',
+      cancelText: 'Không',
+      danger: true
+    });
+    if (!ok) return;
+    try {
+      await deleteBooking(item.lead.id, { group });
+      notify(group ? `Đã hủy cả nhóm ${item.guestCount} khách!` : 'Đã hủy lịch hẹn thành công!');
+      loadBookings();
+    } catch (err) {
+      toast.error(err.message);
+    }
+  });
+
+  const handleAskAIItem = (item) => askAI({
+    bookingIds: item.ids,
+    label: `${item.lead.temporary_name || item.lead.customers?.name || 'Lịch hẹn'} · ${formatTime(item.lead.start_time)}${item.guestCount > 1 ? ` · ${item.guestCount} khách` : ''}`
   });
 
   // --- Drag-to-create helpers ---
@@ -1278,10 +1313,13 @@ function Bookings() {
     return info;
   }, [bookings, employees]);
 
+  // List view ẩn lịch khách đã đến (status arrived); calendar vẫn hiện đầy đủ
+  const listBookings = useMemo(() => bookings.filter(b => b.status !== 'arrived'), [bookings]);
+
   // Mobile list view: gộp các lịch cùng group_booking_id (khách đi nhóm) thành 1 card
   const mobileListItems = useMemo(() => {
     const groups = new Map();
-    for (const b of bookings) {
+    for (const b of listBookings) {
       const key = b.group_booking_id || b.id;
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(b);
@@ -1311,7 +1349,7 @@ function Bookings() {
         internalNotes: unique(sorted.map(m => m.internal_note))
       };
     }).sort((a, b) => byStart(a.lead, b.lead));
-  }, [bookings]);
+  }, [listBookings]);
 
   return (
     <div className='full-view full-view-bookings' style={{ '--staff-count': loading ? 3 : (employees.length || 1) }}>
@@ -1361,8 +1399,11 @@ function Bookings() {
       ) : (
         /* List View */
         <BookingListView
-          bookings={bookings}
+          bookings={listBookings}
           groupInfoById={groupInfoById}
+          handleAskAIItem={handleAskAIItem}
+          handleCancelItem={handleCancelItem}
+          handleCheckInItem={handleCheckInItem}
           handleOpenDetail={handleOpenDetail}
           handleRetryLoad={handleRetryLoad}
           isMobile={isMobile}

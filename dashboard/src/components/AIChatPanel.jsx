@@ -31,7 +31,7 @@ function getActionTitle(actions) {
 
 function AIChatPanel({ onClose, currentBranchId }) {
   const confirmDialog = useConfirm();
-  const { refreshBookings } = useAppUI();
+  const { refreshBookings, aiReplyTarget, clearAiReplyTarget } = useAppUI();
   const [messages, setMessages] = useState(() => {
     try {
       const saved = localStorage.getItem(CHAT_STORAGE_KEY) || localStorage.getItem(LEGACY_CHAT_STORAGE_KEY);
@@ -77,6 +77,14 @@ function AIChatPanel({ onClose, currentBranchId }) {
 
   const branchDropdownRef = useRef(null);
   const textareaRef = useRef(null);
+
+  // "Chat AI" từ thẻ lịch → gắn lịch đó làm ngữ cảnh trả lời
+  useEffect(() => {
+    if (!aiReplyTarget) return;
+    setReplyingTo(aiReplyTarget);
+    clearAiReplyTarget();
+    textareaRef.current?.focus();
+  }, [aiReplyTarget, clearAiReplyTarget]);
 
   // Click outside listener to close custom dropdown
   useEffect(() => {

@@ -7,6 +7,7 @@ const { aiLimiter } = require('../middleware/security');
 const { hasRole } = require('../middleware/auth');
 const { loadTourOrder, sortByTourOrder } = require('../lib/tourOrder');
 const { signUndoAction } = require('../lib/undoToken');
+const { checkInBooking } = require('../lib/checkIn');
 
 // Initialize Gemini SDK
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
@@ -127,11 +128,15 @@ const spaTools = [
   },
   {
     name: "check_in_booking",
-    description: "Cập nhật khách đã đến: tự động set giờ hiện tại làm start_time, tính lại end_time theo dịch vụ, cập nhật status = arrived. Gọi sau search_bookings.",
+    description: "Cập nhật khách đã đến: tự động set giờ hiện tại (làm tròn 5 phút) làm start_time, tính lại end_time theo dịch vụ, cập nhật status = arrived. Lịch nhóm → check-in cả nhóm. Gọi sau search_bookings.",
     parameters: {
       type: "object",
       properties: {
-        booking_id: { type: "string", description: "UUID của lịch hẹn cần check-in." }
+        booking_id: { type: "string", description: "UUID của lịch hẹn cần check-in." },
+        customer_name_hint: {
+          type: "string",
+          description: "Tên khách được nhắc trong lệnh gốc. Hệ thống sẽ đối chiếu với tên thật của lịch hẹn trước khi check-in để tránh nhầm khách."
+        }
       },
       required: ["booking_id"]
     }
@@ -1101,69 +1106,19 @@ async function executeTool(toolName, params, context) {
 
     
     case 'check_in_booking': {
-    const broadcast = context.req.app.get('broadcastSSE') || (() => { });
-
-    // Round current VN time to nearest 5 min
-    const now = new Date();
-    const vnNow = new Date(now.getTime() + 7 * 60 * 60 * 1000 + now.getTimezoneOffset() * 60000);
-    const totalMinutes = vnNow.getHours() * 60 + vnNow.getMinutes();
-    const rounded = Math.ceil(totalMinutes / 5) * 5;
-    const newStartTime = `${String(Math.floor(rounded / 60)).padStart(2, '0')}:${String(rounded % 60).padStart(2, '0')}`;
-
-    // Fetch the booking
-    const { data: booking, error: fetchError } = await supabase
-      .from('bookings')
-      .select('*, services(duration_minutes)')
-      .eq('id', params.booking_id)
-      .single();
-
-    if (fetchError || !booking) return { error: 'Không tìm thấy lịch hẹn.' };
-
-    // Collect all booking IDs to update (group or single)
-    let bookingsToUpdate = [booking];
-    if (booking.group_booking_id) {
-      const { data: siblings } = await supabase
-        .from('bookings')
-        .select('*, services(duration_minutes)')
-        .eq('group_booking_id', booking.group_booking_id)
-        .neq('status', 'cancelled');
-      if (siblings?.length) bookingsToUpdate = siblings;
+    // Đối chiếu tên khách trong lệnh gốc để không check-in nhầm lịch (giống delete_booking)
+    if (params.customer_name_hint) {
+      const { data: target } = await supabase.from('bookings').select('temporary_name').eq('id', params.booking_id).maybeSingle();
+      const stripPrefix = (str) => (str || '').toLowerCase().replace(/^(chị|anh|c\.|a\.)\s+/i, '').trim();
+      const hint = stripPrefix(params.customer_name_hint);
+      const actualName = stripPrefix(target?.temporary_name);
+      if (hint && actualName && !actualName.includes(hint) && !hint.includes(actualName)) {
+        return {
+          error: `Tên khách không khớp: lịch hẹn này thuộc về "${target.temporary_name}", không phải "${params.customer_name_hint}". Vui lòng gọi lại search_bookings để xác nhận đúng lịch trước khi check-in.`
+        };
+      }
     }
-
-    // Snapshot trước khi check-in để có thể hoàn tác (khôi phục giờ + trạng thái cũ)
-    const snapshot = bookingsToUpdate.map(({ services, ...row }) => row);
-
-    // Update each booking with same start_time but individual end_time
-    const updates = await Promise.all(
-      bookingsToUpdate.map(async (b) => {
-        const duration = b.services?.duration_minutes || 60;
-        const [h, m] = newStartTime.split(':').map(Number);
-        const endMinutes = h * 60 + m + duration;
-        const newEndTime = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
-
-        const { data: updated, error } = await supabase
-          .from('bookings')
-          .update({
-            status: 'arrived',
-            start_time: newStartTime,
-            end_time: newEndTime
-          })
-          .eq('id', b.id)
-          .select('*, employees(name), services(name), branches(name)')
-          .single();
-
-        if (!error) broadcast('booking.updated', updated);
-        return updated;
-      })
-    );
-
-    return {
-      success: true,
-      checked_in: updates.filter(Boolean).length,
-      start_time: newStartTime,
-      bookings: updates.filter(Boolean),
-      snapshot
-    };
+    return checkInBooking(params.booking_id, context.req.app.get('broadcastSSE'));
   }
 
 
@@ -1690,7 +1645,7 @@ ${employeesStr}
   - Hủy lịch → search_bookings → delete_booking
   - Cần nhân viên/dịch vụ của chi nhánh KHÁC → get_spa_context
   - Hỏi ai đang rảnh lúc nào → get_available_staff (danh sách đã xếp theo tour)
-  - Nếu có reply_to_booking_ids → gọi thẳng update_booking hoặc delete_booking. KHÔNG gọi get_available_staff. KHÔNG tạo lịch mới.
+  - Nếu có reply_to_booking_ids → gọi thẳng update_booking, delete_booking hoặc check_in_booking (lệnh "đến/tới"). KHÔNG gọi get_available_staff. KHÔNG tạo lịch mới.
   - Hỏi "hôm nay còn slot nào?", "hôm nay đông không?" → get_daily_summary. Trả lời PHẢI nêu rõ total_bookings (tổng số lịch hẹn hôm nay) chứ không chỉ liệt kê tên nhân viên rảnh
   - Cần giờ mở cửa các chi nhánh cho ngày không phải hôm nay → get_branches
   - Người dùng hỏi riêng một nhân viên có bị trùng lịch không → check_conflicts (create_booking/update_booking đã tự kiểm tra trùng, KHÔNG cần gọi check_conflicts trước)
@@ -1718,7 +1673,7 @@ ${employeesStr}
   - Chỉ hỏi khi thiếu thông tin không thể suy luận chắc chắn (ví dụ: nhân viên được book đang bận hoặc không ở chi nhánh)
   - Kiểm tra chắc chắn không tạo lịch ngoài giờ mở cửa
   - search_bookings trả về exact:false (chỉ khớp gần đúng, không khớp chính xác tên) → liệt kê các lịch tìm thấy và hỏi lại khách xác nhận đúng người trước khi update_booking/delete_booking, KHÔNG tự chọn đại 1 kết quả
-  - Khi gọi update_booking hoặc delete_booking (trừ khi có reply_to_booking_ids), luôn truyền customer_name_hint bằng đúng tên khách trong lệnh gốc để hệ thống double-check tránh sửa/hủy nhầm lịch
+  - Khi gọi update_booking, delete_booking hoặc check_in_booking (trừ khi có reply_to_booking_ids), luôn truyền customer_name_hint bằng đúng tên khách trong lệnh gốc để hệ thống double-check tránh sửa/hủy nhầm lịch
   - Không reply bằng markdown.
 
   AN TOÀN:
@@ -1733,7 +1688,7 @@ ${employeesStr}
 
   const enrichedCommand = `${command}
   [Nếu lệnh KHÔNG nhắc đến tên dịch vụ nào cả thì mặc định: dịch vụ="Giữ Chỗ". Số khách mặc định=1, ngày mặc định=${todayDateStr} nếu không nói rõ. Đây là thông tin ĐÃ CÓ cho các trường hợp đó, KHÔNG cần hỏi thêm. NHƯNG nếu lệnh CÓ nhắc tên dịch vụ cụ thể mà không khớp dịch vụ nào trong DỮ LIỆU SPA, TUYỆT ĐỐI KHÔNG tự ý đổi sang "Giữ Chỗ" hay dịch vụ khác — phải hỏi lại khách để xác nhận đúng dịch vụ. Hãy gọi tool ngay với các mặc định hợp lệ.]${replyToIds?.length
-      ? `\n[reply_to_booking_ids: ${replyToIds.join(', ')}. Gọi thẳng update_booking hoặc delete_booking. KHÔNG gọi get_available_staff. KHÔNG tạo lịch mới.]`
+      ? `\n[reply_to_booking_ids: ${replyToIds.join(', ')}. Gọi thẳng update_booking, delete_booking hoặc check_in_booking. KHÔNG gọi get_available_staff. KHÔNG tạo lịch mới.]`
       : ''
     }`;
 
