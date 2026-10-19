@@ -118,5 +118,7 @@ module.exports = {
   UNDO_MAX_AGE_MS,
   fingerprintRow,
   signUndoAction,
-  verifyUndoAction
+  verifyUndoAction,
+  signingKey,       // dùng chung cho token xác nhận của AI (lib/confirmToken.js)
+  stableStringify
 };

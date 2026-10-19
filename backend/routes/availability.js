@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../supabaseClient');
+const { policyFor, loadSettings } = require('../lib/bookingEngine');
+const { isExpiredHold } = require('../lib/holds');
 
 const OPEN_HOUR = 9;
 const CLOSE_HOUR = 22;
@@ -266,23 +268,20 @@ async function getAvailabilityForBranch({ branchId, date, guestCount, durationMi
   const totalEmployees = workingEmployees.length;
   const totalBeds = beds.length;
 
-  // 4) Load bookings that day (non-cancelled)
-  const { data: bookings, error: bookErr } = await supabase
+  // 4) Load bookings that day (non-cancelled) — giữ chỗ đã hết hạn không còn chặn slot (cùng quy tắc booking engine)
+  const { data: dayBookings, error: bookErr } = await supabase
     .from('bookings')
-    .select('employee_id, bed_id, start_time, end_time')
+    .select('employee_id, bed_id, start_time, end_time, status, internal_note, hold_expires_at, created_at')
     .eq('branch_id', branchId)
     .eq('booking_date', date)
     .neq('status', 'cancelled');
 
   if (bookErr) throw bookErr;
+  const now = Date.now();
+  const bookings = (dayBookings || []).filter(b => !isExpiredHold(b, now));
 
-  // 4.1) Load buffer time from settings
-  const { data: settingsData } = await supabase
-    .from('settings')
-    .select('value')
-    .eq('key', 'buffer_time')
-    .single();
-  const bufferTime = settingsData ? parseInt(settingsData.value) : 15;
+  // 4.1) Buffer cho khách online — cùng cách đọc với booking engine (0 = không buffer, chưa cài = 0)
+  const bufferTime = policyFor('web', await loadSettings(supabase)).employeeBuffer;
 
   // 5) Generate slots
   const slots = [];
@@ -305,12 +304,14 @@ async function getAvailabilityForBranch({ branchId, date, guestCount, durationMi
 
       for (const booking of bookings) {
         const bStart = timeToMinutes(booking.start_time);
-        const bEnd = timeToMinutes(booking.end_time) + bufferTime;
+        const bEnd = timeToMinutes(booking.end_time);
 
-        // Check if proposed slot [startMinutes, startMinutes + duration] overlaps [bStart, bEnd]
-        if (startMinutes < bEnd && bStart < (startMinutes + duration)) {
-          if (booking.employee_id) busyEmployees.add(booking.employee_id);
-          if (booking.bed_id) busyBeds.add(booking.bed_id);
+        // Buffer chỉ tính cho nhân viên (nghỉ giữa 2 khách), giường không cần — giống booking engine
+        if (booking.employee_id && startMinutes < bEnd + bufferTime && bStart < (startMinutes + duration)) {
+          busyEmployees.add(booking.employee_id);
+        }
+        if (booking.bed_id && startMinutes < bEnd && bStart < (startMinutes + duration)) {
+          busyBeds.add(booking.bed_id);
         }
       }
 

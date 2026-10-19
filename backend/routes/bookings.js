@@ -6,7 +6,8 @@ const webpush = require('web-push');
 const bookingRateLimiter = require('../middleware/rateLimiter');
 const { holdLimiter, getClientIp } = require('../middleware/security');
 const { safeWebhookFetch } = require('../lib/safeUrl');
-const { planGroupAssignment } = require('../lib/groupPlanner');
+const { placeBookings, withMessages, summarizeConflicts, publicConflicts } = require('../lib/bookingEngine');
+const { HOLD_NOTE_PREFIX, isHoldBooking, cleanupExpiredHolds } = require('../lib/holds');
 const {
   MAX_ONLINE_GUESTS, OVER_GUEST_LIMIT_MESSAGE, normalizeVnPhone, supportsClientIp,
   releaseActiveHoldsForIp, checkSlotBudget, computeSpamFlag
@@ -266,10 +267,18 @@ function getBroadcast(req) {
   return req.app.get('broadcastSSE') || (() => { });
 }
 
-// Lịch giữ chỗ tạm thời (POST /hold) — cùng điều kiện với các truy vấn LIKE '[GIỮ CHỖ TẠM THỜI]%' bên dưới
-const HOLD_NOTE_PREFIX = '[GIỮ CHỖ TẠM THỜI]';
-const isHoldBooking = (b) =>
-  b?.status === 'pending' && typeof b.internal_note === 'string' && b.internal_note.startsWith(HOLD_NOTE_PREFIX);
+// Trả vướng mắc của booking engine. Khách online chỉ thấy loại vướng mắc (không lộ lịch của khách khác).
+function respondConflict(res, conflicts, { isPublic = false } = {}) {
+  if (isPublic) {
+    const noBed = conflicts.some(c => c.type === 'no_bed') && !conflicts.some(c => c.type === 'no_employee');
+    return res.status(409).json({
+      code: 'BOOKING_CONFLICT',
+      error: noBed ? 'Không còn giường trống cho khung giờ này.' : 'Không có nhân viên trống cho khung giờ này.',
+      conflicts: publicConflicts(conflicts)
+    });
+  }
+  return res.status(409).json({ code: 'BOOKING_CONFLICT', error: summarizeConflicts(conflicts), conflicts: withMessages(conflicts) });
+}
 
 /**
  * GET /api/bookings
@@ -312,7 +321,7 @@ router.post('/hold', holdLimiter, async (req, res) => {
   try {
     // Run cleanup first
     const broadcast = getBroadcast(req);
-    await cleanupExpiredHolds(broadcast);
+    await cleanupExpiredHolds(supabase, broadcast);
 
     const {
       branch_id, service_id, num_guests,
@@ -404,88 +413,6 @@ router.post('/hold', holdLimiter, async (req, res) => {
       customer = newCustomer;
     }
 
-    // 3) Load existing bookings in branch/day (including other holds!)
-    const { data: dayBookings, error: dayErr } = await supabase
-      .from('bookings')
-      .select('employee_id, bed_id, start_time, end_time')
-      .eq('branch_id', branch_id)
-      .eq('booking_date', booking_date)
-      .neq('status', 'cancelled');
-
-    if (dayErr) throw dayErr;
-
-    // 4) Load active employees
-    const { data: allEmployees, error: empErr } = await supabase
-      .from('employees')
-      .select('id')
-      .eq('branch_id', branch_id)
-      .eq('is_active', true);
-
-    if (empErr) throw empErr;
-
-    // Apply schedule rules
-    const empIds = allEmployees.map(e => e.id);
-    let schedules = [];
-    if (empIds.length > 0) {
-      const { data: schedData, error: schedErr } = await supabase
-        .from('employee_schedules')
-        .select('employee_id, start_time, end_time, is_day_off')
-        .in('employee_id', empIds)
-        .eq('date', booking_date);
-
-      if (schedErr) throw schedErr;
-      schedules = schedData || [];
-    }
-    const scheduleByEmp = new Map();
-    for (const s of schedules) scheduleByEmp.set(s.employee_id, s);
-
-    const employees = allEmployees.filter(e => {
-      const s = scheduleByEmp.get(e.id);
-      if (!s) return false;
-      if (s.is_day_off) return false;
-      if (!s.start_time || !s.end_time) return false;
-
-      const sStart = timeToMinutes(String(s.start_time).substring(0, 5));
-      const sEnd = timeToMinutes(String(s.end_time).substring(0, 5));
-      return startMinutes >= sStart && endMinutes <= sEnd;
-    });
-
-    if (employees.length < guestCount) {
-      return res.status(409).json({ error: 'Không đủ nhân viên cho khung giờ này.' });
-    }
-
-    // 5) Load active beds
-    const { data: beds, error: bedErr } = await supabase
-      .from('beds')
-      .select('id')
-      .eq('branch_id', branch_id)
-      .eq('is_active', true);
-
-    if (bedErr) throw bedErr;
-
-    // 6) Xếp nhân viên & giường cho CẢ NHÓM trước, đủ người mới ghi (không để lại giữ chỗ dở dang)
-    const { data: settingsData } = await supabase.from('settings').select('*');
-    const settings = (settingsData || []).reduce((acc, curr) => {
-      acc[curr.key] = curr.value;
-      return acc;
-    }, {});
-
-    const plan = planGroupAssignment({
-      guestCount,
-      startMinutes,
-      endMinutes,
-      dayBookings,
-      employees,
-      beds,
-      bufferTime: parseInt(settings.buffer_time) || 15,
-      tourOrder: settings[`tour_order_${branch_id}`] || []
-    });
-    if (!plan.ok) {
-      return res.status(409).json({
-        error: plan.reason === 'no_bed' ? 'Không còn giường trống cho khung giờ này.' : 'Không có nhân viên trống cho khung giờ này.'
-      });
-    }
-
     // Giới hạn thời gian giữ chỗ tối đa 10 phút (trước đây client tự đặt bao lâu cũng được → khóa slot vĩnh viễn)
     const requestedMs = parseInt(hold_duration, 10);
     const durationMs = Number.isFinite(requestedMs) && requestedMs > 0
@@ -496,31 +423,36 @@ router.post('/hold', holdLimiter, async (req, res) => {
     const groupBookingId = guestCount > 1 ? crypto.randomUUID() : null;
     const clientIpField = ip && (await supportsClientIp(supabase)) ? { client_ip: ip } : {};
 
-    const rows = plan.assignments.map(({ employee_id, bed_id }) => ({
-      customer_id: customer.id,
-      service_id: currentServiceId || null,
-      employee_id,
-      bed_id,
-      branch_id,
-      num_guests: guestCount,
-      booking_date,
-      start_time,
-      end_time,
-      status: 'pending',
-      total_price: price,
-      internal_note: `${HOLD_NOTE_PREFIX} Giữ chỗ tạm thời cho khách đang đặt online. Tự động hủy lịch sau 5 phút. EXPIRES:${expiresAt}`,
-      group_booking_id: groupBookingId,
-      ...clientIpField
-    }));
-
-    // 1 lệnh insert nhiều dòng = 1 câu SQL → hoặc vào đủ cả nhóm, hoặc không dòng nào
-    const { data: inserted, error: bookErr } = await supabase
-      .from('bookings')
-      .insert(rows)
-      .select('id');
-
-    if (bookErr) throw bookErr;
-    const createdHoldIds = inserted.map(b => b.id);
+    // 3) Xếp NV + giường cho CẢ NHÓM theo quy tắc khách online (buffer, ca, giường, không chồng lịch),
+    // ghi trong 1 transaction có khóa → 2 người giữ chỗ cùng lúc không lấy chung 1 NV / giường
+    const items = Array.from({ length: guestCount }, (_, ref) => ({ ref, start: start_time, end: end_time, autoEmployee: true }));
+    const result = await placeBookings(supabase, {
+      source: 'web',
+      branchId: branch_id,
+      date: booking_date,
+      items,
+      build: (assignments) => ({
+        inserts: assignments.map(({ employee_id, bed_id }) => ({
+          customer_id: customer.id,
+          service_id: currentServiceId || null,
+          employee_id,
+          bed_id,
+          branch_id,
+          num_guests: guestCount,
+          booking_date,
+          start_time,
+          end_time,
+          status: 'pending',
+          total_price: price,
+          internal_note: `${HOLD_NOTE_PREFIX} Giữ chỗ tạm thời cho khách đang đặt online. Tự động hủy lịch sau 5 phút. EXPIRES:${expiresAt}`,
+          hold_expires_at: new Date(expiresAt).toISOString(),
+          group_booking_id: groupBookingId,
+          ...clientIpField
+        }))
+      })
+    });
+    if (!result.ok) return respondConflict(res, result.conflicts, { isPublic: true });
+    const createdHoldIds = result.ids;
 
     // Broadcast SSE for live dashboard updates
     createdHoldIds.forEach(id => {
@@ -721,10 +653,12 @@ router.get('/:id', async (req, res) => {
  */
 router.put('/:id', async (req, res) => {
   try {
-    const { service_id, branch_id, start_time, end_time: clientEndTime, employee_id, notes, customer_id, booking_date, internal_note, temporary_name } = req.body;
+    const { service_id, branch_id, start_time, end_time: clientEndTime, notes, customer_id, booking_date, internal_note, temporary_name } = req.body;
+    // employee_id rỗng / null = lịch chưa xếp nhân viên (cột "Chưa xếp NV")
+    const employee_id = req.body.employee_id || null;
 
     // Basic validation
-    if (!service_id || !branch_id || !start_time || !employee_id) {
+    if (!service_id || !branch_id || !start_time || !('employee_id' in req.body)) {
       return res.status(400).json({ error: 'service_id, branch_id, start_time, employee_id are required' });
     }
 
@@ -761,16 +695,18 @@ router.put('/:id', async (req, res) => {
     if (brErr || !branch) return res.status(404).json({ error: 'Branch not found' });
 
     // 4) Validate employee exists and belongs to branch
-    const { data: emp, error: empErr } = await supabase
-      .from('employees')
-      .select('id, branch_id, is_active')
-      .eq('id', employee_id)
-      .single();
+    if (employee_id) {
+      const { data: emp, error: empErr } = await supabase
+        .from('employees')
+        .select('id, branch_id, is_active')
+        .eq('id', employee_id)
+        .single();
 
-    if (empErr || !emp) return res.status(404).json({ error: 'Employee not found' });
-    if (!emp.is_active) return res.status(409).json({ error: 'Employee is inactive' });
-    if (emp.branch_id !== branch_id) {
-      return res.status(409).json({ error: 'Employee does not belong to selected branch' });
+      if (empErr || !emp) return res.status(404).json({ error: 'Employee not found' });
+      if (!emp.is_active) return res.status(409).json({ error: 'Employee is inactive' });
+      if (emp.branch_id !== branch_id) {
+        return res.status(409).json({ error: 'Employee does not belong to selected branch' });
+      }
     }
 
     // 5) Recalculate end_time & price (Use client's end_time if provided)
@@ -786,11 +722,10 @@ router.put('/:id', async (req, res) => {
     // NOTE: total_price in your create flow is stored as service.price (not * num_guests)
     const total_price = service.price || 0;
 
-    // 5.1) Chặn trùng giờ với lịch khác của cùng nhân viên (kéo-thả / sửa chi tiết).
-    // Chỉ kiểm tra khi NV/ngày/giờ thật sự đổi → sửa ghi chú, tắt cảnh báo trên lịch vốn đã chồng nhau vẫn lưu được.
-    // Dashboard có thể gửi allow_conflict: true sau khi người dùng xác nhận "Vẫn lưu".
+    // Chỉ kiểm tra trùng khi NV / chi nhánh / ngày / giờ thật sự đổi → sửa ghi chú trên lịch vốn đã chồng nhau vẫn lưu được.
     const targetDate = booking_date !== undefined ? booking_date : booking.booking_date;
     const placementChanged = employee_id !== booking.employee_id
+      || branch_id !== booking.branch_id
       || targetDate !== booking.booking_date
       || timeToMinutes(start_time) !== timeToMinutes(String(booking.start_time || '0:0'))
       || timeToMinutes(end_time) !== timeToMinutes(String(booking.end_time || '0:0'));
@@ -804,7 +739,7 @@ router.put('/:id', async (req, res) => {
       (shiftMinutes !== 0 || targetDate !== booking.booking_date)) {
       const { data: siblings, error: sibErr } = await supabase
         .from('bookings')
-        .select('id, employee_id, start_time, end_time')
+        .select('id, employee_id, bed_id, booking_date, start_time, end_time, temporary_name')
         .eq('group_booking_id', booking.group_booking_id)
         .neq('id', req.params.id)
         .neq('status', 'cancelled');
@@ -819,57 +754,25 @@ router.put('/:id', async (req, res) => {
         siblingMoves.push({
           id: s.id,
           employee_id: s.employee_id,
+          bed_id: s.bed_id,
+          old_date: s.booking_date,
           booking_date: targetDate,
           start_time: minutesToTime(newStart),
-          end_time: minutesToTime(newEnd)
-        });
-      }
-    }
-
-    if ((placementChanged || siblingMoves.length > 0) && req.body.allow_conflict !== true) {
-      // Các lịch trong nhóm đang cùng dời → không tính là trùng với vị trí cũ của nhau
-      const movingIds = [req.params.id, ...siblingMoves.map(m => m.id)];
-      const placements = [
-        ...(placementChanged ? [{ employee_id, booking_date: targetDate, start_time, end_time }] : []),
-        ...siblingMoves
-      ].filter(p => p.employee_id);
-
-      const conflicts = [];
-      for (const p of placements) {
-        const { data: sameDay, error: sameDayErr } = await supabase
-          .from('bookings')
-          .select('id, start_time, end_time, temporary_name, customers(name)')
-          .eq('employee_id', p.employee_id)
-          .eq('booking_date', p.booking_date)
-          .neq('status', 'cancelled')
-          .not('id', 'in', `(${movingIds.join(',')})`);
-        if (sameDayErr) throw sameDayErr;
-
-        const newStart = timeToMinutes(p.start_time);
-        const newEnd = timeToMinutes(p.end_time);
-        conflicts.push(...(sameDay || []).filter(b =>
-          b.start_time && b.end_time &&
-          timeToMinutes(String(b.start_time)) < newEnd && newStart < timeToMinutes(String(b.end_time))
-        ));
-      }
-      if (conflicts.length > 0) {
-        return res.status(409).json({
-          code: 'BOOKING_CONFLICT',
-          error: 'Nhân viên đã có lịch trùng giờ',
-          conflicts: conflicts.map(c => ({
-            id: c.id,
-            customer_name: c.temporary_name || c.customers?.name || 'Khách',
-            start_time: String(c.start_time).substring(0, 5),
-            end_time: String(c.end_time).substring(0, 5)
-          }))
+          end_time: minutesToTime(newEnd),
+          name: s.temporary_name
         });
       }
     }
 
     // 5.2) (Tùy chọn) cập nhật hồ sơ khách trong CÙNG request — trước đây dashboard gọi 2 request riêng,
     // request thứ 2 lỗi thì dữ liệu chỉ cập nhật một nửa. Làm khách trước (hay lỗi nhất, VD trùng SĐT);
-    // nếu cập nhật lịch ở bước 6 lỗi thì ghi lại thông tin khách cũ.
+    // nếu cập nhật lịch ở bước 6 lỗi / bị chặn vì trùng lịch thì ghi lại thông tin khách cũ.
     let customerRollback = null;
+    const rollbackCustomer = async () => {
+      if (!customerRollback) return;
+      const { error: rbErr } = await supabase.from('customers').update(customerRollback.data).eq('id', customerRollback.id);
+      if (rbErr) console.error('[bookings PUT] Không hoàn lại được thông tin khách:', rbErr.message);
+    };
     const customerUpdate = req.body.customer_update;
     const finalCustomerId = customer_id !== undefined ? customer_id : booking.customer_id;
     if (customerUpdate && typeof customerUpdate === 'object' && finalCustomerId) {
@@ -894,23 +797,60 @@ router.put('/:id', async (req, res) => {
       };
     }
 
-    // 6) Update
-    const { data: updated, error: upErr } = await supabase
+    const patch = {
+      service_id,
+      branch_id,
+      employee_id,
+      customer_id: customer_id !== undefined ? customer_id : booking.customer_id,
+      temporary_name: temporary_name !== undefined ? temporary_name : booking.temporary_name,
+      booking_date: targetDate,
+      start_time,
+      end_time,
+      total_price,
+      notes: notes !== undefined ? notes : booking.notes,
+      internal_note: internal_note !== undefined ? internal_note : booking.internal_note
+    };
+
+    // 6) Ghi. Đổi vị trí (NV / giờ / ngày / chi nhánh, kể cả dời cả nhóm) → qua booking engine:
+    // NV bận / ngoài ca / hết giường → 409 BOOKING_CONFLICT để dashboard hỏi "Vẫn lưu?" (allow_conflict: true).
+    // Giường cũ bận ở giờ mới → tự đổi sang giường trống khác.
+    try {
+      if (placementChanged || siblingMoves.length > 0) {
+        const items = [
+          { ref: req.params.id, start: start_time, end: end_time, employeeId: employee_id, bedId: booking.bed_id, name: patch.temporary_name },
+          ...siblingMoves.map(m => ({ ref: m.id, start: m.start_time, end: m.end_time, employeeId: m.employee_id, bedId: m.bed_id, name: m.name }))
+        ];
+        const result = await placeBookings(supabase, {
+          source: 'staff',
+          branchId: branch_id,
+          date: targetDate,
+          items,
+          excludeIds: items.map(it => it.ref),
+          lockDates: [booking.booking_date, ...siblingMoves.map(m => m.old_date)],
+          override: req.body.allow_conflict === true,
+          build: (assignments) => ({
+            updates: assignments.map(a => {
+              if (a.ref === req.params.id) return { id: a.ref, set: { ...patch, bed_id: a.bed_id } };
+              const m = siblingMoves.find(s => s.id === a.ref);
+              return { id: a.ref, set: { booking_date: m.booking_date, start_time: m.start_time, end_time: m.end_time, bed_id: a.bed_id } };
+            })
+          })
+        });
+        if (!result.ok) {
+          await rollbackCustomer();
+          return respondConflict(res, result.conflicts);
+        }
+      } else {
+        const { error: upErr } = await supabase.from('bookings').update(patch).eq('id', req.params.id);
+        if (upErr) throw upErr;
+      }
+    } catch (writeErr) {
+      await rollbackCustomer();
+      throw writeErr;
+    }
+
+    const { data: updated, error: selErr } = await supabase
       .from('bookings')
-      .update({
-        service_id,
-        branch_id,
-        employee_id,
-        customer_id: customer_id !== undefined ? customer_id : booking.customer_id,
-        temporary_name: temporary_name !== undefined ? temporary_name : booking.temporary_name,
-        booking_date: booking_date !== undefined ? booking_date : booking.booking_date,
-        start_time,
-        end_time,
-        total_price,
-        notes: notes !== undefined ? notes : booking.notes,
-        internal_note: internal_note !== undefined ? internal_note : booking.internal_note
-      })
-      .eq('id', req.params.id)
       .select(`
         *,
         customers(name, phone, email, habits),
@@ -919,42 +859,29 @@ router.put('/:id', async (req, res) => {
         beds(name),
         branches(name)
       `)
+      .eq('id', req.params.id)
       .single();
-
-    if (upErr) {
-      if (customerRollback) {
-        const { error: rbErr } = await supabase.from('customers').update(customerRollback.data).eq('id', customerRollback.id);
-        if (rbErr) console.error('[bookings PUT] Không hoàn lại được thông tin khách:', rbErr.message);
-      }
-      throw upErr;
-    }
+    if (selErr) throw selErr;
 
     // Broadcast SSE for live dashboard updates
     const broadcast = getBroadcast(req);
     broadcast('booking.updated', updated);
 
-    // 7) Dời các lịch còn lại của nhóm (đã kiểm tra trùng giờ ở bước 5.1)
-    const groupUpdatedIds = [];
-    for (const move of siblingMoves) {
-      const { data: sib, error: sibUpErr } = await supabase
+    // 7) Các lịch còn lại của nhóm đã được dời cùng transaction ở bước 6
+    const groupUpdatedIds = siblingMoves.map(m => m.id);
+    if (groupUpdatedIds.length) {
+      const { data: sibs } = await supabase
         .from('bookings')
-        .update({ booking_date: move.booking_date, start_time: move.start_time, end_time: move.end_time })
-        .eq('id', move.id)
         .select('*, employees(name), services(name), branches(name)')
-        .single();
-      if (sibUpErr) {
-        console.error('[bookings PUT] Không dời được lịch cùng nhóm', move.id, sibUpErr.message);
-        continue;
-      }
-      broadcast('booking.updated', sib);
-      groupUpdatedIds.push(move.id);
+        .in('id', groupUpdatedIds);
+      (sibs || []).forEach(sib => broadcast('booking.updated', sib));
     }
 
     res.json({
       ...updated,
       oldBooking: booking,
       group_updated_ids: groupUpdatedIds,
-      group_failed_count: siblingMoves.length - groupUpdatedIds.length
+      group_failed_count: 0
     });
 
   } catch (err) {
@@ -1165,10 +1092,17 @@ router.post('/', bookingRateLimiter, async (req, res) => {
       ? req.body.hold_ids
       : (typeof req.body.hold_ids === 'string' ? [req.body.hold_ids] : []);
 
+    const fetchCreated = async (ids) => {
+      const { data, error } = await supabase.from('bookings').select(bookingSelect).in('id', ids);
+      if (error) throw error;
+      const byId = new Map((data || []).map(b => [b.id, b]));
+      return ids.map(id => byId.get(id)).filter(Boolean);
+    };
+
     if (holdIds.length > 0) {
       const { data: validHolds, error: holdErr } = await supabase
         .from('bookings')
-        .select('id')
+        .select('id, employee_id, bed_id, start_time, end_time')
         .in('id', holdIds)
         .eq('status', 'pending')
         .like('internal_note', `${HOLD_NOTE_PREFIX}%`)
@@ -1180,32 +1114,46 @@ router.post('/', bookingRateLimiter, async (req, res) => {
       let leftoverIds = validIds;
 
       if (validIds.length === guestCount) {
-        const { data: updatedBookings, error: upErr } = await supabase
-          .from('bookings')
-          .update({
-            customer_id: isTemporary ? null : customer.id,
-            temporary_name: isTemporary ? finalTemporaryName : null,
-            status: spamFlag.status,
-            notes: notes || null,
-            internal_note: spamFlag.internalNote, // xóa ghi chú GIỮ CHỖ TẠM THỜI
-            num_guests: guestCount
+        // Kiểm tra lại cả khi chốt: giữ chỗ đã hết hạn thì người khác có thể đã lấy NV / giường đó.
+        // NV của giữ chỗ bận → không chốt được, nhả giữ chỗ và tạo mới bên dưới. Giường bận → tự đổi giường trống.
+        const items = validHolds.map(h => ({
+          ref: h.id, start: String(h.start_time).slice(0, 5), end: String(h.end_time).slice(0, 5),
+          employeeId: h.employee_id, bedId: h.bed_id
+        }));
+        const result = await placeBookings(supabase, {
+          source: 'web',
+          branchId: branch_id,
+          date: booking_date,
+          items,
+          excludeIds: validIds,
+          build: (assignments) => ({
+            updates: assignments.map(a => ({
+              id: a.ref,
+              set: {
+                customer_id: isTemporary ? null : customer.id,
+                temporary_name: isTemporary ? finalTemporaryName : null,
+                status: spamFlag.status,
+                notes: notes || null,
+                internal_note: spamFlag.internalNote, // xóa ghi chú GIỮ CHỖ TẠM THỜI
+                hold_expires_at: null,
+                num_guests: guestCount,
+                bed_id: a.bed_id
+              }
+            }))
           })
-          .in('id', validIds)
-          // Chỉ được "chốt" đúng lịch GIỮ CHỖ TẠM THỜI — trước đây truyền ID của bất kỳ lịch nào
-          // vào hold_ids là ghi đè được tên khách / trạng thái của lịch đó.
-          .eq('status', 'pending')
-          .like('internal_note', `${HOLD_NOTE_PREFIX}%`)
-          .select(bookingSelect);
-        if (upErr) throw upErr;
+        });
 
-        if ((updatedBookings || []).length === validIds.length) {
-          return respondCreated(updatedBookings, 200);
+        if (result.ok) {
+          const confirmed = await fetchCreated(validIds);
+          // Giữ chỗ bị dọn đúng lúc chốt (rất hiếm) → gỡ phần đã chốt, tạo lại đủ cả nhóm bên dưới
+          if (confirmed.length === validIds.length && confirmed.every(b => !isHoldBooking(b))) {
+            return respondCreated(confirmed, 200);
+          }
+          leftoverIds = confirmed.map(b => b.id);
         }
-        // Có giữ chỗ vừa hết hạn đúng lúc chốt → gỡ phần đã chốt, tạo lại đủ cả nhóm bên dưới
-        leftoverIds = (updatedBookings || []).map(b => b.id);
       }
 
-      // Thiếu giữ chỗ (đã hết hạn / không khớp số khách) → nhả phần còn lại, tạo mới bên dưới
+      // Thiếu giữ chỗ (đã hết hạn / không khớp số khách / NV đã bị người khác lấy) → nhả phần còn lại, tạo mới bên dưới
       // (luồng tạo mới tự kiểm tra lại chỗ trống: còn chỗ thì khách vẫn đặt được, hết chỗ thì báo rõ ràng).
       if (leftoverIds.length > 0) {
         const { error: releaseErr } = await supabase.from('bookings').delete().in('id', leftoverIds);
@@ -1220,121 +1168,52 @@ router.post('/', bookingRateLimiter, async (req, res) => {
       if (ipBudgetError) return res.status(429).json({ error: ipBudgetError });
     }
 
-    // 4) Load existing bookings in branch/day
-    const { data: dayBookings, error: dayErr } = await supabase
-      .from('bookings')
-      .select('employee_id, bed_id, start_time, end_time')
-      .eq('branch_id', branch_id)
-      .eq('booking_date', booking_date)
-      .neq('status', 'cancelled');
-
-    if (dayErr) throw dayErr;
-
-    // 5) Load active employees
-    const { data: allEmployees, error: empErr } = await supabase
-      .from('employees')
-      .select('id')
-      .eq('branch_id', branch_id)
-      .eq('is_active', true);
-
-    if (empErr) throw empErr;
-
-    // 5.1) Apply schedule rule: employee must have schedule record for that date (not day off)
-    const empIds = allEmployees.map(e => e.id);
-    let schedules = [];
-    if (empIds.length > 0) {
-      const { data: schedData, error: schedErr } = await supabase
-        .from('employee_schedules')
-        .select('employee_id, start_time, end_time, is_day_off')
-        .in('employee_id', empIds)
-        .eq('date', booking_date);
-
-      if (schedErr) throw schedErr;
-      schedules = schedData || [];
-    }
-    const scheduleByEmp = new Map();
-    for (const s of schedules) scheduleByEmp.set(s.employee_id, s);
-
-    const employees = allEmployees.filter(e => {
-      const s = scheduleByEmp.get(e.id);
-      if (!s) return false;         // missing => unavailable (deleted)
-      if (s.is_day_off) return false;
-      if (!s.start_time || !s.end_time) return false;
-
-      const sStart = timeToMinutes(String(s.start_time).substring(0, 5));
-      const sEnd = timeToMinutes(String(s.end_time).substring(0, 5));
-      return startMinutes >= sStart && endMinutes <= sEnd;
-    });
-
-    if (employees.length < guestCount) {
-      return res.status(409).json({ error: 'Not enough employees available for this day' });
-    }
-
-    // 6) Load active beds
-    const { data: beds, error: bedErr } = await supabase
-      .from('beds')
-      .select('id')
-      .eq('branch_id', branch_id)
-      .eq('is_active', true);
-
-    if (bedErr) throw bedErr;
-
-    // 7) Load settings (buffer time and tour order)
-    const { data: settingsData } = await supabase.from('settings').select('*');
-    const settings = (settingsData || []).reduce((acc, curr) => {
-      acc[curr.key] = curr.value;
-      return acc;
-    }, {});
-
-    // 8) Xếp nhân viên & giường cho CẢ NHÓM trước; thiếu 1 người là báo lỗi, chưa ghi gì vào DB
-    const plan = planGroupAssignment({
-      guestCount,
-      startMinutes,
-      endMinutes,
-      dayBookings,
-      employees,
-      beds,
-      bufferTime: parseInt(settings.buffer_time) || 15,
-      tourOrder: settings[`tour_order_${branch_id}`] || [],
-      // Nhân viên được chỉ định (VD admin kéo tạo lịch trên cột của nhân viên) → dùng cho khách đầu tiên
-      requestedEmployeeId: req.body.employee_id || null
-    });
-    if (!plan.ok) {
-      return res.status(409).json({
-        error: plan.reason === 'no_bed' ? 'No beds available for this time slot' : 'No employees available for this time slot'
-      });
-    }
-
+    // 4) Xếp NV + giường cho CẢ NHÓM qua booking engine, ghi trong 1 transaction có khóa theo ngày.
+    //  - Khách online: buffer + ca + giường, không bao giờ chồng lịch.
+    //  - Nhân viên: không buffer; NV được chọn (VD kéo tạo trên cột NV) được GIỮ ĐÚNG — bận / ngoài ca / hết giường /
+    //    không ai rảnh → 409 BOOKING_CONFLICT, dashboard hỏi "Vẫn lưu?" rồi gửi lại kèm allow_conflict: true
+    //    (không ai rảnh mà vẫn lưu → lịch chưa xếp NV).
     const groupBookingId = guestCount > 1 ? crypto.randomUUID() : null;
     const clientIpField = ip && (await supportsClientIp(supabase)) ? { client_ip: ip } : {};
-
-    const rows = plan.assignments.map(({ employee_id, bed_id }) => ({
-      customer_id: isTemporary ? null : customer.id,
-      temporary_name: isTemporary ? finalTemporaryName : null,
-      service_id: service_id || null,
-      employee_id,
-      bed_id,
-      branch_id,
-      num_guests: guestCount,
-      booking_date,
-      start_time,
-      end_time,
-      status: spamFlag.status,
-      total_price: price,
-      notes: notes || null,
-      internal_note: spamFlag.internalNote,
-      group_booking_id: groupBookingId,
-      ...clientIpField
+    const items = Array.from({ length: guestCount }, (_, ref) => ({
+      ref,
+      start: start_time,
+      end: end_time,
+      employeeId: ref === 0 && !isPublic ? req.body.employee_id || null : null,
+      autoEmployee: true,
+      name: finalTemporaryName || customer_name
     }));
 
-    // 1 lệnh insert nhiều dòng = 1 câu SQL → hoặc vào đủ cả nhóm, hoặc không dòng nào
-    const { data: createdBookings, error: bookErr } = await supabase
-      .from('bookings')
-      .insert(rows)
-      .select(bookingSelect);
+    const result = await placeBookings(supabase, {
+      source: isPublic ? 'web' : 'staff',
+      branchId: branch_id,
+      date: booking_date,
+      items,
+      override: !isPublic && req.body.allow_conflict === true,
+      build: (assignments) => ({
+        inserts: assignments.map(({ employee_id, bed_id }) => ({
+          customer_id: isTemporary ? null : customer.id,
+          temporary_name: isTemporary ? finalTemporaryName : null,
+          service_id: service_id || null,
+          employee_id,
+          bed_id,
+          branch_id,
+          num_guests: guestCount,
+          booking_date,
+          start_time,
+          end_time,
+          status: spamFlag.status,
+          total_price: price,
+          notes: notes || null,
+          internal_note: spamFlag.internalNote,
+          group_booking_id: groupBookingId,
+          ...clientIpField
+        }))
+      })
+    });
+    if (!result.ok) return respondConflict(res, result.conflicts, { isPublic });
 
-    if (bookErr) throw bookErr;
-
+    const createdBookings = await fetchCreated(result.ids);
     return respondCreated(createdBookings, 201);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1420,11 +1299,16 @@ router.put('/:id/status', async (req, res) => {
 
 /**
  * POST /api/bookings/:id/check-in — khách đã đến (dùng chung logic với AI check_in_booking)
+ * Giờ mới chồng lên lịch kế tiếp của NV (khách trễ) → 409 BOOKING_CONFLICT; gửi lại kèm allow_conflict: true sau "Vẫn lưu".
  */
 router.post('/:id/check-in', async (req, res) => {
   try {
-    const result = await checkInBooking(req.params.id, getBroadcast(req));
+    const result = await checkInBooking(req.params.id, getBroadcast(req), {
+      source: 'staff',
+      override: req.body?.allow_conflict === true
+    });
     if (result.error) return res.status(404).json({ error: result.error });
+    if (result.blocked) return respondConflict(res, result.conflicts);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1539,58 +1423,6 @@ async function fireWebhooks(event, bookings) {
         console.warn(`[webhook] Gửi tới "${webhook.name}" thất bại:`, err.message);
       }
     }
-  }
-}
-
-async function cleanupExpiredHolds(broadcast) {
-  try {
-    const { data: holds, error } = await supabase
-      .from('bookings')
-      .select('id, internal_note')
-      .eq('status', 'pending')
-      .like('internal_note', '[GIỮ CHỖ TẠM THỜI]%');
-
-    if (!error && holds && holds.length > 0) {
-      const now = Date.now();
-      const expiredIds = [];
-
-      for (const hold of holds) {
-        if (!hold.internal_note) {
-          expiredIds.push(hold.id);
-          continue;
-        }
-        const match = hold.internal_note.match(/EXPIRES:(\d+)/);
-        if (match) {
-          const expiresAt = parseInt(match[1]);
-          if (now >= expiresAt) {
-            expiredIds.push(hold.id);
-          }
-        } else {
-          // Fallback if no EXPIRES tag is present (older records)
-          const matchTime = hold.internal_note.match(/\[SLOT_HOLD\]\s+(\d+)/);
-          if (matchTime) {
-            const createdAt = parseInt(matchTime[1]);
-            if (now - createdAt >= 5 * 60 * 1000) {
-              expiredIds.push(hold.id);
-            }
-          } else {
-            expiredIds.push(hold.id);
-          }
-        }
-      }
-
-      if (expiredIds.length > 0) {
-        const { error: delErr } = await supabase.from('bookings').delete().in('id', expiredIds);
-        if (delErr) console.error('[hold] Không xóa được giữ chỗ hết hạn:', delErr.message);
-        if (typeof broadcast === 'function') {
-          expiredIds.forEach(id => {
-            broadcast('booking.hold_released', { id });
-          });
-        }
-      }
-    }
-  } catch (err) {
-    console.error('[hold] Lỗi khi dọn giữ chỗ hết hạn:', err.message);
   }
 }
 

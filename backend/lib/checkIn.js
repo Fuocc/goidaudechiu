@@ -10,9 +10,16 @@ function roundedVnTime(now = new Date()) {
 /**
  * Khách đã đến: start_time = giờ hiện tại (làm tròn 5 phút), tính lại end_time theo dịch vụ, status = arrived.
  * Lịch thuộc nhóm → check-in cả nhóm. Dùng chung cho AI (check_in_booking) và nút "Khách đến" trên dashboard.
+ *
+ * Giờ mới có thể chồng lên lịch kế tiếp của NV (khách đến trễ) → đi qua booking engine:
+ * vướng mắc mà chưa xác nhận → { blocked: true, conflicts }, chưa ghi gì. Giường cũ bận → tự đổi giường trống.
+ *
+ * @param opts.source   'staff' | 'ai'
+ * @param opts.override true / (conflicts) => boolean — đã xác nhận "Vẫn lưu"
  */
-async function checkInBooking(bookingId, broadcast = () => { }) {
+async function checkInBooking(bookingId, broadcast = () => { }, { source = 'staff', override = false } = {}) {
   const supabase = require('../supabaseClient'); // require lười: test roundedVnTime không cần env Supabase
+  const { placeBookings } = require('./bookingEngine');
   const newStartTime = roundedVnTime();
 
   const { data: booking, error: fetchError } = await supabase
@@ -37,30 +44,44 @@ async function checkInBooking(bookingId, broadcast = () => { }) {
   const snapshot = bookingsToUpdate.map(({ services, ...row }) => row);
 
   const [h, m] = newStartTime.split(':').map(Number);
-  const updates = await Promise.all(
-    bookingsToUpdate.map(async (b) => {
-      const duration = b.services?.duration_minutes || 60;
-      const { data: updated, error } = await supabase
-        .from('bookings')
-        .update({
-          status: 'arrived',
-          start_time: newStartTime,
-          end_time: toHHMM(h * 60 + m + duration)
-        })
-        .eq('id', b.id)
-        .select('*, employees(name), services(name), branches(name)')
-        .single();
+  const items = bookingsToUpdate.map(b => ({
+    ref: b.id,
+    start: newStartTime,
+    end: toHHMM(h * 60 + m + (b.services?.duration_minutes || 60)),
+    employeeId: b.employee_id,
+    bedId: b.bed_id,
+    name: b.temporary_name
+  }));
+  const ids = items.map(it => it.ref);
 
-      if (!error) broadcast('booking.updated', updated);
-      return updated;
+  const result = await placeBookings(supabase, {
+    source,
+    branchId: booking.branch_id,
+    date: booking.booking_date,
+    items,
+    excludeIds: ids,
+    override,
+    build: (assignments) => ({
+      updates: assignments.map(a => {
+        const it = items.find(i => i.ref === a.ref);
+        return { id: a.ref, set: { status: 'arrived', start_time: it.start, end_time: it.end, bed_id: a.bed_id } };
+      })
     })
-  );
+  });
+  if (!result.ok) return { success: false, blocked: true, code: 'BOOKING_CONFLICT', conflicts: result.conflicts };
+
+  const { data: updated, error } = await supabase
+    .from('bookings')
+    .select('*, employees(name), services(name), branches(name)')
+    .in('id', ids);
+  if (error) throw error;
+  (updated || []).forEach(b => broadcast('booking.updated', b));
 
   return {
     success: true,
-    checked_in: updates.filter(Boolean).length,
+    checked_in: (updated || []).length,
     start_time: newStartTime,
-    bookings: updates.filter(Boolean),
+    bookings: updated || [],
     snapshot
   };
 }
