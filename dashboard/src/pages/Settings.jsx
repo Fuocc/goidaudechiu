@@ -21,8 +21,10 @@ function Settings() {
   const [activeTab, setActiveTab] = useState('general'); // 'general', 'webhooks', or 'tour'
 
   // General Settings State
+  // Mặc định khớp backend: chưa cài buffer = 0, chưa cài confirm_staff_overlap = bật hỏi
   const [settings, setSettings] = useState({
-    buffer_time: 15
+    buffer_time: 0,
+    confirm_staff_overlap: true
   });
   const [loading, setLoading] = useState(true);
   // Thao tác đang chạy (lưu / thêm / xóa / test...) → khóa nút + chữ "Đang ..."
@@ -88,6 +90,9 @@ function Settings() {
   // Mỗi nút một key riêng: buffer_time và tour_order_<chi nhánh> là 2 dòng cài đặt khác nhau
   // (updateSetting chỉ ghi đúng 1 key) → lưu cái này không cần khóa / hiện "Đang lưu..." ở cái kia.
   const saveBufferTime = () => run('save:buffer_time', () => handleSaveSetting('buffer_time', settings.buffer_time));
+
+  const askBeforeOverlap = !(settings.confirm_staff_overlap === false || settings.confirm_staff_overlap === 'false');
+  const toggleAskBeforeOverlap = () => run('save:confirm_staff_overlap', () => handleSaveSetting('confirm_staff_overlap', !askBeforeOverlap));
 
   // Webhook Functions
   const loadWebhooks = async () => {
@@ -306,11 +311,11 @@ function Settings() {
             <div className="card">
               <div className="card-header" style={{ display: 'flex', justifyContent: 'start', alignItems: 'center', gap: '12px' }}>
                 <FiClock size={20} color="#e67e22" />
-                <h3 className="card-title">Thời gian chờ (Buffer Time)</h3>
+                <h3 className="card-title">Thời gian nghỉ cho khách đặt online (Buffer)</h3>
               </div>
               <div className="card-body">
                 <p className="settings-desc">
-                  Khoảng thời gian nghỉ giữa các ca làm việc (phút). Thời gian này sẽ được cộng thêm vào tổng thời gian dịch vụ khi tính toán lịch trống cho khách hàng đặt online.
+                  Số phút nhân viên được nghỉ sau mỗi lịch, chỉ áp dụng khi khách tự đặt online: khách sẽ không đặt được vào khoảng nghỉ này. Lịch do nhân viên hoặc trợ lý AI tạo không tính buffer. Để 0 nếu không cần nghỉ.
                 </p>
                 <div className="settings-input-group">
                   <input
@@ -340,12 +345,27 @@ function Settings() {
             <div className="card">
               <div className="card-header" style={{ display: 'flex', justifyContent: 'start', alignItems: 'center', gap: '12px' }}>
                 <FiSettings size={20} color="#2563eb" />
-                <h3 className="card-title">Cấu hình khác</h3>
+                <h3 className="card-title">Hỏi trước khi lưu lịch chồng nhau</h3>
               </div>
               <div className="card-body">
                 <p className="settings-desc">
-                  Các cài đặt nâng cao khác sẽ được cập nhật thêm tại đây.
+                  Khi bật: nhân viên tạo / dời / check-in lịch bị trùng giờ, ngoài ca, hết giường hoặc không còn ai rảnh sẽ được hỏi "Vẫn lưu?" trước khi lưu. Trợ lý AI cũng hỏi lại trong khung chat. Khi tắt: lưu luôn không hỏi. Khách đặt online không bao giờ được đặt chồng lịch, dù bật hay tắt.
                 </p>
+                <label className="webhook-toggle">
+                  <div className={`toggle-switch${askBeforeOverlap ? ' active' : ''}`}
+                    onClick={toggleAskBeforeOverlap}
+                    {...clickableProps(toggleAskBeforeOverlap)}
+                    role="switch"
+                    aria-checked={askBeforeOverlap}
+                    aria-busy={isBusy('save:confirm_staff_overlap')}
+                    aria-disabled={isBusy('save:confirm_staff_overlap') || loading}
+                    aria-label="Hỏi trước khi lưu lịch chồng nhau">
+                    <div className="toggle-knob"></div>
+                  </div>
+                  <span className={`webhook-status ${askBeforeOverlap ? 'active' : 'inactive'}`}>
+                    {askBeforeOverlap ? 'Bật' : 'Tắt'}
+                  </span>
+                </label>
               </div>
             </div>
           </div>

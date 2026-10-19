@@ -3,6 +3,7 @@ import { Tooltip } from '../../components/ui/tooltip';
 import { FiAlertTriangle, FiUsers } from 'react-icons/fi';
 import { WEEKDAY_MIN_OPEN_MINUTES } from '../../config/business';
 import { OPEN_HOUR, CLOSE_HOUR, HOURS, ROW_HEIGHT, toDateStr, timeToMinutes, getBookingColor, formatTime, convertYToTime, setGroupHighlight } from './helpers';
+import { layoutOverlaps } from './overlapLayout';
 import noteIcon from '../../assets/note-icon.svg';
 
 // Dạng lưới lịch theo nhân viên: kéo tạo lịch, kéo đổi lịch, vạch giờ hiện tại
@@ -136,6 +137,9 @@ export default function CalendarView({
 
                   return employees.map((emp, empIndex) => {
                     const empSched = employeeSchedules.find(s => s.employee_id === emp.id);
+                    const columnBookings = bookingsByEmployee.get(emp.id) || [];
+                    // Lịch chồng giờ trong cột → xếp làn cạnh nhau (id → { lane, lanes })
+                    const laneOf = layoutOverlaps(columnBookings);
                     let isAvailable = empSched && !empSched.is_day_off && branchIsOpen;
 
                     let startPx = 0;
@@ -257,7 +261,7 @@ export default function CalendarView({
                         })()}
 
                         {/* Bookings for this staff */}
-                        {(bookingsByEmployee.get(emp.id) || []).map(b => {
+                        {columnBookings.map(b => {
                           const startMin = timeToMinutes(b.start_time);
                           const endMin = timeToMinutes(b.end_time);
                           const top = (startMin - OPEN_HOUR * 60) / 60 * 100;
@@ -268,6 +272,9 @@ export default function CalendarView({
                           const isHold = isHoldBooking(b);
                           const isSpamWarning = isSpamWarningBooking(b);
                           const groupInfo = groupInfoById.get(b.id);
+                          // Chia bề ngang cột cho các làn. Thẻ con có margin 2px mỗi bên → khe 2px giữa các wrapper = 6px nhìn thấy
+                          const { lane = 0, lanes = 1 } = laneOf.get(b.id) || {};
+                          const laneWidth = `((100% - ${(lanes - 1) * 2}px) / ${lanes})`;
 
                           return (
                             <div
@@ -280,7 +287,8 @@ export default function CalendarView({
                               style={{
                                 position: 'absolute',
                                 top: `${top}px`,
-                                width: '100%',
+                                left: lanes > 1 ? `calc(${lane} * (${laneWidth} + 2px))` : 0,
+                                width: lanes > 1 ? `calc${laneWidth}` : '100%',
                                 zIndex: 10
                               }}
                               onMouseDown={(e) => handleCardDragStart(e, b)}

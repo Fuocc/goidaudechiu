@@ -18,7 +18,7 @@ import { WALK_IN_CUSTOMER_NAME, TIME_PICKER_MIN_HOUR } from '../config/business'
 import { useBusy } from '../hooks/useBusy';
 import { useIsMobile, MOBILE_BREAKPOINT } from '../hooks/useIsMobile';
 import {
-  OPEN_HOUR, ROW_HEIGHT, toDateStr, timeToMinutes, normalize, normalizeName,
+  OPEN_HOUR, ROW_HEIGHT, UNASSIGNED_COLUMN_ID, toDateStr, timeToMinutes, normalize, normalizeName,
   WALK_IN_NORMALIZED, PLACEHOLDER_NORMALIZED, formatTime,
   getLogicalDate, convertYToTime, calculateEndTime
 } from './bookings/helpers';
@@ -299,7 +299,7 @@ function Bookings() {
 
       const origStartMin = timeToMinutes(cardDrag.booking.start_time);
       const origTop = (origStartMin - OPEN_HOUR * 60) / 60 * 100;
-      const origStaffId = cardDrag.booking.employee_id || cardDrag.booking.employees?.id;
+      const origStaffId = cardDrag.booking.employee_id || cardDrag.booking.employees?.id || UNASSIGNED_COLUMN_ID;
 
       // Check if actually moved
       if (Math.abs(finalTop - origTop) < 5 && toStaffId === origStaffId) {
@@ -317,7 +317,7 @@ function Bookings() {
           fromStaff: fromStaffName,
           fromTime: `${fromStart} — ${fromEnd}`,
           toStaff: toStaffName,
-          toTime: `${newStart} — ${newEnd}`,
+          toTime: `${formatTime(newStart)} — ${formatTime(newEnd)}`,
           toStaffId,
           newStart,
           newEnd,
@@ -527,8 +527,9 @@ function Bookings() {
   // --- Context menu khi giữ lâu thẻ lịch (mobile list view). item = 1 phần tử của mobileListItems ---
   const handleCheckInItem = (item) => run(`checkin:${item.key}`, async () => {
     try {
-      // Backend tự check-in cả nhóm nếu lịch thuộc nhóm
-      await checkInBooking(item.lead.id);
+      // Backend tự check-in cả nhóm nếu lịch thuộc nhóm. Khách trễ chồng lên lịch kế tiếp → hỏi "Vẫn lưu?"
+      const checkedIn = await saveConfirmingConflict(allow => checkInBooking(item.lead.id, allow ? { allow_conflict: true } : undefined));
+      if (!checkedIn) return;
       notify(item.guestCount > 1 ? `Đã báo cả nhóm ${item.guestCount} khách tới!` : 'Đã báo khách tới!');
       loadBookings();
     } catch (err) {
@@ -631,26 +632,29 @@ function Bookings() {
     });
   };
 
-  // PUT lịch; nếu backend báo trùng giờ (409 BOOKING_CONFLICT) → hỏi "Vẫn lưu?" rồi gửi lại kèm allow_conflict.
-  // Trả về lịch đã lưu, hoặc null nếu người dùng chọn không lưu.
-  const updateBookingConfirmingConflict = async (id, payload) => {
+  // Tạo / sửa / kéo thả / check-in: backend báo vướng mắc (409 BOOKING_CONFLICT: NV bận, ngoài ca, hết giường,
+  // không còn ai rảnh) → liệt kê đủ lý do, hỏi "Vẫn lưu?" rồi gọi lại với allowConflict = true.
+  // save(allowConflict) → Promise. Trả về kết quả đã lưu, hoặc null nếu người dùng chọn không lưu.
+  const saveConfirmingConflict = async (save) => {
     try {
-      return await updateBooking(id, payload);
+      return await save(false);
     } catch (err) {
       if (err?.status !== 409 || err.data?.code !== 'BOOKING_CONFLICT') throw err;
-      const list = (err.data.conflicts || [])
-        .map(c => `• ${c.customer_name}: ${formatTime(c.start_time)} - ${formatTime(c.end_time)}`)
-        .join('\n');
+      const reasons = [...new Set((err.data.conflicts || []).map(c =>
+        c.message || `${c.customer_name}: ${formatTime(c.start_time)} - ${formatTime(c.end_time)}`))];
       const keepSaving = await confirmDialog({
-        title: 'Trùng lịch',
-        message: `Nhân viên đã có lịch trùng giờ:\n${list}\n\nVẫn lưu?`,
+        title: 'Cần xác nhận',
+        message: `${reasons.map(r => `• ${r}`).join('\n')}\n\nVẫn lưu?`,
         confirmText: 'Vẫn lưu',
         cancelText: 'Không lưu'
       });
       if (!keepSaving) return null;
-      return await updateBooking(id, { ...payload, allow_conflict: true });
+      return await save(true);
     }
   };
+
+  const updateBookingConfirmingConflict = (id, payload) =>
+    saveConfirmingConflict(allow => updateBooking(id, allow ? { ...payload, allow_conflict: true } : payload));
 
   const handleDragConfirm = (applyToGroup = false) => run('dragConfirm', async () => {
     if (!dragConfirm) return;
@@ -660,7 +664,7 @@ function Bookings() {
       const saved = await updateBookingConfirmingConflict(bk.id, {
         service_id: bk.service_id || bk.services?.id,
         branch_id: bk.branch_id || bk.branches?.id,
-        employee_id: dragConfirm.toStaffId,
+        employee_id: dragConfirm.toStaffId === UNASSIGNED_COLUMN_ID ? null : dragConfirm.toStaffId,
         start_time: dragConfirm.newStart,
         end_time: dragConfirm.newEnd,
         booking_date: dragConfirm.newDate,
@@ -1019,7 +1023,9 @@ function Bookings() {
         finalForm.customer_phone = null;
       }
 
-      await createBooking(finalForm);
+      // NV được chọn bận / ngoài ca, hết giường, không còn ai rảnh → hỏi "Vẫn lưu?" (giữ đúng NV đã chọn)
+      const created = await saveConfirmingConflict(allow => createBooking(allow ? { ...finalForm, allow_conflict: true } : finalForm));
+      if (!created) return; // chọn không lưu → giữ form để chỉnh tiếp
       notify('Đặt lịch thành công!');
       setModalOpen(false);
       loadBookings();
@@ -1032,8 +1038,9 @@ function Bookings() {
   const handleSaveDetail = () => run('saveDetailFlow', async () => {
     if (!detailModal || !detailEdit) return;
 
-    if (!detailEdit.service_id || !detailEdit.branch_id || !detailEdit.start_time || !detailEdit.employee_id) {
-      toast.warn('Vui lòng chọn đầy đủ: dịch vụ, chi nhánh, giờ, nhân viên');
+    // Nhân viên có thể để trống = lịch chưa xếp NV (cột "Chưa xếp NV")
+    if (!detailEdit.service_id || !detailEdit.branch_id || !detailEdit.start_time) {
+      toast.warn('Vui lòng chọn đầy đủ: dịch vụ, chi nhánh, giờ');
       return;
     }
 
@@ -1059,7 +1066,7 @@ function Bookings() {
           start_time: detailEdit.start_time,
           booking_date: detailEdit.booking_date,
           end_time: detailEdit.end_time,
-          employee_id: detailEdit.employee_id,
+          employee_id: detailEdit.employee_id || null,
           notes: detailEdit.notes,
           customer_id: detailEdit.customer_id || null,
           apply_to_group: applyToGroup
@@ -1189,10 +1196,8 @@ function Bookings() {
       if (isAvail || seq !== ref.seq || !cur) return;
       const sameInput = ['employee_id', 'booking_date', 'start_time', 'end_time'].every(k => cur[k] === next[k]);
       if (!sameInput) return;
-      setDetailEdit(prev => (prev && prev.employee_id === next.employee_id
-        ? { ...prev, employee_id: '', employee_search: '' }
-        : prev));
-      toast.warn(message, { position: 'bottom-right' });
+      // Giữ đúng NV đã chọn (ROADMAP P0) — chỉ báo trước; bấm Lưu thì backend hỏi "Vẫn lưu?"
+      toast.warn(`${message} Khi lưu sẽ hỏi xác nhận.`, { position: 'bottom-right' });
     }, 400);
   };
 
@@ -1279,10 +1284,12 @@ function Bookings() {
 
   // Lịch theo từng nhân viên cho lưới lịch — tính lại chỉ khi danh sách lịch đổi (trước đây lọc lại cho
   // mọi cột ở mỗi lần render). Cùng điều kiện cũ: khớp employee_id HOẶC employees.id; giữ nguyên thứ tự.
+  // Lịch chưa xếp NV (nhân viên "Vẫn lưu" khi không còn ai rảnh) → gom vào cột riêng UNASSIGNED_COLUMN_ID.
   const bookingsByEmployee = useMemo(() => {
     const map = new Map();
     for (const b of bookings) {
       const ids = new Set([b.employee_id, b.employees?.id].filter(Boolean));
+      if (ids.size === 0) ids.add(UNASSIGNED_COLUMN_ID);
       for (const id of ids) {
         if (!map.has(id)) map.set(id, []);
         map.get(id).push(b);
@@ -1290,6 +1297,14 @@ function Bookings() {
     }
     return map;
   }, [bookings]);
+
+  // Cột "Chưa xếp NV" chỉ hiện khi ngày đang xem có lịch chưa xếp NV. Không có ca → không kéo tạo lịch mới vào được,
+  // nhưng vẫn kéo thẻ ra cột nhân viên (= xếp NV) hoặc thả vào (= bỏ NV) được.
+  const calendarEmployees = useMemo(() => (
+    bookingsByEmployee.has(UNASSIGNED_COLUMN_ID)
+      ? [...employees, { id: UNASSIGNED_COLUMN_ID, name: 'Chưa xếp NV' }]
+      : employees
+  ), [employees, bookingsByEmployee]);
 
   // Vị trí từng lịch trong nhóm khách → chip "1/3" trên lưới lịch và bảng.
   // Thứ tự trong nhóm: giờ bắt đầu, rồi thứ tự cột nhân viên. Nhóm chỉ còn 1 lịch thì không hiện chip.
@@ -1352,13 +1367,13 @@ function Bookings() {
   }, [listBookings]);
 
   return (
-    <div className='full-view full-view-bookings' style={{ '--staff-count': loading ? 3 : (employees.length || 1) }}>
+    <div className='full-view full-view-bookings' style={{ '--staff-count': loading ? 3 : (calendarEmployees.length || 1) }}>
       {/* Calendar Toolbar */}
       <BookingToolbar
         branches={branches}
         currentDate={currentDate}
         employeeSchedules={employeeSchedules}
-        employees={employees}
+        employees={calendarEmployees}
         filterBranch={filterBranch}
         goNext={goNext}
         goPrev={goPrev}
@@ -1381,7 +1396,7 @@ function Bookings() {
           currentDate={currentDate}
           dragInfo={dragInfo}
           employeeSchedules={employeeSchedules}
-          employees={employees}
+          employees={calendarEmployees}
           filterBranch={filterBranch}
           gridRef={gridRef}
           groupInfoById={groupInfoById}

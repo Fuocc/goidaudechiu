@@ -94,8 +94,9 @@ export const getBookingsRange = (dateFrom, dateTo, branchId) => {
 export const createBooking = (data) => request('/bookings', { method: 'POST', body: JSON.stringify(data) });
 export const updateBookingStatus = (id, status) => request(`/bookings/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) });
 export const updateBooking = (id, data) => request(`/bookings/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+// body.allow_conflict = true sau khi người dùng xác nhận "Vẫn lưu" (khách trễ chồng lên lịch kế tiếp)
+export const checkInBooking = (id, body) => request(`/bookings/${id}/check-in`, { method: 'POST', body: JSON.stringify(body || {}) });
 // { group: true } → xóa luôn các lịch cùng nhóm khách
-export const checkInBooking = (id) => request(`/bookings/${id}/check-in`, { method: 'POST' });
 export const deleteBooking = (id, { group = false } = {}) =>
   request(`/bookings/${id}${group ? '?group=1' : ''}`, { method: 'DELETE' });
 

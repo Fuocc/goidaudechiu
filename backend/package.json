@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "node server.js",
     "start": "node server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "test:guard": "node --test --test-force-exit --test-concurrency=1 integration/bookingGuard.spec.js"
   },
   "dependencies": {
     "@clerk/express": "^2.1.19",
