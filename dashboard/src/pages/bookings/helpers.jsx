@@ -10,6 +10,8 @@ export const HOURS = Array.from({ length: CLOSE_HOUR - OPEN_HOUR }, (_, i) => OP
 
 // Lưới lịch: 100px mỗi giờ → 25px mỗi ô 15 phút
 export const ROW_HEIGHT = 25; // pixels per 15-min slot
+// Cột lưới lịch cho lịch chưa xếp nhân viên (employee_id null) — không phải id nhân viên thật
+export const UNASSIGNED_COLUMN_ID = '__unassigned__';
 export const SNAP_MINUTES = 15;
 
 export function timeToMinutes(t) {

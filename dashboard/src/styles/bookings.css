@@ -680,6 +680,12 @@
   position: absolute;
   bottom: 10px;
   right: 12px;
+  /* Thẻ hẹp (lịch chồng giờ xếp cạnh nhau) → cắt bớt thay vì xuống dòng đè nội dung */
+  left: 12px;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .cal-booking-icon {
@@ -707,6 +713,9 @@
 .cal-booking-service {
   font-size: 12px;
   color: #555555;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 
@@ -1912,7 +1921,9 @@ tr.is-group-highlight td {
     left: 0;
     top: 0;
     align-self: start;
-    z-index: 10;
+    /* Trên thẻ lịch (10, hover 20) + vùng kéo tạo lịch (20) khi cuộn ngang; dưới toolbar/hàng tên NV (30)
+       và thẻ đang kéo (100) */
+    z-index: 26;
     background-color: #fff;
   }
 }

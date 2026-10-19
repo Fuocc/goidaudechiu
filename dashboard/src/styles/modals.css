@@ -187,9 +187,10 @@
   appearance: none;
 }
 
-/* Hộp thoại xác nhận (ConfirmDialog) — nằm trên các modal khác (z-index modal thường: 1200) */
+/* Hộp thoại xác nhận (ConfirmDialog) — luôn nằm trên mọi modal khác
+   (modal thường: 1200, popup kéo-thả .drag-confirm-overlay: 10000 → VD "Cần xác nhận" khi kéo lịch chồng) */
 .modal-overlay.confirm-dialog-overlay {
-  z-index: 1300;
+  z-index: 10100;
 }
 
 .modal.confirm-dialog {
