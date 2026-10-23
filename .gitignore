@@ -2,3 +2,5 @@
 node_modules
 *.md
 !CLAUDE.md
+!GLOSSARY.md
+!docs/**/*.md
