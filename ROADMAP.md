@@ -80,7 +80,7 @@ Rules: "Group rules" and "Time limits" above. One fresh session per ticket (`/im
 
 | Wave | Tickets (same wave = can run in parallel) | Starts when |
 |---|---|---|
-| 1 | [ ] #9 Prefactor: Booking change module + staff edit of a single Booking | now |
+| 1 | [x] #9 Prefactor: Booking change module + staff edit of a single Booking (23/10; the 3 check-in guard tests still need a run between 10:30 and 20:00, tracked in #10) | now |
 | 2 | [ ] #10 Staff move a Group (Cả nhóm / Chỉ khách này) · [ ] #11 Start-time limits | #9 done |
 | 3 | [ ] #12 Staff group-wide fields · [ ] #13 Cancel as status · [ ] #14 Check-in scope + Late arrival grace | #12, #13: #10 done · #14: #10 and #11 done |
 | 4 | [ ] #15 AI update_booking through the module | #12 and #11 done |

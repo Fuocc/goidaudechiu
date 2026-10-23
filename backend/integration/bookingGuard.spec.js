@@ -216,6 +216,45 @@ describe('Nhân viên / admin trên dashboard', () => {
     assert.equal(confirmed.data.employee_id, a.id);
   });
 
+  test('chỉ sửa ghi chú trên lịch vốn đã chồng giờ → lưu thẳng, không hỏi', T, async () => {
+    const emp = h.employee(0);
+    await h.insertFixture({ employeeId: emp.id, bedId: h.ctx.beds[0].id, start: '15:00', end: '16:00', name: 'First' });
+    const overlapping = await h.insertFixture({ employeeId: emp.id, bedId: h.ctx.beds[1].id, start: '15:30', end: '16:30', name: 'Second' });
+
+    const r = await h.staffUpdate(overlapping, { notes: 'Ghi chú mới' });
+    assert.equal(r.status, 200, `sửa ghi chú không được hỏi trùng lịch: ${r.status} ${JSON.stringify(r.data)}`);
+    assert.equal(r.data.notes, 'Ghi chú mới');
+    const row = (await h.activeBookings()).find(b => b.id === overlapping.id);
+    assert.equal(row.notes, 'Ghi chú mới');
+  });
+
+  test('sửa lịch kèm thông tin khách nhưng bị trùng → khách giữ nguyên; xác nhận thì lưu cả hai, trả về oldBooking', T, async () => {
+    const [a, b] = [h.employee(0), h.employee(1)];
+    const { data: customer, error: custErr } = await h.supabase.from('customers')
+      .insert({ name: h.TEST_PREFIX + 'Mia', phone: `0999${String(Date.now()).slice(-6)}` }).select('*').single();
+    if (custErr) throw custErr;
+    await h.insertFixture({ employeeId: a.id, bedId: h.ctx.beds[0].id, start: '15:00', end: '16:00', name: 'A' });
+    const fixture = await h.insertFixture({ employeeId: b.id, bedId: h.ctx.beds[1].id, start: '15:00', end: '16:00', name: 'Mia booking' });
+    const { data: moving } = await h.supabase.from('bookings').update({ customer_id: customer.id }).eq('id', fixture.id).select('*').single();
+
+    const customer_update = { name: h.TEST_PREFIX + 'Mia mới', phone: customer.phone, email: null, habits: 'Thích nước ấm' };
+    const warn = await h.staffUpdate(moving, { employee_id: a.id, customer_update });
+    assert.equal(warn.status, 409, JSON.stringify(warn.data));
+    assert.equal(warn.data?.code, 'BOOKING_CONFLICT');
+    const { data: afterWarn } = await h.supabase.from('customers').select('name, habits').eq('id', customer.id).single();
+    assert.equal(afterWarn.name, h.TEST_PREFIX + 'Mia', 'bị chặn vì trùng thì thông tin khách phải được hoàn lại');
+    assert.equal(afterWarn.habits, null);
+
+    const confirmed = await h.staffUpdate(moving, { employee_id: a.id, customer_update }, { allowConflict: true });
+    assert.equal(confirmed.status, 200, JSON.stringify(confirmed.data));
+    assert.equal(confirmed.data.employee_id, a.id);
+    assert.equal(confirmed.data.oldBooking?.employee_id, b.id, 'response phải có oldBooking (trạng thái trước khi sửa)');
+    assert.deepEqual(confirmed.data.group_updated_ids, []);
+    const { data: afterSave } = await h.supabase.from('customers').select('name, habits').eq('id', customer.id).single();
+    assert.equal(afterSave.name, h.TEST_PREFIX + 'Mia mới');
+    assert.equal(afterSave.habits, 'Thích nước ấm');
+  });
+
   // Check-in dùng giờ hiện tại → test chạy trên ngày hôm nay, chỉ trong giờ mở cửa
   const nowMin = h.vnNowMinutes();
   const checkInSkip = nowMin < 10 * 60 + 30 || nowMin > 20 * 60 ? 'chỉ chạy được trong khoảng 10:30–20:00 giờ VN' : false;

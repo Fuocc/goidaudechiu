@@ -13,6 +13,7 @@ const {
   releaseActiveHoldsForIp, checkSlotBudget, computeSpamFlag
 } = require('../lib/antiSpam');
 const { checkInBooking } = require('../lib/checkIn');
+const { changeBooking } = require('../lib/bookingChange');
 const { UNDO_RESTORE_FIELDS, UNDO_MAX_AGE_MS, fingerprintRow, verifyUndoAction } = require('../lib/undoToken');
 
 // ---- Kiểm tra dữ liệu đầu vào (dùng cho request từ landing page / chưa đăng nhập) ----
@@ -647,11 +648,44 @@ router.get('/:id', async (req, res) => {
 });
 
 /**
- * PUT /api/bookings/:id
- * Update booking detail (service, branch, start_time, employee)
- * Body: { service_id, branch_id, start_time, employee_id }
+ * PUT /api/bookings/:id — nhân viên sửa 1 lịch (sửa chi tiết, kéo thả trên lịch)
+ * Body: { service_id, branch_id, start_time, employee_id (bắt buộc, null = chưa xếp NV),
+ *         end_time?, booking_date?, notes?, internal_note?, customer_id?, temporary_name?,
+ *         customer_update? { name, phone, email, habits }, allow_conflict? (đã bấm "Vẫn lưu"), apply_to_group? }
+ * Adapter: dịch request thành 1 Booking change (lib/bookingChange). "Dời cả nhóm" (apply_to_group) vẫn đi
+ * đường cũ legacyGroupEdit cho tới #10.
  */
 router.put('/:id', async (req, res) => {
+  if (req.body.apply_to_group === true) return legacyGroupEdit(req, res);
+  try {
+    const { service_id, branch_id, start_time, end_time, notes, customer_id, booking_date, internal_note, temporary_name, customer_update } = req.body;
+    if (!service_id || !branch_id || !start_time || !('employee_id' in req.body)) {
+      return res.status(400).json({ error: 'service_id, branch_id, start_time, employee_id are required' });
+    }
+
+    const result = await changeBooking(supabase, {
+      source: 'staff',
+      bookingId: req.params.id,
+      scope: 'booking',
+      change: {
+        service_id, branch_id, start_time, end_time, notes, customer_id, booking_date, internal_note, temporary_name, customer_update,
+        // employee_id rỗng / null = lịch chưa xếp nhân viên (cột "Chưa xếp NV")
+        employee_id: req.body.employee_id || null
+      },
+      confirm: req.body.allow_conflict === true,
+      broadcast: getBroadcast(req)
+    });
+    if (result.code === 'BOOKING_CONFLICT') return respondConflict(res, result.conflicts);
+    if (!result.ok) return res.status(result.status).json({ error: result.error });
+
+    res.json({ ...result.booking, oldBooking: result.before, group_updated_ids: [], group_failed_count: 0 });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Sửa lịch kèm "Dời cả nhóm" (giữ độ lệch giờ) — đường cũ, #10 chuyển sang Booking change
+async function legacyGroupEdit(req, res) {
   try {
     const { service_id, branch_id, start_time, end_time: clientEndTime, notes, customer_id, booking_date, internal_note, temporary_name } = req.body;
     // employee_id rỗng / null = lịch chưa xếp nhân viên (cột "Chưa xếp NV")
@@ -887,7 +921,7 @@ router.put('/:id', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
-});
+}
 
 /**
  * POST /api/bookings
