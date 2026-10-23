@@ -52,8 +52,6 @@ Run locally: `npm run dev --prefix backend` (port 3000) and `npm run dev --prefi
 
 ## Agent skills
 
-This repo uses Matt Pocock's skills plugin ([mattpocock/skills](https://github.com/mattpocock/skills)): install `mattpocock-skills@mattpocock` and run `gh auth login`. The setup is already done; don't re-run `/setup-matt-pocock-skills`.
-
 - **Issue tracker**: GitHub Issues on `Fuocc/goidaudechiu`, through the `gh` CLI. See `docs/agents/issue-tracker.md`.
 - **Triage labels**: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
 - **Domain docs**: single-context, `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
