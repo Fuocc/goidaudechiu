@@ -3,4 +3,5 @@ node_modules
 *.md
 !CLAUDE.md
 !GLOSSARY.md
+!ROADMAP.md
 !docs/**/*.md

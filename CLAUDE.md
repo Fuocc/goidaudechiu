@@ -20,7 +20,7 @@ Run locally: `npm run dev --prefix backend` (port 3000) and `npm run dev --prefi
 - **`backend/.env` points at the production Supabase** (not live yet, but real data). Test bookings created by hand start with `TEST · ` and are deleted afterwards.
 - **Database changes** go into a new SQL file in `backend/sql/` named `YYYY-MM-DD_<topic>.sql`. It must be transactional and include a rollback. The owner runs it in Supabase; never run it yourself.
 - **Language:** UI text and code comments are in Vietnamese; keep new ones in Vietnamese.
-- **`ROADMAP.md` is local only** (`*.md` is git-ignored, except `CLAUDE.md`, `GLOSSARY.md` and `docs/**`). If it's missing, ask the owner for the rules instead of guessing.
+- **Markdown files are git-ignored** except `CLAUDE.md`, `GLOSSARY.md`, `ROADMAP.md` and `docs/**`. `ROADMAP.md` holds the agreed booking rules and the ticket order (which tickets can run in parallel).
 
 ## Change process (required for every change)
 
