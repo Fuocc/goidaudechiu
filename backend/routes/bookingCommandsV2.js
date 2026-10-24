@@ -9,6 +9,7 @@ const { loadTourOrder, sortByTourOrder } = require('../lib/tourOrder');
 const { signUndoAction } = require('../lib/undoToken');
 const { checkInBooking } = require('../lib/checkIn');
 const { placeBookings, withMessages, summarizeConflicts } = require('../lib/bookingEngine');
+const { branchDayHours } = require('../lib/branchHours');
 const { issueConfirmToken, consumeConfirmToken, rememberPending, peekPending } = require('../lib/confirmToken');
 
 /*
@@ -23,7 +24,10 @@ function aiOverride(context, tool, params) {
   }).ok;
 }
 
-function aiBlocked(context, tool, params, conflicts, prefix = '') {
+// failed = kết quả không lưu được từ booking engine / check-in: { conflicts, refused? }
+function aiBlocked(context, tool, params, { conflicts = [], refused } = {}, prefix = '') {
+  // Từ chối hẳn (VD vượt qua nửa đêm) → không có confirm_token, "Vẫn lưu" cũng không lưu được
+  if (refused) return { success: false, blocked: true, code: refused.code, reason: `${prefix}${refused.message}` };
   const uid = context.req?.auth?.id;
   const result = {
     success: false,
@@ -643,23 +647,16 @@ async function executeTool(toolName, params, context) {
         bookingParams.end_time = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
       }
 
-      // Reject bookings that fall outside the branch's opening hours for
-      // that day of week — previously unchecked, letting e.g. 2AM bookings
-      // through silently.
-      if (bookingParams.booking_date && bookingParams.start_time && bookingParams.end_time) {
+      // Bắt đầu trước giờ mở cửa → từ chối. Bắt đầu sau giờ nhận khách muộn nhất → booking engine chặn
+      // + confirm_token như mọi vướng mắc khác (ROADMAP.md › "Time limits"); kết thúc sau `close` vẫn được.
+      if (bookingParams.booking_date && bookingParams.start_time) {
         const branch = (dbBranches || []).find(b => b.id === branch_id);
-        const weekday = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][
-          new Date(bookingParams.booking_date + 'T00:00:00').getDay()
-        ];
-        const hours = branch?.opening_hours?.[weekday];
-        const openTime = hours?.open || '09:00';
-        const closeTime = hours?.close || '22:00';
-
-        if (bookingParams.start_time < openTime || bookingParams.end_time > closeTime) {
+        const { open: openTime } = branchDayHours(branch?.opening_hours, bookingParams.booking_date);
+        if (openTime && bookingParams.start_time < openTime) {
           return {
             success: false,
             blocked: true,
-            reason: `Chi nhánh chỉ mở cửa từ ${openTime} đến ${closeTime} vào ngày ${bookingParams.booking_date}. Không thể đặt lịch ${bookingParams.start_time}-${bookingParams.end_time}. Vui lòng chọn giờ khác trong khung giờ mở cửa.`
+            reason: `Chi nhánh mở cửa từ ${openTime} vào ngày ${bookingParams.booking_date}. Không thể đặt lịch ${bookingParams.start_time}. Vui lòng chọn giờ khác.`
           };
         }
       }
@@ -716,7 +713,7 @@ async function executeTool(toolName, params, context) {
         })
       });
       if (!result.ok) {
-        return aiBlocked(context, 'create_booking', params, result.conflicts,
+        return aiBlocked(context, 'create_booking', params, result,
           `Chưa tạo lịch ${bookingParams.start_time}-${bookingParams.end_time}: `);
       }
 
@@ -1053,10 +1050,11 @@ async function executeTool(toolName, params, context) {
         const items = g.rows.map(p => {
           const e = eff(p);
           const branchChanged = e.branch !== p.oldBooking.branch_id;
+          const startMoved = branchChanged || e.date !== p.oldBooking.booking_date || e.start !== t5(p.oldBooking.start_time);
           return {
             ref: p.id, start: e.start, end: e.end, employeeId: e.employee,
             autoEmployee: p.autoEmployee, bedId: branchChanged ? null : p.oldBooking.bed_id,
-            name: p.oldBooking.temporary_name
+            name: p.oldBooking.temporary_name, skipStartLimit: !startMoved
           };
         });
         const result = await placeBookings(supabase, {
@@ -1076,7 +1074,7 @@ async function executeTool(toolName, params, context) {
         });
         if (!result.ok) {
           const done = prepared.filter(p => p.written);
-          return aiBlocked(context, 'update_booking', params, result.conflicts,
+          return aiBlocked(context, 'update_booking', params, result,
             `Chưa cập nhật${done.length ? ` (đã cập nhật ${done.length} lịch khác trước đó)` : ''}: `);
         }
         g.rows.forEach(p => { p.written = true; });
@@ -1134,7 +1132,7 @@ async function executeTool(toolName, params, context) {
       source: 'ai',
       override: aiOverride(context, 'check_in_booking', params)
     });
-    if (checkIn.blocked) return aiBlocked(context, 'check_in_booking', params, checkIn.conflicts, 'Chưa check-in: ');
+    if (checkIn.blocked) return aiBlocked(context, 'check_in_booking', params, checkIn, 'Chưa check-in: ');
     return checkIn;
   }
 
@@ -1390,7 +1388,8 @@ async function executeTool(toolName, params, context) {
           autoEmployee: true,
           fallbackAuto: true,
           excludeEmployeeIds: [fromId],
-          bedId: booking.bed_id
+          bedId: booking.bed_id,
+          skipStartLimit: true // chỉ đổi NV, giờ bắt đầu giữ nguyên
         }],
         excludeIds: [booking.id],
         build: (assignments) => ({
@@ -1591,11 +1590,10 @@ async function handleCommand(req, res) {
   ]);
 
   // Fetch and send operating hours to prompt so no need for many API calls
-  const todayKey = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][vnNow.getDay()];
-
+  // close = giờ nhận khách muộn nhất (khách bắt đầu trước giờ này thì được làm quá giờ)
   const branchHoursStr = dbBranches?.map(b => {
-    const hours = b.opening_hours?.[todayKey];
-    return `${b.name}: ${hours?.open || '09:00'} - ${hours?.close || '22:00'}`;
+    const hours = branchDayHours(b.opening_hours, todayDateStr);
+    return hours.isOpen ? `${b.name}: ${hours.open} - ${hours.close} (nhận khách muộn nhất ${hours.lastBookingTime})` : `${b.name}: nghỉ`;
   }).join(', ') || '';
 
   // Get current time for AI

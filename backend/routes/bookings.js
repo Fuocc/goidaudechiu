@@ -269,12 +269,17 @@ function getBroadcast(req) {
 }
 
 // Trả vướng mắc của booking engine. Khách online chỉ thấy loại vướng mắc (không lộ lịch của khách khác).
-function respondConflict(res, conflicts, { isPublic = false } = {}) {
+// result = kết quả không lưu được từ booking engine / Booking change / check-in: { conflicts, refused? }
+function respondConflict(res, { conflicts = [], refused } = {}, { isPublic = false } = {}) {
+  // Từ chối hẳn (VD vượt qua nửa đêm) → không hỏi "Vẫn lưu?"
+  if (refused) return res.status(400).json({ code: refused.code, error: refused.message });
   if (isPublic) {
     const noBed = conflicts.some(c => c.type === 'no_bed') && !conflicts.some(c => c.type === 'no_employee');
+    const tooLate = conflicts.some(c => c.type === 'after_last_booking');
     return res.status(409).json({
       code: 'BOOKING_CONFLICT',
-      error: noBed ? 'Không còn giường trống cho khung giờ này.' : 'Không có nhân viên trống cho khung giờ này.',
+      error: tooLate ? 'Đã quá giờ nhận khách của chi nhánh, vui lòng chọn giờ sớm hơn.'
+        : noBed ? 'Không còn giường trống cho khung giờ này.' : 'Không có nhân viên trống cho khung giờ này.',
       conflicts: publicConflicts(conflicts)
     });
   }
@@ -452,7 +457,7 @@ router.post('/hold', holdLimiter, async (req, res) => {
         }))
       })
     });
-    if (!result.ok) return respondConflict(res, result.conflicts, { isPublic: true });
+    if (!result.ok) return respondConflict(res, result, { isPublic: true });
     const createdHoldIds = result.ids;
 
     // Broadcast SSE for live dashboard updates
@@ -682,8 +687,8 @@ router.put('/:id', async (req, res) => {
         group_size: result.groupSize
       });
     }
-    if (result.code === 'BOOKING_CONFLICT') return respondConflict(res, result.conflicts);
-    if (!result.ok) return res.status(result.status).json({ error: result.error });
+    if (result.code === 'BOOKING_CONFLICT') return respondConflict(res, result);
+    if (!result.ok) return res.status(result.status).json({ code: result.code, error: result.error });
 
     res.json({ ...result.booking, oldBooking: result.before, group_updated_ids: result.groupUpdatedIds, group_failed_count: 0 });
   } catch (err) {
@@ -1013,7 +1018,7 @@ router.post('/', bookingRateLimiter, async (req, res) => {
         }))
       })
     });
-    if (!result.ok) return respondConflict(res, result.conflicts, { isPublic });
+    if (!result.ok) return respondConflict(res, result, { isPublic });
 
     const createdBookings = await fetchCreated(result.ids);
     return respondCreated(createdBookings, 201);
@@ -1110,7 +1115,7 @@ router.post('/:id/check-in', async (req, res) => {
       override: req.body?.allow_conflict === true
     });
     if (result.error) return res.status(404).json({ error: result.error });
-    if (result.blocked) return respondConflict(res, result.conflicts);
+    if (result.blocked) return respondConflict(res, result);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });

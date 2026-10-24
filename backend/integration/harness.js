@@ -45,6 +45,7 @@ async function setup() {
   });
   app.set('broadcastSSE', () => { });
   app.use('/api/bookings', require('../routes/bookings'));
+  app.use('/api/availability', require('../routes/availability'));
   await new Promise((resolve) => { server = app.listen(0, resolve); });
   baseUrl = `http://127.0.0.1:${server.address().port}`;
 
@@ -283,6 +284,27 @@ async function withoutSetting(key, fn) {
   }
 }
 
+/** Đổi giờ mở cửa (mọi thứ trong tuần) của chi nhánh trong lúc chạy fn, rồi trả lại như cũ. */
+async function withHours(branchId, { open = '09:00', close }, fn) {
+  const { data: before } = await supabase.from('branches').select('opening_hours').eq('id', branchId).single();
+  const day = { isOpen: true, open, close };
+  const opening_hours = Object.fromEntries(['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map(d => [d, day]));
+  await supabase.from('branches').update({ opening_hours }).eq('id', branchId);
+  try { return await fn(); } finally {
+    await supabase.from('branches').update({ opening_hours: before.opening_hours }).eq('id', branchId);
+  }
+}
+
+/** Lịch trống online (GET /api/availability) → danh sách giờ bắt đầu được mở. */
+async function availableStarts({ serviceName = 'Ý dễ chịu', date = TEST_DATE, guests = 1 }) {
+  const qs = new URLSearchParams({ branch_id: ctx.branch.id, service_id: service(serviceName).id, date, num_guests: guests });
+  const res = await fetch(`${baseUrl}/api/availability?${qs}`);
+  const body = await res.json();
+  if (!res.ok) throw new Error(`availability ${res.status}: ${JSON.stringify(body)}`);
+  const slots = Array.isArray(body) ? body : body.slots;
+  return slots.filter(s => s.available !== false).map(s => s.start_time || s.time);
+}
+
 /** Cho các lịch giữ chỗ hết hạn ngay (cả cách lưu cũ EXPIRES: trong ghi chú lẫn cột hold_expires_at nếu đã có). */
 async function expireHolds(ids) {
   const past = Date.now() - 60e3;
@@ -298,6 +320,7 @@ module.exports = {
   TEST_PREFIX, TEST_DATE, TODAY, ctx, supabase,
   setup, teardown, cleanup, toMin, toHHMM, vnNowMinutes,
   service, employee, insertFixture, occupyStaff,
+  withHours, availableStarts,
   onlineBook, onlineHold, staffBook, staffUpdate, staffCheckIn, aiTool, aiCreate,
   activeBookings, findOverlaps, getSetting, withSetting, withShift,
   otherBranch, withBedsInactive, withoutSetting, expireHolds

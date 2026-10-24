@@ -13,6 +13,7 @@
  */
 const { sortByTourOrder, loadTourOrder } = require('./tourOrder');
 const { isExpiredHold } = require('./holds');
+const { branchDayHours } = require('./branchHours');
 
 const toMin = (t) => {
   const [h, m] = String(t || '0:0').split(':');
@@ -48,13 +49,16 @@ function policyFor(source, settings = {}) {
 /**
  * @param day   { now, bookings, employees:[{id,name}], employeeNames:{id:name}, schedules: Map id→ca, beds:[{id,name}], tourOrder }
  *              bookings = mọi lịch trong NGÀY (mọi chi nhánh — NV bận ở chi nhánh khác vẫn là bận)
- * @param items [{ ref, start, end, employeeId?, autoEmployee?, fallbackAuto?, excludeEmployeeIds?, bedId?, name? }]
+ *              lastBookingTime: "HH:MM" giờ nhận khách muộn nhất của chi nhánh ngày đó (null = không giới hạn)
+ * @param items [{ ref, start, end, employeeId?, autoEmployee?, fallbackAuto?, excludeEmployeeIds?, bedId?, name?, skipStartLimit? }]
+ *   - skipStartLimit: không áp Last booking time (check-in — Late arrival grace làm ở #14)
  *   - employeeId: NV được chỉ định → giữ đúng người, bận / ngoài ca thì báo vướng mắc
  *     (fallbackAuto: bận / ngoài ca thì tự lấy người khác thay vì báo)
  *   - không chỉ định + autoEmployee → người rảnh đầu tiên theo tour; không ai rảnh → no_employee
  *   - bedId: giường đang dùng → giữ nếu còn trống, không thì tự lấy giường trống khác; hết giường → no_bed
  * @param excludeIds lịch đang được dời / chốt (không tính trùng với chính nó)
- * @returns {{ assignments: {ref, employee_id, bed_id}[], conflicts: object[] }}
+ * @returns {{ assignments: {ref, employee_id, bed_id}[], conflicts: object[], refusal?: { code, message } }}
+ *   refusal: không lưu được dù đã xác nhận (VD vượt qua nửa đêm)
  */
 function planPlacements({ day, policy, items, excludeIds = [] }) {
   const now = day.now ?? Date.now();
@@ -76,6 +80,11 @@ function planPlacements({ day, policy, items, excludeIds = [] }) {
 
   const bedUse = {};
   for (const b of live) if (b.bed_id) bedUse[b.bed_id] = (bedUse[b.bed_id] || 0) + 1;
+
+  // Lịch không bao giờ vượt qua nửa đêm — từ chối hẳn, không "Vẫn lưu" được (mọi nguồn)
+  if (items.some(it => toMin(it.end) > 24 * 60 || toMin(it.end) < toMin(it.start))) {
+    return { assignments: [], conflicts: [], refusal: { code: 'CROSSES_MIDNIGHT', message: 'Lịch không được kéo dài qua nửa đêm (24:00). Hãy chọn giờ sớm hơn.' } };
+  }
 
   const assignments = [];
   const conflicts = [];
@@ -120,6 +129,11 @@ function planPlacements({ day, policy, items, excludeIds = [] }) {
       if (!employeeId) conflicts.push({ type: 'no_employee', ref });
     }
 
+    // --- Giờ nhận khách muộn nhất: bắt đầu sau Last booking time → online từ chối, staff / AI hỏi "Vẫn lưu?" ---
+    if (day.lastBookingTime && !it.skipStartLimit && s > toMin(day.lastBookingTime)) {
+      conflicts.push({ type: 'after_last_booking', ref, last_booking_time: hhmm(day.lastBookingTime) });
+    }
+
     // --- Giường ---
     let bedId = null;
     if (it.bedId && day.beds.some(b => b.id === it.bedId) && !bedBusy(it.bedId, s, e)) {
@@ -156,6 +170,7 @@ function describeConflict(c) {
     case 'no_employee': return 'Không còn nhân viên trống trong khung giờ này';
     case 'no_bed': return 'Không còn giường trống trong khung giờ này';
     case 'bed_busy': return `Giường đang được dùng bởi ${c.customer_name || 'khách khác'} ${c.start_time}–${c.end_time}`;
+    case 'after_last_booking': return `Quá giờ nhận khách (nhận khách muộn nhất ${c.last_booking_time})`;
     default: return 'Lịch bị trùng';
   }
 }
@@ -176,7 +191,7 @@ async function loadSettings(supabase) {
 }
 
 async function loadDay(supabase, { branchId, date }) {
-  const [bookingsRes, employeesRes, schedulesRes, bedsRes, tourOrder] = await Promise.all([
+  const [bookingsRes, employeesRes, schedulesRes, bedsRes, branchRes, tourOrder] = await Promise.all([
     supabase.from('bookings')
       .select('id, branch_id, employee_id, bed_id, start_time, end_time, status, internal_note, hold_expires_at, created_at, temporary_name, customers(name)')
       .eq('booking_date', date)
@@ -184,9 +199,10 @@ async function loadDay(supabase, { branchId, date }) {
     supabase.from('employees').select('id, name, branch_id, is_active'),
     supabase.from('employee_schedules').select('employee_id, start_time, end_time, is_day_off').eq('date', date),
     supabase.from('beds').select('id, name').eq('branch_id', branchId).eq('is_active', true),
+    supabase.from('branches').select('opening_hours').eq('id', branchId).maybeSingle(),
     loadTourOrder(supabase, branchId)
   ]);
-  for (const r of [bookingsRes, employeesRes, schedulesRes, bedsRes]) if (r.error) throw r.error;
+  for (const r of [bookingsRes, employeesRes, schedulesRes, bedsRes, branchRes]) if (r.error) throw r.error;
 
   const allEmployees = employeesRes.data || [];
   return {
@@ -196,6 +212,8 @@ async function loadDay(supabase, { branchId, date }) {
     employeeNames: Object.fromEntries(allEmployees.map(e => [e.id, e.name])),
     schedules: new Map((schedulesRes.data || []).map(s => [s.employee_id, s])),
     beds: bedsRes.data || [],
+    // Ngày nghỉ → null (không thêm lý do; giữ như cũ)
+    lastBookingTime: branchDayHours(branchRes.data?.opening_hours, date).lastBookingTime,
     tourOrder
   };
 }
@@ -213,6 +231,7 @@ async function loadDay(supabase, { branchId, date }) {
  * @param opts.override  true / (conflicts) => boolean — người dùng đã xác nhận "Vẫn lưu" cho ĐÚNG các vướng mắc này
  * @param opts.build     (assignments) => ({ inserts, updates }) — dòng cần ghi, đã gắn NV + giường
  * @returns { ok: true, ids, assignments, accepted } | { ok: false, conflicts, policy }
+ *        | { ok: false, refused: { code, message }, conflicts: [] } — từ chối hẳn, xác nhận cũng không lưu
  */
 async function placeBookings(supabase, { source, branchId, date, items, excludeIds = [], lockDates = [], override = false, settings, build }) {
   settings = settings || await loadSettings(supabase);
@@ -221,6 +240,7 @@ async function placeBookings(supabase, { source, branchId, date, items, excludeI
   for (let attempt = 1; ; attempt++) {
     const day = await loadDay(supabase, { branchId, date });
     const plan = planPlacements({ day, policy, items, excludeIds });
+    if (plan.refusal) return { ok: false, refused: plan.refusal, conflicts: [], policy };
 
     let accepted = false;
     if (plan.conflicts.length) {

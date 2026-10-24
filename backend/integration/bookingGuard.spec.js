@@ -597,3 +597,90 @@ describe('Nhân viên dời nhóm khách', () => {
     assert.equal(rowB.employee_id, h.employee(1).id, 'xác nhận thì giữ đúng NV của B');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Giờ nhận khách muộn nhất (Last booking time = `close` của chi nhánh) — ROADMAP.md › "Time limits"
+describe('Giờ nhận khách muộn nhất + nửa đêm', () => {
+  const LONG = 'Ý ngủ một giấc'; // 90 phút
+  const closingAt20 = (fn) => h.withHours(h.ctx.branch.id, { close: '20:00' }, fn);
+  const types = (r) => (r.data?.conflicts || r.conflicts || []).map(c => c.type);
+
+  test('khách online: 19:30 dịch vụ 90 phút đặt được dù kết thúc sau 20:00; 20:15 bị từ chối', T, () => closingAt20(async () => {
+    const early = await h.onlineBook({ start: '19:30', serviceName: LONG, name: 'Online 1930' });
+    assert.equal(ok(early), true, JSON.stringify(early.data));
+
+    const late = await h.onlineBook({ start: '20:15', serviceName: LONG, name: 'Online 2015' });
+    assert.equal(late.status, 409, JSON.stringify(late.data));
+    assert.deepEqual(types(late), ['after_last_booking']);
+    assert.equal(rowsNamed(await h.activeBookings(), 'Online 2015').length, 0);
+  }));
+
+  test('giữ chỗ online sau Last booking time → từ chối', T, () => closingAt20(async () => {
+    const late = await h.onlineHold({ start: '20:15', serviceName: LONG });
+    assert.equal(late.status, 409, JSON.stringify(late.data));
+    assert.deepEqual(types(late), ['after_last_booking']);
+  }));
+
+  test('lịch trống online mở giờ bắt đầu tới đúng 20:00 (kể cả kết thúc sau đó), không mở 20:15', T, () => closingAt20(async () => {
+    const starts = await h.availableStarts({ serviceName: LONG });
+    assert.ok(starts.includes('19:30'), `thiếu 19:30: ${starts.join(', ')}`);
+    assert.ok(starts.includes('20:00'), `thiếu 20:00: ${starts.join(', ')}`);
+    assert.ok(!starts.includes('20:15'), `không được mở 20:15: ${starts.join(', ')}`);
+  }));
+
+  test('nhân viên dời lịch sang sau 20:00 → BOOKING_CONFLICT after_last_booking; allow_conflict → lưu', T, () => closingAt20(async () => {
+    const moving = await h.insertFixture({ employeeId: h.employee(0).id, bedId: h.ctx.beds[0].id, start: '15:00', end: '16:00', name: 'Move late' });
+
+    const warn = await h.staffUpdate(moving, { start_time: '20:15', end_time: '21:15' });
+    assert.equal(warn.status, 409, JSON.stringify(warn.data));
+    assert.equal(warn.data.code, 'BOOKING_CONFLICT');
+    assert.deepEqual(types(warn), ['after_last_booking']);
+    assert.match(warn.data.conflicts[0].message, /Quá giờ nhận khách/);
+
+    const saved = await h.staffUpdate(moving, { start_time: '20:15', end_time: '21:15' }, { allowConflict: true });
+    assert.equal(saved.status, 200, JSON.stringify(saved.data));
+    assert.equal(String(saved.data.start_time).slice(0, 5), '20:15');
+  }));
+
+  test('nhân viên tạo lịch sau 20:00 → hỏi "Vẫn lưu?"; xác nhận thì lưu', T, () => closingAt20(async () => {
+    const warn = await h.staffBook({ start: '20:15', name: 'Staff late' });
+    assert.equal(warn.status, 409, JSON.stringify(warn.data));
+    assert.deepEqual(types(warn), ['after_last_booking']);
+
+    const saved = await h.staffBook({ start: '20:15', name: 'Staff late', allowConflict: true });
+    assert.equal(ok(saved), true, JSON.stringify(saved.data));
+    assert.equal(rowsNamed(await h.activeBookings(), 'Staff late').length, 1);
+  }));
+
+  test('AI tạo lịch sau 20:00 → chặn + confirm_token; gửi lại kèm token thì lưu', T, () => closingAt20(async () => {
+    const emp = h.employee(0);
+    const blocked = await h.aiCreate({ start: '20:15', employeeId: emp.id, name: 'AI late' });
+    assert.equal(aiOk(blocked), false, JSON.stringify(blocked));
+    assert.deepEqual(types(blocked), ['after_last_booking']);
+    assert.equal(typeof blocked.confirm_token, 'string', `phải trả confirm_token: ${JSON.stringify(blocked)}`);
+
+    const saved = await aiCreateWithToken({ start: '20:15', employeeId: emp.id, name: 'AI late', token: blocked.confirm_token });
+    assert.equal(aiOk(saved), true, JSON.stringify(saved));
+    assert.equal(rowsNamed(await h.activeBookings(), 'AI late').length, 1);
+  }));
+
+  test('chỉ đổi NV trên lịch đã bắt đầu sau 20:00 → lưu thẳng, không hỏi lại giờ nhận khách (cả lịch trong nhóm)', T, () => closingAt20(async () => {
+    const late = await h.insertFixture({ employeeId: h.employee(0).id, bedId: h.ctx.beds[0].id, start: '20:15', end: '21:15', name: 'Late regular' });
+    const single = await h.staffUpdate(late, { employee_id: h.employee(1).id });
+    assert.equal(single.status, 200, JSON.stringify(single.data));
+
+    const groupId = crypto.randomUUID();
+    const a = await h.insertFixture({ employeeId: h.employee(2).id, bedId: h.ctx.beds[1].id, start: '20:15', end: '21:15', name: 'Late group A', groupId });
+    await h.insertFixture({ employeeId: h.employee(3).id, bedId: h.ctx.beds[2].id, start: '20:15', end: '21:15', name: 'Late group B', groupId });
+    const group = await h.staffUpdate(a, { employee_id: h.employee(4).id });
+    assert.equal(group.status, 200, JSON.stringify(group.data));
+    assert.equal(group.data.employee_id, h.employee(4).id);
+  }));
+
+  test('lịch vượt qua nửa đêm → từ chối hẳn, allow_conflict cũng không lưu', T, async () => {
+    const refused = await h.staffBook({ start: '23:00', serviceName: LONG, name: 'Midnight', allowConflict: true });
+    assert.equal(refused.status, 400, JSON.stringify(refused.data));
+    assert.equal(refused.data.code, 'CROSSES_MIDNIGHT');
+    assert.equal(rowsNamed(await h.activeBookings(), 'Midnight').length, 0);
+  });
+});

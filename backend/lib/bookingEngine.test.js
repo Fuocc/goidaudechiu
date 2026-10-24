@@ -177,3 +177,45 @@ test('mỗi loại vướng mắc có câu tiếng Việt dễ hiểu', () => {
   assert.match(describeConflict({ type: 'no_employee' }), /nhân viên/);
   assert.match(describeConflict({ type: 'no_bed' }), /giường/);
 });
+
+// ---- Giờ nhận khách muộn nhất (Last booking time) — ROADMAP.md › "Time limits" ----
+const closingAt = (lastBookingTime, o) => ({ ...makeDay(o), lastBookingTime });
+
+test('bắt đầu đúng Last booking time → không vướng; muộn 1 phút → after_last_booking', () => {
+  const day = closingAt('20:00');
+  assert.deepEqual(planPlacements({ day, policy: staff, items: [item({ start: '20:00', end: '21:30' })] }).conflicts, []);
+  const late = planPlacements({ day, policy: staff, items: [item({ start: '20:01', end: '21:31' })] });
+  assert.deepEqual(types(late), ['after_last_booking']);
+  assert.equal(late.conflicts[0].last_booking_time, '20:00');
+});
+
+test('Last booking time có phút (19:30): 19:30 được, 19:31 vướng', () => {
+  const day = closingAt('19:30');
+  assert.deepEqual(planPlacements({ day, policy: staff, items: [item({ start: '19:30', end: '21:00' })] }).conflicts, []);
+  assert.deepEqual(types(planPlacements({ day, policy: staff, items: [item({ start: '19:31', end: '21:01' })] })), ['after_last_booking']);
+});
+
+test('lịch kết thúc sau Last booking time nhưng bắt đầu trước → không vướng (Closing time = sau khách cuối)', () => {
+  const plan = planPlacements({ day: closingAt('20:00'), policy: staff, items: [item({ start: '19:00', end: '21:30' })] });
+  assert.deepEqual(plan.conflicts, []);
+});
+
+test('check-in (skipStartLimit) chưa áp Last booking time — chờ Late arrival grace (#14)', () => {
+  const plan = planPlacements({ day: closingAt('20:00'), policy: staff, items: [item({ start: '20:30', end: '21:30', skipStartLimit: true })] });
+  assert.deepEqual(plan.conflicts, []);
+});
+
+test('lý do "Vẫn lưu?" cho after_last_booking nêu giờ nhận khách muộn nhất', () => {
+  assert.equal(describeConflict({ type: 'after_last_booking', last_booking_time: '20:00' }), 'Quá giờ nhận khách (nhận khách muộn nhất 20:00)');
+});
+
+test('lịch vượt qua nửa đêm → refusal CROSSES_MIDNIGHT (không phải vướng mắc để "Vẫn lưu"); kết thúc đúng 24:00 thì được', () => {
+  const day = makeDay({ schedules: { e1: shift('09:00', '24:00'), e2: shift('09:00', '24:00'), e3: shift('09:00', '24:00') } });
+  const over = planPlacements({ day, policy: staff, items: [item({ start: '23:00', end: '24:30' })] });
+  assert.equal(over.refusal.code, 'CROSSES_MIDNIGHT');
+  assert.match(over.refusal.message, /nửa đêm/);
+  const wrapped = planPlacements({ day, policy: staff, items: [item({ start: '23:00', end: '00:30' })] });
+  assert.equal(wrapped.refusal.code, 'CROSSES_MIDNIGHT');
+  const exact = planPlacements({ day, policy: staff, items: [item({ start: '23:00', end: '24:00' })] });
+  assert.equal(exact.refusal, undefined);
+});

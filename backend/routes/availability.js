@@ -3,9 +3,8 @@ const router = express.Router();
 const supabase = require('../supabaseClient');
 const { policyFor, loadSettings } = require('../lib/bookingEngine');
 const { isExpiredHold } = require('../lib/holds');
+const { branchDayHours } = require('../lib/branchHours');
 
-const OPEN_HOUR = 9;
-const CLOSE_HOUR = 22;
 const SLOT_STEP_MINUTES = 15;
 
 /**
@@ -174,44 +173,15 @@ async function getAvailabilityForBranch({ branchId, date, guestCount, durationMi
   // 1) Service duration
   const duration = durationMinutes;
 
-  // 1.1) Load branch opening hours
-  let openHour = OPEN_HOUR;
-  let closeHour = CLOSE_HOUR;
-  let isClosed = false;
+  // 1.1) Giờ mở cửa ngày đó: mở slot bắt đầu từ `open` tới Last booking time (kết thúc sau đó vẫn được)
+  const { data: branch } = await supabase
+    .from('branches')
+    .select('opening_hours')
+    .eq('id', branchId)
+    .maybeSingle();
+  const hours = branchDayHours(branch?.opening_hours, date);
 
-  try {
-    const { data: branch } = await supabase
-      .from('branches')
-      .select('opening_hours')
-      .eq('id', branchId)
-      .single();
-
-    if (branch && branch.opening_hours) {
-      const [year, month, day] = date.split('-').map(Number);
-      const dObj = new Date(year, month - 1, day);
-      const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-      const dayName = daysOfWeek[dObj.getDay()];
-      const daySchedule = branch.opening_hours[dayName];
-
-      if (daySchedule) {
-        if (daySchedule.isOpen === false || daySchedule.closed === true) {
-          isClosed = true;
-        } else {
-          if (daySchedule.open) {
-            const [h] = daySchedule.open.split(':').map(Number);
-            openHour = h;
-          }
-          if (daySchedule.close) {
-            const [h] = daySchedule.close.split(':').map(Number);
-            closeHour = h;
-          }
-        }
-      }
-    }
-  } catch (err) {
-  }
-
-  if (isClosed) {
+  if (!hours.isOpen) {
     return {
       slots: [],
       total_employees: 0,
@@ -286,65 +256,62 @@ async function getAvailabilityForBranch({ branchId, date, guestCount, durationMi
   // 5) Generate slots
   const slots = [];
 
-  for (let h = openHour; h < closeHour; h++) {
-    for (let m = 0; m < 60; m += SLOT_STEP_MINUTES) {
-      const startMinutes = h * 60 + m;
-      const endMinutes = startMinutes + duration;
+  const firstStart = timeToMinutes(hours.open);
+  const lastStart = timeToMinutes(hours.lastBookingTime);
+  for (let startMinutes = firstStart; startMinutes <= lastStart; startMinutes += SLOT_STEP_MINUTES) {
+    const endMinutes = startMinutes + duration;
 
-      if (endMinutes > closeHour * 60) continue;
+    // Không bao giờ vượt qua nửa đêm
+    if (endMinutes > 24 * 60) continue;
 
-      const startTime = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-      const endH = Math.floor(endMinutes / 60);
-      const endM = endMinutes % 60;
-      const endTime = `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
+    const startTime = `${String(Math.floor(startMinutes / 60)).padStart(2, '0')}:${String(startMinutes % 60).padStart(2, '0')}`;
 
-      // Busy employees/beds by booking overlap
-      const busyEmployees = new Set();
-      const busyBeds = new Set();
+    // Busy employees/beds by booking overlap
+    const busyEmployees = new Set();
+    const busyBeds = new Set();
 
-      for (const booking of bookings) {
-        const bStart = timeToMinutes(booking.start_time);
-        const bEnd = timeToMinutes(booking.end_time);
+    for (const booking of bookings) {
+      const bStart = timeToMinutes(booking.start_time);
+      const bEnd = timeToMinutes(booking.end_time);
 
-        // Buffer chỉ tính cho nhân viên (nghỉ giữa 2 khách), giường không cần — giống booking engine
-        if (booking.employee_id && startMinutes < bEnd + bufferTime && bStart < (startMinutes + duration)) {
-          busyEmployees.add(booking.employee_id);
-        }
-        if (booking.bed_id && startMinutes < bEnd && bStart < (startMinutes + duration)) {
-          busyBeds.add(booking.bed_id);
-        }
+      // Buffer chỉ tính cho nhân viên (nghỉ giữa 2 khách), giường không cần — giống booking engine
+      if (booking.employee_id && startMinutes < bEnd + bufferTime && bStart < (startMinutes + duration)) {
+        busyEmployees.add(booking.employee_id);
       }
-
-      // Also remove employees not working at this time window (schedule)
-      const availableWorkingEmployees = workingEmployees.filter(e => {
-        if (busyEmployees.has(e.id)) return false;
-        const s = scheduleByEmp.get(e.id);
-        if (!s) return false;
-        const sStart = timeToMinutes(String(s.start_time).substring(0, 5));
-        const sEnd = timeToMinutes(String(s.end_time).substring(0, 5));
-        // Proposed slot must fit within working hours
-        return startMinutes >= sStart && (startMinutes + duration) <= sEnd;
-      });
-
-      const availableEmployees = availableWorkingEmployees.length;
-      const availableBeds = totalBeds - busyBeds.size;
-
-      const disabled = availableEmployees < guestCount || availableBeds < guestCount;
-
-      // Actual end time (without buffer) for display
-      const actualEndTotal = startMinutes + duration;
-      const actualEndH = Math.floor(actualEndTotal / 60);
-      const actualEndM = actualEndTotal % 60;
-      const actualEndTime = `${String(actualEndH).padStart(2, '0')}:${String(actualEndM).padStart(2, '0')}`;
-
-      slots.push({
-        start_time: startTime,
-        end_time: actualEndTime,
-        available: !disabled,
-        available_employees: availableEmployees,
-        available_beds: availableBeds
-      });
+      if (booking.bed_id && startMinutes < bEnd && bStart < (startMinutes + duration)) {
+        busyBeds.add(booking.bed_id);
+      }
     }
+
+    // Also remove employees not working at this time window (schedule)
+    const availableWorkingEmployees = workingEmployees.filter(e => {
+      if (busyEmployees.has(e.id)) return false;
+      const s = scheduleByEmp.get(e.id);
+      if (!s) return false;
+      const sStart = timeToMinutes(String(s.start_time).substring(0, 5));
+      const sEnd = timeToMinutes(String(s.end_time).substring(0, 5));
+      // Proposed slot must fit within working hours
+      return startMinutes >= sStart && (startMinutes + duration) <= sEnd;
+    });
+
+    const availableEmployees = availableWorkingEmployees.length;
+    const availableBeds = totalBeds - busyBeds.size;
+
+    const disabled = availableEmployees < guestCount || availableBeds < guestCount;
+
+    // Actual end time (without buffer) for display
+    const actualEndTotal = startMinutes + duration;
+    const actualEndH = Math.floor(actualEndTotal / 60);
+    const actualEndM = actualEndTotal % 60;
+    const actualEndTime = `${String(actualEndH).padStart(2, '0')}:${String(actualEndM).padStart(2, '0')}`;
+
+    slots.push({
+      start_time: startTime,
+      end_time: actualEndTime,
+      available: !disabled,
+      available_employees: availableEmployees,
+      available_beds: availableBeds
+    });
   }
 
   return {

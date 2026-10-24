@@ -50,7 +50,8 @@ async function checkInBooking(bookingId, broadcast = () => { }, { source = 'staf
     end: toHHMM(h * 60 + m + (b.services?.duration_minutes || 60)),
     employeeId: b.employee_id,
     bedId: b.bed_id,
-    name: b.temporary_name
+    name: b.temporary_name,
+    skipStartLimit: true // giờ check-in muộn: Late arrival grace (#14)
   }));
   const ids = items.map(it => it.ref);
 
@@ -68,7 +69,9 @@ async function checkInBooking(bookingId, broadcast = () => { }, { source = 'staf
       })
     })
   });
-  if (!result.ok) return { success: false, blocked: true, code: 'BOOKING_CONFLICT', conflicts: result.conflicts };
+  if (!result.ok) {
+    return { success: false, blocked: true, code: result.refused?.code || 'BOOKING_CONFLICT', conflicts: result.conflicts, refused: result.refused };
+  }
 
   const { data: updated, error } = await supabase
     .from('bookings')

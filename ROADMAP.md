@@ -50,6 +50,8 @@ Words as in `GLOSSARY.md`: **Booking** = one guest, **Group** = Bookings of gues
 ### Time limits (agreed 23/10)
 
 - **Last booking time** = latest start. For now it is the branch's per-weekday `close`; later its own per-branch, per-weekday setting.
+- Branch with no hours set for that day → **08:00–20:00** everywhere (same as the dashboard default; agreed 24/10). A day marked closed keeps today's behaviour (no online slots, no extra reason).
+- The limit applies only where a start is set (create, move, branch / date change). Re-placing a Booking at its own start (therapist change, longer service, AI reassign) doesn't ask again. Check-in skips it until #14 adds the Late arrival grace.
 - **Late arrival grace** (global setting, default 15 min, check-in only): a guest booked at the Last booking time can be checked in up to that many minutes later without a warning.
 - Start after Last booking time (or check-in later than the grace): online refused; staff "Vẫn lưu?" reason; AI blocked + confirm token.
 - **Closing time** (future setting): fixed time → a treatment ending after it is refused online and gets a "Vẫn lưu?" reason for staff / AI; "after last service" (YOi, and every branch until the setting exists) → no check.
@@ -81,7 +83,7 @@ Rules: "Group rules" and "Time limits" above. One fresh session per ticket (`/im
 | Wave | Tickets (same wave = can run in parallel) | Starts when |
 |---|---|---|
 | 1 | [x] #9 Prefactor: Booking change module + staff edit of a single Booking (23/10; the 3 check-in guard tests still need a run between 10:30 and 20:00, tracked in #10) | now |
-| 2 | [x] #10 Staff move a Group (Cả nhóm / Chỉ khách này) (24/10; check-in guard tests from #9 ran and passed) · [ ] #11 Start-time limits | #9 done |
+| 2 | [x] #10 Staff move a Group (Cả nhóm / Chỉ khách này) (24/10; check-in guard tests from #9 ran and passed) · [x] #11 Start-time limits (24/10; Last booking time = `close`, midnight refused, fallback 08:00–20:00) | #9 done |
 | 3 | [ ] #12 Staff group-wide fields · [ ] #13 Cancel as status · [ ] #14 Check-in scope + Late arrival grace | #12, #13: #10 done · #14: #10 and #11 done |
 | 4 | [ ] #15 AI update_booking through the module | #12 and #11 done |
 | 5 | [ ] #16 Undo + AI reassign through the module | #15 and #13 done |

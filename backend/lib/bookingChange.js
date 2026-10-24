@@ -172,8 +172,11 @@ async function changeBooking(supabase, { source, bookingId, scope, change, confi
   // Cả nhóm: mọi khách trong CÙNG 1 lệnh → vướng mắc của mọi người báo chung, xác nhận 1 lần, không lưu nửa vời.
   try {
     if (target.placementChanged) {
+      // Giờ nhận khách muộn nhất chỉ xét khi đặt giờ bắt đầu mới (đổi ngày / giờ / chi nhánh); chỉ đổi NV / kéo dài → không hỏi lại
+      const startMoved = set.booking_date !== booking.booking_date || set.branch_id !== booking.branch_id
+        || toMinutes(set.start_time) !== toMinutes(booking.start_time);
       const items = [
-        { ref: booking.id, start: set.start_time, end: set.end_time, employeeId: set.employee_id, bedId: booking.bed_id, name: set.temporary_name },
+        { ref: booking.id, start: set.start_time, end: set.end_time, employeeId: set.employee_id, bedId: booking.bed_id, name: set.temporary_name, skipStartLimit: !startMoved },
         ...siblings.map(s => ({ ref: s.id, start: s.set.start_time, end: s.set.end_time, employeeId: s.from.employee_id, bedId: s.from.bed_id, name: s.from.temporary_name }))
       ];
       const setOf = new Map([[booking.id, set], ...siblings.map(s => [s.id, s.set])]);
@@ -189,6 +192,7 @@ async function changeBooking(supabase, { source, bookingId, scope, change, confi
       });
       if (!result.ok) {
         await rollbackCustomer();
+        if (result.refused) return { ok: false, status: 400, code: result.refused.code, error: result.refused.message };
         // Nhiều khách → ghi kèm tên khách để "Vẫn lưu?" nói rõ vướng mắc của ai
         const guestName = new Map(items.map(it => [it.ref, it.name]));
         const conflicts = siblings.length
