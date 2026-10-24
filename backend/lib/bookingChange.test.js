@@ -148,3 +148,43 @@ test('Cả nhóm làm lịch của khách khác vượt qua nửa đêm → từ
   assert.ok(plan.refused, 'phải từ chối');
   assert.equal(plan.targets, undefined);
 });
+
+
+// --- Check-in (#14): một khách hoặc cả nhóm ---
+const { planCheckIn } = require('./bookingChange');
+// Dòng check-in đọc kèm thời lượng dịch vụ: A 60 phút, B 90 phút
+const arriving = (o = {}) => ({ ...groupA(), services: { duration_minutes: 60 }, ...o });
+const friend = (o = {}) => ({ ...groupB(), services: { duration_minutes: 90 }, ...o });
+const checkInTargets = (plan) => Object.fromEntries(plan.targets.map(t => [t.id, t]));
+
+test('check-in lịch thuộc nhóm mà không gửi scope → hỏi (scopeRequired + số khách), không có kế hoạch ghi', () => {
+  const plan = planCheckIn({ booking: arriving(), group: [friend()], start: '17:05' });
+  assert.equal(plan.scopeRequired, true);
+  assert.equal(plan.groupSize, 2);
+  assert.equal(plan.targets, undefined);
+});
+
+test('check-in Chỉ khách này → chỉ khách này bắt đầu từ "bây giờ", khách khác không có trong kế hoạch', () => {
+  const plan = planCheckIn({ booking: arriving(), group: [friend()], scope: 'booking', start: '17:05' });
+  assert.deepEqual(plan.targets, [{ id: 'A', start: '17:05', end: '18:05' }]);
+});
+
+test('check-in Cả nhóm → mọi khách chưa hủy bắt đầu từ "bây giờ", mỗi người giữ thời lượng dịch vụ của mình', () => {
+  const cancelled = friend({ id: 'C', status: 'cancelled' });
+  const t = checkInTargets(planCheckIn({ booking: arriving(), group: [friend(), cancelled], scope: 'group', start: '17:05' }));
+  assert.deepEqual(Object.keys(t).sort(), ['A', 'B']);
+  assert.deepEqual(t.A, { id: 'A', start: '17:05', end: '18:05' });
+  assert.deepEqual(t.B, { id: 'B', start: '17:05', end: '18:35' });
+});
+
+test('check-in lịch lẻ, hoặc nhóm mà khách khác đã hủy hết → không hỏi, chỉ lịch này', () => {
+  const solo = planCheckIn({ booking: arriving({ group_booking_id: null }), start: '17:05' });
+  assert.deepEqual(solo.targets.map(t => t.id), ['A']);
+  const alone = planCheckIn({ booking: arriving(), group: [friend({ status: 'cancelled' })], start: '17:05' });
+  assert.deepEqual(alone.targets.map(t => t.id), ['A']);
+});
+
+test('check-in: dịch vụ không có thời lượng → 60 phút', () => {
+  const plan = planCheckIn({ booking: arriving({ services: null }), start: '17:05' });
+  assert.equal(plan.targets[0].end, '18:05');
+});

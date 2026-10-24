@@ -177,9 +177,11 @@ function staffUpdate(booking, changes, { allowConflict, role = 'admin' } = {}) {
   return http('PUT', `/${booking.id}`, { role, body });
 }
 
-function staffCheckIn(bookingId, { allowConflict, role = 'admin' } = {}) {
-  const body = allowConflict !== undefined ? { allow_conflict: allowConflict } : undefined;
-  return http('POST', `/${bookingId}/check-in`, { role, body });
+function staffCheckIn(bookingId, { allowConflict, scope, role = 'admin' } = {}) {
+  const body = {};
+  if (allowConflict !== undefined) body.allow_conflict = allowConflict;
+  if (scope !== undefined) body.scope = scope;
+  return http('POST', `/${bookingId}/check-in`, { role, body: Object.keys(body).length ? body : undefined });
 }
 
 /** Gọi đúng hàm tool mà AI dùng (không qua Gemini → kết quả xác định). */

@@ -286,6 +286,17 @@ function respondConflict(res, { conflicts = [], refused } = {}, { isPublic = fal
   return res.status(409).json({ code: 'BOOKING_CONFLICT', error: summarizeConflicts(conflicts), conflicts: withMessages(conflicts) });
 }
 
+// Lịch thuộc nhóm mà không gửi scope → dashboard hỏi "Cả nhóm / Chỉ khách này" rồi gửi lại kèm scope
+function respondScopeRequired(res, groupSize) {
+  return res.status(409).json({
+    code: 'SCOPE_REQUIRED',
+    error: `Lịch này thuộc nhóm ${groupSize} khách — chọn "Cả nhóm" hoặc "Chỉ khách này".`,
+    group_size: groupSize
+  });
+}
+
+const scopeOf = (body) => (['booking', 'group'].includes(body?.scope) ? body.scope : undefined);
+
 /**
  * GET /api/bookings
  * Query params: branch_id, date, status
@@ -671,7 +682,7 @@ router.put('/:id', async (req, res) => {
     const result = await changeBooking(supabase, {
       source: 'staff',
       bookingId: req.params.id,
-      scope: ['booking', 'group'].includes(req.body.scope) ? req.body.scope : undefined,
+      scope: scopeOf(req.body),
       change: {
         service_id, branch_id, start_time, end_time, notes, customer_id, booking_date, internal_note, temporary_name, customer_update,
         // employee_id rỗng / null = lịch chưa xếp nhân viên (cột "Chưa xếp NV")
@@ -680,13 +691,7 @@ router.put('/:id', async (req, res) => {
       confirm: req.body.allow_conflict === true,
       broadcast: getBroadcast(req)
     });
-    if (result.code === 'SCOPE_REQUIRED') {
-      return res.status(409).json({
-        code: 'SCOPE_REQUIRED',
-        error: `Lịch này thuộc nhóm ${result.groupSize} khách — chọn "Cả nhóm" hoặc "Chỉ khách này".`,
-        group_size: result.groupSize
-      });
-    }
+    if (result.code === 'SCOPE_REQUIRED') return respondScopeRequired(res, result.groupSize);
     if (result.code === 'BOOKING_CONFLICT') return respondConflict(res, result);
     if (!result.ok) return res.status(result.status).json({ code: result.code, error: result.error });
 
@@ -1106,15 +1111,20 @@ router.put('/:id/status', async (req, res) => {
 
 /**
  * POST /api/bookings/:id/check-in — khách đã đến (dùng chung logic với AI check_in_booking)
- * Giờ mới chồng lên lịch kế tiếp của NV (khách trễ) → 409 BOOKING_CONFLICT; gửi lại kèm allow_conflict: true sau "Vẫn lưu".
+ * Body: { allow_conflict?, scope? ('group' = Cả nhóm | 'booking' = Chỉ khách này) }
+ * Lịch thuộc nhóm mà không gửi scope → 409 SCOPE_REQUIRED (kèm group_size).
+ * Giờ mới chồng lên lịch kế tiếp của NV hoặc trễ hơn Last booking time + Late arrival grace → 409 BOOKING_CONFLICT;
+ * gửi lại kèm allow_conflict: true sau "Vẫn lưu".
  */
 router.post('/:id/check-in', async (req, res) => {
   try {
     const result = await checkInBooking(req.params.id, getBroadcast(req), {
       source: 'staff',
+      scope: scopeOf(req.body),
       override: req.body?.allow_conflict === true
     });
     if (result.error) return res.status(404).json({ error: result.error });
+    if (result.scopeRequired) return respondScopeRequired(res, result.groupSize);
     if (result.blocked) return respondConflict(res, result);
     res.json(result);
   } catch (err) {

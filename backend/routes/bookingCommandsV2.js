@@ -166,11 +166,16 @@ const spaTools = [
   },
   {
     name: "check_in_booking",
-    description: "Cập nhật khách đã đến: tự động set giờ hiện tại (làm tròn 5 phút) làm start_time, tính lại end_time theo dịch vụ, cập nhật status = arrived. Lịch nhóm → check-in cả nhóm. Gọi sau search_bookings.",
+    description: "Cập nhật khách đã đến: tự động set giờ hiện tại (làm tròn 5 phút) làm start_time, tính lại end_time theo dịch vụ, cập nhật status = arrived. Lịch nhóm → mặc định check-in cả nhóm; scope = booking khi người dùng chỉ nói 1 khách đến. Gọi sau search_bookings.",
     parameters: {
       type: "object",
       properties: {
         booking_id: { type: "string", description: "UUID của lịch hẹn cần check-in." },
+        scope: {
+          type: "string",
+          enum: ["group", "booking"],
+          description: "group (mặc định) = check-in cả nhóm. booking = chỉ khách này (VD: \"1 người trong nhóm chị Mia tới rồi\", \"chỉ khách này\"). Chưa rõ khách nào trong nhóm → hỏi lại người dùng (nêu NV / giờ / dịch vụ) trước khi gọi."
+        },
         customer_name_hint: {
           type: "string",
           description: "Tên khách được nhắc trong lệnh gốc. Hệ thống sẽ đối chiếu với tên thật của lịch hẹn trước khi check-in để tránh nhầm khách."
@@ -1128,8 +1133,10 @@ async function executeTool(toolName, params, context) {
       }
     }
     // Khách trễ: giờ mới chồng lên lịch kế tiếp của NV → chặn + confirm_token, xác nhận rồi mới check-in
+    // AI: cả nhóm trừ khi người dùng chỉ ra 1 khách
     const checkIn = await checkInBooking(params.booking_id, context.req.app.get('broadcastSSE'), {
       source: 'ai',
+      scope: params.scope === 'booking' ? 'booking' : 'group',
       override: aiOverride(context, 'check_in_booking', params)
     });
     if (checkIn.blocked) return aiBlocked(context, 'check_in_booking', params, checkIn, 'Chưa check-in: ');
@@ -1634,7 +1641,7 @@ ${employeesStr}
   - Tìm lịch → search_bookings
   - Tạo lịch → gọi create_booking NGAY (service_id và id nhân viên lấy từ DỮ LIỆU SPA). create_booking tự kiểm tra lịch trống và tự xếp nhân viên theo thứ tự tour → KHÔNG gọi get_spa_context hay get_available_staff trước.
   - Sửa lịch hoặc lệnh có tên khách + dịch vụ không có giờ → search_bookings → update_booking (dịch vụ/nhân viên lấy từ DỮ LIỆU SPA; update_booking tự chặn trùng lịch). Chỉ tạo mới nếu không tìm thấy lịch.
-  - Khách đến/tới/vô/vào spa → search_bookings → check_in_booking. KHÔNG tạo lịch mới.
+  - Khách đến/tới/vô/vào spa → search_bookings → check_in_booking. KHÔNG tạo lịch mới. Lịch nhóm: mặc định cả nhóm; chỉ 1 khách trong nhóm tới → scope: "booking" (chưa rõ khách nào → hỏi, nêu NV / giờ / dịch vụ từng khách).
   - Hủy lịch → search_bookings → delete_booking
   - Cần nhân viên/dịch vụ của chi nhánh KHÁC → get_spa_context
   - Hỏi ai đang rảnh lúc nào → get_available_staff (danh sách đã xếp theo tour)

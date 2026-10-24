@@ -684,3 +684,98 @@ describe('Giờ nhận khách muộn nhất + nửa đêm', () => {
     assert.equal(rowsNamed(await h.activeBookings(), 'Midnight').length, 0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Check-in một khách hoặc cả nhóm + Late arrival grace (#14) — ROADMAP.md › "Group rules", "Time limits"
+describe('Check-in nhóm khách + Late arrival grace', () => {
+  const nowMin = h.vnNowMinutes();
+  const checkInSkip = nowMin < 10 * 60 + 30 || nowMin > 20 * 60 ? 'chỉ chạy được trong khoảng 10:30–20:00 giờ VN' : false;
+  const S = { ...T, skip: checkInSkip };
+  const rowOf = async (id) => (await h.activeBookings(h.TODAY)).find(r => r.id === id);
+  const hhmm = (t) => String(t).slice(0, 5);
+
+  // A (NV 0) và B (NV 1) cùng nhóm, đặt 10 phút trước, hôm nay
+  async function arrivingGroup() {
+    const groupId = crypto.randomUUID();
+    const start = Math.floor((nowMin - 10) / 5) * 5;
+    const at = { date: h.TODAY, start: h.toHHMM(start), end: h.toHHMM(start + 60), groupId };
+    const a = await h.insertFixture({ ...at, employeeId: h.employee(0).id, bedId: h.ctx.beds[0].id, name: 'Arrive A' });
+    const b = await h.insertFixture({ ...at, employeeId: h.employee(1).id, bedId: h.ctx.beds[1].id, name: 'Arrive B' });
+    return { a, b };
+  }
+
+  test('nhân viên check-in lịch trong nhóm mà không gửi scope → 409 SCOPE_REQUIRED kèm số khách, không check-in ai', S, async () => {
+    const { a, b } = await arrivingGroup();
+    const r = await h.staffCheckIn(a.id);
+    assert.equal(r.status, 409, JSON.stringify(r.data));
+    assert.equal(r.data?.code, 'SCOPE_REQUIRED');
+    assert.equal(r.data?.group_size, 2);
+    assert.equal((await rowOf(a.id)).status, 'confirmed');
+    assert.equal((await rowOf(b.id)).status, 'confirmed');
+  });
+
+  test('Chỉ khách này → chỉ A arrived với giờ bắt đầu mới, B giữ nguyên và vẫn trong nhóm', S, async () => {
+    const { a, b } = await arrivingGroup();
+    const r = await h.staffCheckIn(a.id, { scope: 'booking' });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    const [rowA, rowB] = [await rowOf(a.id), await rowOf(b.id)];
+    assert.equal(rowA.status, 'arrived');
+    assert.equal(hhmm(rowA.start_time), r.data.start_time);
+    assert.equal(rowB.status, 'confirmed');
+    assert.equal(hhmm(rowB.start_time), hhmm(b.start_time));
+    assert.equal(rowB.group_booking_id, a.group_booking_id);
+  });
+
+  test('nhân viên Cả nhóm → cả hai arrived, cùng giờ bắt đầu', S, async () => {
+    const { a, b } = await arrivingGroup();
+    const r = await h.staffCheckIn(a.id, { scope: 'group' });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    for (const id of [a.id, b.id]) {
+      const row = await rowOf(id);
+      assert.equal(row.status, 'arrived');
+      assert.equal(hhmm(row.start_time), r.data.start_time);
+    }
+  });
+
+  test('AI check-in lịch trong nhóm (không nói khách nào) → cả nhóm arrived', S, async () => {
+    const { a, b } = await arrivingGroup();
+    const r = await h.aiTool('check_in_booking', { booking_id: a.id });
+    assert.equal(aiOk(r), true, JSON.stringify(r));
+    assert.equal((await rowOf(a.id)).status, 'arrived');
+    assert.equal((await rowOf(b.id)).status, 'arrived');
+  });
+
+  test('AI check-in scope booking → chỉ khách đó arrived', S, async () => {
+    const { a, b } = await arrivingGroup();
+    const r = await h.aiTool('check_in_booking', { booking_id: a.id, scope: 'booking' });
+    assert.equal(aiOk(r), true, JSON.stringify(r));
+    assert.equal((await rowOf(a.id)).status, 'arrived');
+    assert.equal((await rowOf(b.id)).status, 'confirmed');
+  });
+
+  // Last booking time = 60 phút trước → check-in bây giờ trễ hơn grace 15 phút
+  const closedAnHourAgo = (fn) => h.withHours(h.ctx.branch.id, { open: '06:00', close: h.toHHMM(Math.floor((nowMin - 60) / 5) * 5) }, fn);
+  async function soloArrival(name) {
+    const start = Math.floor((nowMin - 70) / 5) * 5;
+    return h.insertFixture({ employeeId: h.employee(0).id, bedId: h.ctx.beds[0].id, date: h.TODAY, start: h.toHHMM(start), end: h.toHHMM(start + 60), name });
+  }
+
+  test('check-in muộn hơn Last booking time + grace → hỏi "Vẫn lưu?" (late_check_in); allow_conflict → check-in', S, () => closedAnHourAgo(async () => {
+    const b = await soloArrival('Late grace');
+    const warn = await h.staffCheckIn(b.id);
+    assert.equal(warn.status, 409, JSON.stringify(warn.data));
+    assert.deepEqual((warn.data.conflicts || []).map(c => c.type), ['late_check_in']);
+    assert.equal((await rowOf(b.id)).status, 'confirmed');
+
+    const confirmed = await h.staffCheckIn(b.id, { allowConflict: true });
+    assert.equal(confirmed.status, 200, JSON.stringify(confirmed.data));
+    assert.equal((await rowOf(b.id)).status, 'arrived');
+  }));
+
+  test('late_arrival_grace = 120 → cùng giờ đó check-in vào thẳng', S, () => closedAnHourAgo(() => h.withSetting('late_arrival_grace', 120, async () => {
+    const b = await soloArrival('Within grace');
+    const r = await h.staffCheckIn(b.id);
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    assert.equal((await rowOf(b.id)).status, 'arrived');
+  })));
+});

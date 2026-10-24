@@ -34,11 +34,18 @@ function askBeforeOverlap(settings) {
   return !(v === false || v === 'false'); // chưa cài = bật
 }
 
+// Late arrival grace (phút, chỉ cho check-in): chưa cài / sai = 15
+function readLateArrivalGrace(settings) {
+  const n = parseInt(settings?.late_arrival_grace, 10);
+  return Number.isFinite(n) && n >= 0 ? n : 15;
+}
+
 function policyFor(source, settings = {}) {
+  const lateArrivalGrace = readLateArrivalGrace(settings);
   switch (source) {
-    case 'web': return { source, employeeBuffer: readBuffer(settings), canOverride: false, askFirst: true };
+    case 'web': return { source, employeeBuffer: readBuffer(settings), canOverride: false, askFirst: true, lateArrivalGrace };
     case 'ai':
-    case 'staff': return { source, employeeBuffer: 0, canOverride: true, askFirst: askBeforeOverlap(settings) };
+    case 'staff': return { source, employeeBuffer: 0, canOverride: true, askFirst: askBeforeOverlap(settings), lateArrivalGrace };
     default: throw new Error(`Nguồn đặt lịch không hợp lệ: ${source}`);
   }
 }
@@ -50,8 +57,9 @@ function policyFor(source, settings = {}) {
  * @param day   { now, bookings, employees:[{id,name}], employeeNames:{id:name}, schedules: Map id→ca, beds:[{id,name}], tourOrder }
  *              bookings = mọi lịch trong NGÀY (mọi chi nhánh — NV bận ở chi nhánh khác vẫn là bận)
  *              lastBookingTime: "HH:MM" giờ nhận khách muộn nhất của chi nhánh ngày đó (null = không giới hạn)
- * @param items [{ ref, start, end, employeeId?, autoEmployee?, fallbackAuto?, excludeEmployeeIds?, bedId?, name?, skipStartLimit? }]
- *   - skipStartLimit: không áp Last booking time (check-in — Late arrival grace làm ở #14)
+ * @param items [{ ref, start, end, employeeId?, autoEmployee?, fallbackAuto?, excludeEmployeeIds?, bedId?, name?, skipStartLimit?, checkIn? }]
+ *   - skipStartLimit: không áp Last booking time (đặt lại lịch ở đúng giờ bắt đầu cũ)
+ *   - checkIn: giờ check-in → giới hạn là Last booking time + Late arrival grace (policy.lateArrivalGrace)
  *   - employeeId: NV được chỉ định → giữ đúng người, bận / ngoài ca thì báo vướng mắc
  *     (fallbackAuto: bận / ngoài ca thì tự lấy người khác thay vì báo)
  *   - không chỉ định + autoEmployee → người rảnh đầu tiên theo tour; không ai rảnh → no_employee
@@ -130,7 +138,12 @@ function planPlacements({ day, policy, items, excludeIds = [] }) {
     }
 
     // --- Giờ nhận khách muộn nhất: bắt đầu sau Last booking time → online từ chối, staff / AI hỏi "Vẫn lưu?" ---
-    if (day.lastBookingTime && !it.skipStartLimit && s > toMin(day.lastBookingTime)) {
+    if (day.lastBookingTime && it.checkIn) {
+      // Check-in: khách đặt đúng giờ nhận khách muộn nhất vẫn được trễ tối đa grace phút mà không hỏi
+      if (s > toMin(day.lastBookingTime) + policy.lateArrivalGrace) {
+        conflicts.push({ type: 'late_check_in', ref, last_booking_time: hhmm(day.lastBookingTime), grace: policy.lateArrivalGrace });
+      }
+    } else if (day.lastBookingTime && !it.skipStartLimit && s > toMin(day.lastBookingTime)) {
       conflicts.push({ type: 'after_last_booking', ref, last_booking_time: hhmm(day.lastBookingTime) });
     }
 
@@ -171,6 +184,7 @@ function describeConflict(c) {
     case 'no_bed': return 'Không còn giường trống trong khung giờ này';
     case 'bed_busy': return `Giường đang được dùng bởi ${c.customer_name || 'khách khác'} ${c.start_time}–${c.end_time}`;
     case 'after_last_booking': return `Quá giờ nhận khách (nhận khách muộn nhất ${c.last_booking_time})`;
+    case 'late_check_in': return `Check-in quá giờ (nhận khách muộn nhất ${c.last_booking_time}, trễ tối đa ${c.grace} phút)`;
     default: return 'Lịch bị trùng';
   }
 }
@@ -185,7 +199,7 @@ const publicConflicts = (conflicts) => [...new Set((conflicts || []).map(c => c.
 // Đọc dữ liệu
 
 async function loadSettings(supabase) {
-  const { data, error } = await supabase.from('settings').select('key, value').in('key', ['buffer_time', 'confirm_staff_overlap']);
+  const { data, error } = await supabase.from('settings').select('key, value').in('key', ['buffer_time', 'confirm_staff_overlap', 'late_arrival_grace']);
   if (error) throw error;
   return Object.fromEntries((data || []).map(r => [r.key, r.value]));
 }

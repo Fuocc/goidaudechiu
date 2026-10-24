@@ -463,12 +463,12 @@ function Bookings() {
     booking?.group_booking_id ? bookings.filter(b => b.group_booking_id === booking.group_booking_id) : []
   );
 
-  // Backend báo SCOPE_REQUIRED (lịch thuộc nhóm đổi ngày / giờ) → hỏi, "Cả nhóm" là nút mặc định.
-  // Trả 'group' / 'booking' / null (không lưu)
-  const askScope = async (groupSize) => {
+  // Backend báo SCOPE_REQUIRED (lịch thuộc nhóm đổi ngày / giờ, check-in) → hỏi, "Cả nhóm" là nút mặc định.
+  // action = việc đang hỏi, VD "Đổi ngày / giờ", "Check-in". Trả 'group' / 'booking' / null (không lưu)
+  const askScope = async (groupSize, action = 'Đổi ngày / giờ') => {
     const choice = await confirmDialog({
       title: 'Lịch nhóm',
-      message: `Lịch này thuộc nhóm ${groupSize} khách. Đổi ngày / giờ cho cả nhóm hay chỉ khách này?`,
+      message: `Lịch này thuộc nhóm ${groupSize} khách. ${action} cho cả nhóm hay chỉ khách này?`,
       confirmText: `Cả nhóm (${groupSize})`,
       altText: 'Chỉ khách này',
       cancelText: 'Không lưu'
@@ -526,10 +526,23 @@ function Bookings() {
   // --- Context menu khi giữ lâu thẻ lịch (mobile list view). item = 1 phần tử của mobileListItems ---
   const handleCheckInItem = (item) => run(`checkin:${item.key}`, async () => {
     try {
-      // Backend tự check-in cả nhóm nếu lịch thuộc nhóm. Khách trễ chồng lên lịch kế tiếp → hỏi "Vẫn lưu?"
-      const checkedIn = await saveConfirmingConflict(allow => checkInBooking(item.lead.id, allow ? { allow_conflict: true } : undefined));
+      // Lịch thuộc nhóm → backend báo SCOPE_REQUIRED → hỏi "Cả nhóm / Chỉ khách này" rồi gửi lại kèm scope.
+      // Khách trễ chồng lên lịch kế tiếp / quá giờ nhận khách + thời gian chờ → hỏi "Vẫn lưu?"
+      const checkIn = (scope) => saveConfirmingConflict(allow => checkInBooking(item.lead.id, {
+        ...(scope && { scope }),
+        ...(allow && { allow_conflict: true })
+      }));
+      let checkedIn;
+      try {
+        checkedIn = await checkIn();
+      } catch (err) {
+        if (err?.status !== 409 || err.data?.code !== 'SCOPE_REQUIRED') throw err;
+        const scope = await askScope(err.data.group_size, 'Check-in');
+        if (!scope) return;
+        checkedIn = await checkIn(scope);
+      }
       if (!checkedIn) return;
-      notify(item.guestCount > 1 ? `Đã báo cả nhóm ${item.guestCount} khách tới!` : 'Đã báo khách tới!');
+      notify(checkedIn.checked_in > 1 ? `Đã báo cả nhóm ${checkedIn.checked_in} khách tới!` : 'Đã báo khách tới!');
       loadBookings();
     } catch (err) {
       toast.error(err.message);

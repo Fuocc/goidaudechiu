@@ -67,6 +67,23 @@ function planChange({ booking, service, change, scope, group = [] }) {
   }
   return { targets };
 }
+/**
+ * Bước lên kế hoạch check-in (thuần): khách đến → bắt đầu từ "bây giờ", giữ thời lượng dịch vụ, status = arrived.
+ * @param booking  lịch được bấm check-in, kèm services(duration_minutes)
+ * @param group    các lịch cùng nhóm (kèm services; có thể gồm cả lịch đã hủy)
+ * @param scope    'booking' | 'group' | undefined (lịch thuộc nhóm mà không gửi → hỏi)
+ * @param start    "HH:MM" giờ check-in (đã làm tròn)
+ * @returns {{ targets: { id, start, end }[] } | { scopeRequired: true, groupSize }}
+ */
+function planCheckIn({ booking, group = [], scope, start }) {
+  const others = group.filter(g => g.id !== booking.id && g.status !== 'cancelled');
+  if (others.length && !scope) return { scopeRequired: true, groupSize: others.length + 1 };
+
+  const arriving = scope === 'group' ? [booking, ...others] : [booking];
+  return {
+    targets: arriving.map(b => ({ id: b.id, start, end: endTime(start, b.services?.duration_minutes || 60) }))
+  };
+}
 
 const UPDATED_SELECT = `
   *,
@@ -225,4 +242,4 @@ async function changeBooking(supabase, { source, bookingId, scope, change, confi
   return { ok: true, booking: updated, before: booking, groupUpdatedIds };
 }
 
-module.exports = { planChange, changeBooking };
+module.exports = { planChange, planCheckIn, changeBooking };
