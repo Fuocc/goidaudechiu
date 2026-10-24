@@ -139,20 +139,20 @@ Requirements from testing:
 - [ ] One bootstrap request for branches/services/settings
 
 ## 10. Design system (P1) — spec #17, decisions in [docs/design-system.md](docs/design-system.md)
-Agreed 24/10. This is a tidy-up that keeps today's look, not a redesign. Nothing goes into the codebase until D2 is approved visually. A ticket marked *new UI* needs a prototype on the real app and the owner's "approve or design your own" answer before code. Every ticket goes through the normal change process.
+Agreed 24/10. This is a tidy-up that keeps today's look, not a redesign. Done: colours + accent prototype (24/10, verdict: **keep today's look**, no theme picker, Lato rejected for Vietnamese, Bricolage for all text). The tickets are sub-issues of #17, with native "blocked by" links on GitHub. One fresh session per ticket, with the owner's approval before code. The two prototypes (#19, #27) close only on the owner's verdict.
 
 | Wave | Tickets (same wave = can run in parallel) | Starts when |
 |---|---|---|
-| 1 | [x] D1 Prototype: colours + accent (24/10, verdict: **keep today's look**, no theme picker, Lato rejected for Vietnamese, Bricolage for all text) | — |
-| 2 | [ ] D2 Prototype on the real app: primitives in today's look, incl. tooltip, date picker, Phosphor icons, toast, and the 5 inconsistencies listed in the spec · [ ] D3 Tokens: role tokens recording today's values, one warm grey scale, one `--accent`, breakpoints; guard test with full allowlist | now |
-| 3 | [ ] D4 Primitives in `src/components/ui/` + staff-only `/styleguide` page | D2 approved and D3 done |
-| 4 | [ ] D5 Remove Chakra + `next-themes` (own Tooltip, `react-day-picker`) · [ ] D6 Swap icons to Phosphor · [ ] D7 Toast theming | D4 done |
-| 5 | [ ] D8 Pages: Employees, Services, Branches, Settings · ~~D9 Accent picker~~ (dropped 24/10; one `--accent` token keeps it easy to add later) · [ ] D10 Prototype: mobile sheets, calendar, forms (*new UI*, with §7) | D5 done |
-| 6 | [ ] D11 Pages: Customers, Schedules · [ ] D12 Sidebar + layout (incl. tablet collapse) · [ ] D13 AI chat panel | D8 done (D12 also needs D10 approved) |
-| 7 | [ ] D14 Bookings (calendar, list, modals → approved mobile patterns) · [ ] D15 Clerk theming | D11–D13 done and D10 approved |
+| 1 | [ ] #18 Tracer: tokens, style check (`npm run test:styles`), `/styleguide`, Employees moved over · [ ] #19 Prototype: shared components in today's look | now |
+| 2 | [ ] #20 Core components + Phosphor · [ ] #21 Tooltip · [ ] #23 Modal (desktop) · [ ] #24 Toast styling · [ ] #27 Prototype: mobile patterns (with §7) | #20, #21, #23: #18 and #19 done · #24: #18 done · #27: #19 done |
+| 3 | [ ] #22 DatePicker, then remove Chakra + `next-themes` · [ ] #25 Services, Branches, Settings · [ ] #26 Customers, Schedules · [ ] #28 Sidebar, layout, breakpoints · [ ] #29 UserSettings, ShareLink, sign-in · [ ] #30 AI chat panel · [ ] #31 Bookings toolbar + list | #22: #21 · #25, #26: #20 and #23 · #28, #30: #20 and #27 · #29: #20 · #31: #20 and #21 |
+| 4 | [ ] #32 Bookings calendar + modals, with the mobile patterns | #22, #23, #27 and #31 done |
+| 5 | [ ] #33 Contract: remove old variables and icon packages, empty the allowlist | all of the above done |
 
-- **Done when:** the guard test's allowlist is empty, Chakra is gone from `package.json`, and every page has been checked at 375 / 768 / 1280px.
-- Page tickets touch shared primitives: if a page needs a primitive changed, change it in its own slice first and re-check `/styleguide`.
+- **Done when:** the style check's allowlist is empty, Chakra and `react-icons` are gone from the dashboard's dependencies, and every page has been checked at 375 / 768 / 1280px.
+- ~~Accent theme picker~~ dropped 24/10. One `--accent` token keeps it easy to add later.
+- Page tickets touch shared components: if a page needs a component changed, change it in its own slice first and re-check `/styleguide`.
+- Parallel tickets in wave 3 touch shared styles: give each its own branch or worktree off `dev` and merge one at a time, re-running `npm run test:styles` and the build after each merge.
 
 ---
 
