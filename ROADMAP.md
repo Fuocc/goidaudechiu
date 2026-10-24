@@ -81,7 +81,7 @@ Rules: "Group rules" and "Time limits" above. One fresh session per ticket (`/im
 | Wave | Tickets (same wave = can run in parallel) | Starts when |
 |---|---|---|
 | 1 | [x] #9 Prefactor: Booking change module + staff edit of a single Booking (23/10; the 3 check-in guard tests still need a run between 10:30 and 20:00, tracked in #10) | now |
-| 2 | [ ] #10 Staff move a Group (Cả nhóm / Chỉ khách này) · [ ] #11 Start-time limits | #9 done |
+| 2 | [x] #10 Staff move a Group (Cả nhóm / Chỉ khách này) (24/10; check-in guard tests from #9 ran and passed) · [ ] #11 Start-time limits | #9 done |
 | 3 | [ ] #12 Staff group-wide fields · [ ] #13 Cancel as status · [ ] #14 Check-in scope + Late arrival grace | #12, #13: #10 done · #14: #10 and #11 done |
 | 4 | [ ] #15 AI update_booking through the module | #12 and #11 done |
 | 5 | [ ] #16 Undo + AI reassign through the module | #15 and #13 done |
@@ -135,6 +135,22 @@ Requirements from testing:
 ## 9. Performance (P2)
 - [ ] Remove duplicate API calls on load (~5 s, 20+ requests today)
 - [ ] One bootstrap request for branches/services/settings
+
+## 10. Design system (P1) — spec #17, decisions in [docs/design-system.md](docs/design-system.md)
+Agreed 24/10. This is a tidy-up that keeps today's look, not a redesign. Nothing goes into the codebase until D2 is approved visually. A ticket marked *new UI* needs a prototype on the real app and the owner's "approve or design your own" answer before code. Every ticket goes through the normal change process.
+
+| Wave | Tickets (same wave = can run in parallel) | Starts when |
+|---|---|---|
+| 1 | [x] D1 Prototype: colours + accent (24/10, verdict: **keep today's look**, no theme picker, Lato rejected for Vietnamese, Bricolage for all text) | — |
+| 2 | [ ] D2 Prototype on the real app: primitives in today's look, incl. tooltip, date picker, Phosphor icons, toast, and the 5 inconsistencies listed in the spec · [ ] D3 Tokens: role tokens recording today's values, one warm grey scale, one `--accent`, breakpoints; guard test with full allowlist | now |
+| 3 | [ ] D4 Primitives in `src/components/ui/` + staff-only `/styleguide` page | D2 approved and D3 done |
+| 4 | [ ] D5 Remove Chakra + `next-themes` (own Tooltip, `react-day-picker`) · [ ] D6 Swap icons to Phosphor · [ ] D7 Toast theming | D4 done |
+| 5 | [ ] D8 Pages: Employees, Services, Branches, Settings · ~~D9 Accent picker~~ (dropped 24/10; one `--accent` token keeps it easy to add later) · [ ] D10 Prototype: mobile sheets, calendar, forms (*new UI*, with §7) | D5 done |
+| 6 | [ ] D11 Pages: Customers, Schedules · [ ] D12 Sidebar + layout (incl. tablet collapse) · [ ] D13 AI chat panel | D8 done (D12 also needs D10 approved) |
+| 7 | [ ] D14 Bookings (calendar, list, modals → approved mobile patterns) · [ ] D15 Clerk theming | D11–D13 done and D10 approved |
+
+- **Done when:** the guard test's allowlist is empty, Chakra is gone from `package.json`, and every page has been checked at 375 / 768 / 1280px.
+- Page tickets touch shared primitives: if a page needs a primitive changed, change it in its own slice first and re-check `/styleguide`.
 
 ---
 

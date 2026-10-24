@@ -83,7 +83,7 @@ function Bookings() {
   // Drag-and-drop reorder state
   const [cardDrag, setCardDrag] = useState(null); // { booking, startCol, startTop }
   const [dragConfirm, setDragConfirm] = useState(null); // { booking, fromStaff, fromTime, toStaff, toTime, toStaffId, newDate, newStart, newEnd }
-  const [dragSavingMode, setDragSavingMode] = useState(null); // nút đang lưu trong popup kéo-thả: 'single' | 'group' | null
+  const [dragSaving, setDragSaving] = useState(false); // popup kéo-thả đang lưu → khóa các nút
   // Drag-to-create state
   const [dragInfo, setDragInfo] = useState(null); // { startY, currentY, staffId, staffName, columnEl }
   const [hoverInfo, setHoverInfo] = useState(null); // { staffId, y, colLeft, colWidth }
@@ -312,8 +312,6 @@ function Bookings() {
         const bk = cardDrag.booking;
         setDragConfirm({
           booking: bk,
-          groupSize: bk.group_booking_id ? bookings.filter(b => b.group_booking_id === bk.group_booking_id).length : 0,
-          timingChanged: timeToMinutes(newStart) !== origStartMin,
           fromStaff: fromStaffName,
           fromTime: `${fromStart} — ${fromEnd}`,
           toStaff: toStaffName,
@@ -465,17 +463,18 @@ function Bookings() {
     booking?.group_booking_id ? bookings.filter(b => b.group_booking_id === booking.group_booking_id) : []
   );
 
-  // Lịch nhóm đổi ngày/giờ → hỏi. Trả true (dời cả nhóm) / false (chỉ khách này) / null (không lưu)
-  const askMoveGroup = async (groupSize) => {
+  // Backend báo SCOPE_REQUIRED (lịch thuộc nhóm đổi ngày / giờ) → hỏi, "Cả nhóm" là nút mặc định.
+  // Trả 'group' / 'booking' / null (không lưu)
+  const askScope = async (groupSize) => {
     const choice = await confirmDialog({
       title: 'Lịch nhóm',
-      message: `Lịch này thuộc nhóm ${groupSize} khách. Dời giờ cho cả nhóm hay chỉ khách này?`,
-      confirmText: `Dời cả nhóm (${groupSize})`,
+      message: `Lịch này thuộc nhóm ${groupSize} khách. Đổi ngày / giờ cho cả nhóm hay chỉ khách này?`,
+      confirmText: `Cả nhóm (${groupSize})`,
       altText: 'Chỉ khách này',
       cancelText: 'Không lưu'
     });
     if (!choice) return null;
-    return choice === true;
+    return choice === true ? 'group' : 'booking';
   };
 
   const notifySaved = (saved, fallbackMsg) => {
@@ -640,8 +639,11 @@ function Bookings() {
       return await save(false);
     } catch (err) {
       if (err?.status !== 409 || err.data?.code !== 'BOOKING_CONFLICT') throw err;
-      const reasons = [...new Set((err.data.conflicts || []).map(c =>
-        c.message || `${c.customer_name}: ${formatTime(c.start_time)} - ${formatTime(c.end_time)}`))];
+      // Dời cả nhóm: backend ghi kèm guest_name → nói rõ vướng mắc của khách nào
+      const reasons = [...new Set((err.data.conflicts || []).map(c => {
+        const reason = c.message || `${c.customer_name}: ${formatTime(c.start_time)} - ${formatTime(c.end_time)}`;
+        return c.guest_name ? `${c.guest_name}: ${reason}` : reason;
+      }))];
       const keepSaving = await confirmDialog({
         title: 'Cần xác nhận',
         message: `${reasons.map(r => `• ${r}`).join('\n')}\n\nVẫn lưu?`,
@@ -653,12 +655,22 @@ function Bookings() {
     }
   };
 
-  const updateBookingConfirmingConflict = (id, payload) =>
-    saveConfirmingConflict(allow => updateBooking(id, allow ? { ...payload, allow_conflict: true } : payload));
+  // Sửa / kéo thả: lịch thuộc nhóm đổi ngày / giờ → backend báo 409 SCOPE_REQUIRED (kèm group_size) → hỏi
+  // "Cả nhóm / Chỉ khách này" rồi gửi lại kèm scope. Backend quyết định khi nào cần hỏi, dashboard không tự đoán.
+  const updateBookingConfirmingConflict = async (id, payload) => {
+    try {
+      return await saveConfirmingConflict(allow => updateBooking(id, allow ? { ...payload, allow_conflict: true } : payload));
+    } catch (err) {
+      if (err?.status !== 409 || err.data?.code !== 'SCOPE_REQUIRED' || payload.scope) throw err;
+      const scope = await askScope(err.data.group_size);
+      if (!scope) return null;
+      return await updateBookingConfirmingConflict(id, { ...payload, scope });
+    }
+  };
 
-  const handleDragConfirm = (applyToGroup = false) => run('dragConfirm', async () => {
+  const handleDragConfirm = () => run('dragConfirm', async () => {
     if (!dragConfirm) return;
-    setDragSavingMode(applyToGroup ? 'group' : 'single');
+    setDragSaving(true);
     try {
       const bk = dragConfirm.booking;
       const saved = await updateBookingConfirmingConflict(bk.id, {
@@ -667,8 +679,7 @@ function Bookings() {
         employee_id: dragConfirm.toStaffId === UNASSIGNED_COLUMN_ID ? null : dragConfirm.toStaffId,
         start_time: dragConfirm.newStart,
         end_time: dragConfirm.newEnd,
-        booking_date: dragConfirm.newDate,
-        apply_to_group: applyToGroup
+        booking_date: dragConfirm.newDate
       });
       if (saved) {
         notifySaved(saved, 'Đã cập nhật lịch hẹn!');
@@ -678,7 +689,7 @@ function Bookings() {
       toast.error('Lỗi: ' + err.message);
     }
     setDragConfirm(null);
-    setDragSavingMode(null);
+    setDragSaving(false);
   });
 
   // Đang lưu thay đổi kéo-thả → không cho đóng popup (bấm ra ngoài / Esc / "Hủy, giữ nguyên")
@@ -1044,19 +1055,6 @@ function Bookings() {
       return;
     }
 
-    // Lịch nhóm đổi ngày/giờ bắt đầu → hỏi dời cả nhóm hay chỉ khách này
-    let applyToGroup = false;
-    const groupSize = getGroupMembers(detailModal).length;
-    const timingChanged = detailEdit.booking_date !== detailModal.booking_date
-      || detailEdit.start_time !== (detailModal.start_time || '').substring(0, 5);
-    if (groupSize > 1 && timingChanged && detailGroupMode) {
-      applyToGroup = true;
-    } else if (groupSize > 1 && timingChanged) {
-      const choice = await askMoveGroup(groupSize);
-      if (choice === null) return;
-      applyToGroup = choice;
-    }
-
     await run('saveDetail', async () => {
       try {
         // 1. Update Booking
@@ -1068,9 +1066,11 @@ function Bookings() {
           end_time: detailEdit.end_time,
           employee_id: detailEdit.employee_id || null,
           notes: detailEdit.notes,
-          customer_id: detailEdit.customer_id || null,
-          apply_to_group: applyToGroup
+          customer_id: detailEdit.customer_id || null
         };
+        // Mở chi tiết từ thẻ nhóm (đã chọn cả nhóm) → gửi luôn scope 'group', không hỏi lại.
+        // Còn lại: lịch thuộc nhóm đổi ngày / giờ thì backend báo SCOPE_REQUIRED → hỏi (updateBookingConfirmingConflict)
+        if (detailGroupMode && getGroupMembers(detailModal).length > 1) bookingUpdate.scope = 'group';
 
         if (!bookingUpdate.customer_id && detailEdit.customer_name) {
           bookingUpdate.temporary_name = detailEdit.customer_name;
@@ -1496,7 +1496,7 @@ function Bookings() {
         dragConfirmRef={dragConfirmRef}
         handleDragCancel={handleDragCancel}
         handleDragConfirm={handleDragConfirm}
-        dragSavingMode={dragSavingMode}
+        dragSaving={dragSaving}
       />
     </div >
   );

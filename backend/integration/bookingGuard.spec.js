@@ -14,6 +14,7 @@
  */
 const { describe, test, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('crypto');
 const h = require('./harness');
 
 const T = { timeout: 60000 };
@@ -527,5 +528,72 @@ describe('AI đổi chi nhánh', () => {
     assert.equal(row.branch_id, h.ctx.branch.id, 'lịch phải ở lại chi nhánh cũ');
     assert.equal(row.employee_id, before.employee_id);
     assert.equal(row.bed_id, before.bed_id);
+  });
+});
+
+// #10 — ROADMAP › "Group rules", ADR 0001: nhân viên dời nhóm, hỏi "Cả nhóm / Chỉ khách này"
+describe('Nhân viên dời nhóm khách', () => {
+  // A 14:00–15:00 (NV 0), B 14:30–16:00 (NV 1), cùng nhóm
+  async function groupOfTwo() {
+    const groupId = crypto.randomUUID();
+    const a = await h.insertFixture({ employeeId: h.employee(0).id, bedId: h.ctx.beds[0].id, start: '14:00', end: '15:00', name: 'Group A', groupId });
+    const b = await h.insertFixture({ employeeId: h.employee(1).id, bedId: h.ctx.beds[1].id, start: '14:30', end: '16:00', name: 'Group B', groupId });
+    return { a, b };
+  }
+  const rowOf = async (id) => (await h.activeBookings()).find(r => r.id === id);
+  const hhmm = (t) => String(t).slice(0, 5);
+
+  test('đổi giờ lịch trong nhóm mà không gửi scope → 409 SCOPE_REQUIRED kèm số khách, không lưu gì', T, async () => {
+    const { a, b } = await groupOfTwo();
+    const r = await h.staffUpdate(a, { start_time: '16:00', end_time: '17:00' });
+    assert.equal(r.status, 409, JSON.stringify(r.data));
+    assert.equal(r.data?.code, 'SCOPE_REQUIRED');
+    assert.equal(r.data?.group_size, 2);
+    assert.equal(hhmm((await rowOf(a.id)).start_time), '14:00');
+    assert.equal(hhmm((await rowOf(b.id)).start_time), '14:30');
+  });
+  test('Cả nhóm dời giờ (A 14:00, B 14:30 → 16:00) → cả hai bắt đầu 16:00, mỗi người giữ giờ kết thúc theo thời lượng của mình', T, async () => {
+    const { a, b } = await groupOfTwo();
+    const r = await h.staffUpdate(a, { start_time: '16:00', end_time: '17:00', scope: 'group' });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    assert.deepEqual(r.data.group_updated_ids, [b.id]);
+    const [rowA, rowB] = [await rowOf(a.id), await rowOf(b.id)];
+    assert.equal(hhmm(rowA.start_time), '16:00');
+    assert.equal(hhmm(rowA.end_time), '17:00');
+    assert.equal(hhmm(rowB.start_time), '16:00');
+    assert.equal(hhmm(rowB.end_time), '17:30');
+    assert.equal(rowB.employee_id, h.employee(1).id, 'B giữ NV của mình');
+    await assertNoOverlaps();
+  });
+  test('Chỉ khách này → chỉ A dời, B giữ nguyên', T, async () => {
+    const { a, b } = await groupOfTwo();
+    const r = await h.staffUpdate(a, { start_time: '16:00', end_time: '17:00', scope: 'booking' });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    assert.deepEqual(r.data.group_updated_ids, []);
+    assert.equal(hhmm((await rowOf(a.id)).start_time), '16:00');
+    const rowB = await rowOf(b.id);
+    assert.equal(hhmm(rowB.start_time), '14:30');
+    assert.equal(hhmm(rowB.end_time), '16:00');
+    assert.equal(rowB.group_booking_id, a.group_booking_id, 'B vẫn trong nhóm');
+  });
+
+  test('Cả nhóm dời giờ mà NV của B bận → không lưu gì, vướng mắc ghi cho B; gửi lại kèm allow_conflict → lưu cả hai', T, async () => {
+    const { a, b } = await groupOfTwo();
+    await h.insertFixture({ employeeId: h.employee(1).id, bedId: h.ctx.beds[2].id, start: '16:30', end: '17:30', name: 'B busy' });
+
+    const warn = await h.staffUpdate(a, { start_time: '16:00', end_time: '17:00', scope: 'group' });
+    assert.equal(warn.status, 409, JSON.stringify(warn.data));
+    assert.equal(warn.data?.code, 'BOOKING_CONFLICT');
+    const busy = (warn.data.conflicts || []).filter(c => c.type === 'employee_busy');
+    assert.ok(busy.length && busy.every(c => c.ref === b.id), JSON.stringify(warn.data.conflicts));
+    assert.equal(hhmm((await rowOf(a.id)).start_time), '14:00', 'không lưu nửa vời: A giữ nguyên');
+    assert.equal(hhmm((await rowOf(b.id)).start_time), '14:30');
+
+    const confirmed = await h.staffUpdate(a, { start_time: '16:00', end_time: '17:00', scope: 'group' }, { allowConflict: true });
+    assert.equal(confirmed.status, 200, JSON.stringify(confirmed.data));
+    assert.equal(hhmm((await rowOf(a.id)).start_time), '16:00');
+    const rowB = await rowOf(b.id);
+    assert.equal(hhmm(rowB.start_time), '16:00');
+    assert.equal(rowB.employee_id, h.employee(1).id, 'xác nhận thì giữ đúng NV của B');
   });
 });
