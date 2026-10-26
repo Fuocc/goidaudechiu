@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { toast } from 'react-toastify';
 
 import {
-  getBookingsRange, createBooking, updateBooking, deleteBooking, checkInBooking,
+  getBookingsRange, createBooking, updateBooking, cancelBooking, checkInBooking,
   getBranches, getServices, getEmployees, getCustomers, getEmployeeSchedules,
   getSettings
 } from '../api';
@@ -486,17 +486,47 @@ function Bookings() {
     }
   };
 
+  // Hủy = status cancelled. Gửi scope khi đã biết; lịch thuộc nhóm mà backend vẫn báo SCOPE_REQUIRED
+  // (VD khách cùng nhóm không hiện trên màn hình) → hỏi "Hủy cả nhóm / Chỉ khách này" rồi gửi lại. null = không hủy
+  const cancelConfirmingScope = async (id, scope) => {
+    try {
+      return await cancelBooking(id, { scope });
+    } catch (err) {
+      if (err?.status !== 409 || err.data?.code !== 'SCOPE_REQUIRED' || scope) throw err;
+      const choice = await confirmDialog({
+        title: 'Hủy lịch nhóm',
+        message: `Lịch này thuộc nhóm ${err.data.group_size} khách. Hủy cả nhóm hay chỉ khách này?`,
+        confirmText: `Hủy cả nhóm (${err.data.group_size})`,
+        altText: 'Chỉ khách này',
+        cancelText: 'Không',
+        danger: true
+      });
+      if (!choice) return null;
+      return await cancelBooking(id, { scope: choice === true ? 'group' : 'booking' });
+    }
+  };
+
+  // Khách sẽ bị hủy khi "Hủy cả nhóm" (backend bỏ qua khách đã đến / đã hoàn thành)
+  const cancellableMembers = (members) => members.filter(b => !['arrived', 'completed'].includes(b.status));
+
+  const notifyCancelled = (result) => {
+    const count = result?.cancelled_ids?.length || 1;
+    notify(count > 1 ? `Đã hủy cả nhóm ${count} khách!` : 'Đã hủy lịch hẹn thành công!');
+  };
+
   const handleCancel = (id) => run('cancelFlow', async () => {
     const booking = bookings.find(b => b.id === id) || detailModal;
-    const groupSize = getGroupMembers(booking).length;
+    // "Hủy cả nhóm" bỏ qua khách đã đến / đã xong → chỉ đếm khách sẽ bị hủy; không còn ai khác để hủy cùng thì hỏi như lịch lẻ
+    const cancellable = cancellableMembers(getGroupMembers(booking));
+    const groupSize = cancellable.some(b => b.id !== id) ? cancellable.length : 0;
 
-    let group = false;
+    let scope;
     if (groupSize > 1 && detailGroupMode && detailModal?.id === id) {
       if (!(await confirmDialog({ message: `Hủy lịch cho cả nhóm ${groupSize} khách?`, confirmText: `Hủy cả nhóm (${groupSize})`, cancelText: 'Không', danger: true }))) {
         return;
       }
-      group = true;
-    } else if (groupSize > 1) {
+      scope = 'group';
+    } else if (groupSize > 0) {
       const choice = await confirmDialog({
         title: 'Hủy lịch nhóm',
         message: `Lịch này thuộc nhóm ${groupSize} khách. Hủy cả nhóm hay chỉ khách này?`,
@@ -506,15 +536,16 @@ function Bookings() {
         danger: true
       });
       if (!choice) return;
-      group = choice === true;
+      scope = choice === true ? 'group' : 'booking';
     } else if (!(await confirmDialog({ message: 'Bạn có chắc muốn hủy lịch hẹn này?', confirmText: 'Hủy lịch', cancelText: 'Không', danger: true }))) {
       return;
     }
 
     await run('cancel', async () => {
       try {
-        await deleteBooking(id, { group });
-        notify(group ? `Đã hủy cả nhóm ${groupSize} khách!` : 'Đã hủy lịch hẹn thành công!');
+        const result = await cancelConfirmingScope(id, scope);
+        if (!result) return;
+        notifyCancelled(result);
         loadBookings();
         setDetailModal(null);
         setShowDetailMore(false);
@@ -551,17 +582,20 @@ function Bookings() {
   });
 
   const handleCancelItem = (item) => run(`cancel:${item.key}`, async () => {
-    const group = item.guestCount > 1;
+    const count = cancellableMembers(item.members).length;
+    const group = count > 1;
     const ok = await confirmDialog({
-      message: group ? `Hủy lịch cho cả nhóm ${item.guestCount} khách?` : 'Bạn có chắc muốn hủy lịch hẹn này?',
-      confirmText: group ? `Hủy cả nhóm (${item.guestCount})` : 'Hủy lịch',
+      message: group ? `Hủy lịch cho cả nhóm ${count} khách?` : 'Bạn có chắc muốn hủy lịch hẹn này?',
+      confirmText: group ? `Hủy cả nhóm (${count})` : 'Hủy lịch',
       cancelText: 'Không',
       danger: true
     });
     if (!ok) return;
     try {
-      await deleteBooking(item.lead.id, { group });
-      notify(group ? `Đã hủy cả nhóm ${item.guestCount} khách!` : 'Đã hủy lịch hẹn thành công!');
+      // Thẻ gộp cả nhóm → Cả nhóm; thẻ 1 khách mà backend báo còn khách cùng nhóm → hỏi
+      const result = await cancelConfirmingScope(item.lead.id, group ? 'group' : undefined);
+      if (!result) return;
+      notifyCancelled(result);
       loadBookings();
     } catch (err) {
       toast.error(err.message);

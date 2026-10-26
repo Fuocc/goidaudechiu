@@ -13,7 +13,7 @@ const {
   releaseActiveHoldsForIp, checkSlotBudget, computeSpamFlag
 } = require('../lib/antiSpam');
 const { checkInBooking } = require('../lib/checkIn');
-const { changeBooking } = require('../lib/bookingChange');
+const { changeBooking, changeStatus } = require('../lib/bookingChange');
 const { UNDO_RESTORE_FIELDS, UNDO_MAX_AGE_MS, fingerprintRow, verifyUndoAction } = require('../lib/undoToken');
 
 // ---- Kiểm tra dữ liệu đầu vào (dùng cho request từ landing page / chưa đăng nhập) ----
@@ -1033,7 +1033,29 @@ router.post('/', bookingRateLimiter, async (req, res) => {
 });
 
 /**
- * PUT /api/bookings/:id/status
+ * Adapter chung cho đổi trạng thái / hủy: dịch kết quả Booking change thành response HTTP.
+ */
+async function respondStatusChange(req, res, { status, scope, allowConflict }) {
+  const result = await changeStatus(supabase, {
+    source: 'staff',
+    bookingId: req.params.id,
+    scope,
+    status,
+    confirm: allowConflict === true,
+    broadcast: getBroadcast(req)
+  });
+  if (result.code === 'SCOPE_REQUIRED') return respondScopeRequired(res, result.groupSize);
+  if (result.code === 'BOOKING_CONFLICT') return respondConflict(res, result);
+  if (!result.ok) return res.status(result.status).json({ code: result.code, error: result.error });
+  return result;
+}
+
+/**
+ * PUT /api/bookings/:id/status — nhân viên đổi trạng thái (hoàn thành, khôi phục lịch đã hủy…)
+ * Body: { status, scope? ('group' = Cả nhóm | 'booking' = Chỉ khách này), allow_conflict? (đã bấm "Vẫn lưu") }
+ * Lịch thuộc nhóm mà không gửi scope → 409 SCOPE_REQUIRED (kèm group_size).
+ * Rời trạng thái hủy → lịch chiếm lại chỗ cũ; vướng mắc → 409 BOOKING_CONFLICT, gửi lại kèm allow_conflict.
+ * 'arrived' chỉ đặt qua check-in.
  */
 router.put('/:id/status', async (req, res) => {
   try {
@@ -1042,68 +1064,9 @@ router.put('/:id/status', async (req, res) => {
     if (!validStatuses.includes(status)) {
       return res.status(400).json({ error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` });
     }
-    // Get a snapshot of the booking before modifying its status
-    const { data: oldBooking, error: snapErr } = await supabase
-      .from('bookings')
-      .select('*')
-      .eq('id', req.params.id)
-      .single();
-
-    if (snapErr || !oldBooking) {
-      return res.status(404).json({ error: 'Booking not found' });
-    }
-
-    const { data, error } = await supabase
-      .from('bookings')
-      .update({ status })
-      .eq('id', req.params.id)
-      .select(`
-        *,
-        customers(name, phone, email),
-        services(name, duration_minutes, price),
-        employees(name),
-        beds(name),
-        branches(name)
-      `)
-      .single();
-
-    if (error) throw error;
-
-    // --- Automatic Tour Rotation ---
-    if (status === 'completed' && data.employee_id && data.branch_id) {
-      const tourKey = `tour_order_${data.branch_id}`;
-      // Get current settings
-      const { data: settingData } = await supabase
-        .from('settings')
-        .select('value')
-        .eq('key', tourKey)
-        .single();
-
-      if (settingData && Array.isArray(settingData.value)) {
-        let tour = [...settingData.value];
-        const idx = tour.indexOf(data.employee_id);
-        if (idx !== -1) {
-          // Remove from current position and push to the end
-          tour.splice(idx, 1);
-          tour.push(data.employee_id);
-
-          await supabase
-            .from('settings')
-            .upsert({ key: tourKey, value: tour }, { onConflict: 'key' });
-        }
-      }
-    }
-
-    // Broadcast SSE for live dashboard updates
-    const broadcast = getBroadcast(req);
-    broadcast('booking.updated', data);
-
-    // Send the updated data along with the status snapshot
-    res.json({
-      ...data,
-      oldBooking
-    });
-    
+    const result = await respondStatusChange(req, res, { status, scope: scopeOf(req.body), allowConflict: req.body.allow_conflict });
+    if (!result?.ok) return;
+    res.json({ ...result.booking, oldBooking: result.before, updated_ids: result.updatedIds });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1133,51 +1096,15 @@ router.post('/:id/check-in', async (req, res) => {
 });
 
 /**
- * DELETE /api/bookings/:id
- * Query: group=1 → xóa luôn các lịch cùng nhóm (group_booking_id).
- * Chỉ xóa 1 người trong nhóm → cập nhật num_guests của những người còn lại cho đúng số thực tế.
+ * DELETE /api/bookings/:id — nhân viên hủy lịch: status cancelled, KHÔNG xóa dòng lịch (chỉ giữ chỗ hết hạn mới bị xóa).
+ * Query: scope=group (Cả nhóm) | scope=booking (Chỉ khách này). Lịch thuộc nhóm mà không gửi → 409 SCOPE_REQUIRED.
+ * Số khách của nhóm tính từ các lịch chưa hủy, không ghi lại num_guests.
  */
 router.delete('/:id', async (req, res) => {
   try {
-    const { data: booking } = await supabase
-      .from('bookings')
-      .select('id, group_booking_id')
-      .eq('id', req.params.id)
-      .maybeSingle();
-
-    const groupId = booking?.group_booking_id || null;
-    const deleteWholeGroup = groupId && (req.query.group === '1' || req.query.group === 'true');
-
-    let query = supabase.from('bookings').delete();
-    query = deleteWholeGroup ? query.eq('group_booking_id', groupId) : query.eq('id', req.params.id);
-    const { data: deletedRows, error } = await query.select('id');
-
-    if (error) throw error;
-    const deletedIds = (deletedRows || []).map(r => r.id);
-    if (deletedIds.length === 0) deletedIds.push(req.params.id);
-
-    const broadcast = getBroadcast(req);
-
-    if (groupId && !deleteWholeGroup) {
-      const { data: remaining, error: remErr } = await supabase
-        .from('bookings')
-        .select('id')
-        .eq('group_booking_id', groupId)
-        .neq('status', 'cancelled');
-      if (!remErr && remaining?.length) {
-        const { error: countErr } = await supabase
-          .from('bookings')
-          .update({ num_guests: remaining.length })
-          .in('id', remaining.map(r => r.id));
-        if (countErr) console.warn('[bookings DELETE] Không cập nhật được num_guests của nhóm:', countErr.message);
-        else remaining.forEach(r => broadcast('booking.updated', { id: r.id, num_guests: remaining.length }));
-      }
-    }
-
-    // Broadcast SSE for live dashboard updates
-    deletedIds.forEach(id => broadcast('booking.deleted', { id }));
-
-    res.json({ message: 'Booking deleted successfully', deleted_ids: deletedIds });
+    const result = await respondStatusChange(req, res, { status: 'cancelled', scope: scopeOf(req.query) });
+    if (!result?.ok) return;
+    res.json({ message: 'Booking cancelled successfully', cancelled_ids: result.updatedIds, skipped_ids: result.skippedIds });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

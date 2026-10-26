@@ -8,6 +8,7 @@ const { hasRole } = require('../middleware/auth');
 const { loadTourOrder, sortByTourOrder } = require('../lib/tourOrder');
 const { signUndoAction } = require('../lib/undoToken');
 const { checkInBooking } = require('../lib/checkIn');
+const { changeStatus } = require('../lib/bookingChange');
 const { placeBookings, withMessages, summarizeConflicts } = require('../lib/bookingEngine');
 const { branchDayHours } = require('../lib/branchHours');
 const { issueConfirmToken, consumeConfirmToken, rememberPending, peekPending } = require('../lib/confirmToken');
@@ -187,12 +188,12 @@ const spaTools = [
   },
   {
     name: "delete_booking",
-    description: "Hủy hoặc xóa một lịch hẹn theo ID.",
+    description: "Hủy lịch hẹn theo ID (đánh dấu đã hủy, không xóa). Mặc định hủy cả nhóm khách.",
     parameters: {
       type: "object",
       properties: {
         booking_id: { type: "string", description: "UUID của lịch hẹn cần hủy." },
-        cancel_group: { type: "boolean", description: "True nếu muốn hủy toàn bộ nhóm." },
+        scope: { type: "string", enum: ["group", "booking"], description: "Mặc định group = hủy cả nhóm khách (lịch không thuộc nhóm thì chỉ lịch đó). booking = chỉ khách này, khi người dùng chỉ rõ 1 khách trong nhóm." },
         customer_name_hint: {
           type: "string",
           description: "Tên khách được nhắc trong lệnh gốc. Hệ thống sẽ đối chiếu với tên thật của lịch hẹn trước khi hủy để tránh hủy nhầm lịch của khách khác."
@@ -1147,7 +1148,7 @@ async function executeTool(toolName, params, context) {
     case 'delete_booking': {
     const broadcast = context.req.app.get('broadcastSSE') || (() => { });
 
-    // Snapshot for undo
+    // Đọc lịch để kiểm tra trước khi hủy (snapshot hoàn tác do changeStatus trả về)
     const { data: oldBooking } = await supabase
       .from('bookings')
       .select('*')
@@ -1171,30 +1172,19 @@ async function executeTool(toolName, params, context) {
       }
     }
 
-    let oldRows = [oldBooking];
-
-    // Cancel whole group if requested
-    if (params.cancel_group && oldBooking?.group_booking_id) {
-      const { data: groupBookings } = await supabase
-        .from('bookings')
-        .select('*')
-        .eq('group_booking_id', oldBooking.group_booking_id)
-        .neq('status', 'cancelled');
-      if (groupBookings?.length) oldRows = groupBookings;
-    }
-    const bookingIds = oldRows.map(b => b.id);
-
-    const { error } = await supabase
-      .from('bookings')
-      .update({ status: 'cancelled' })
-      .in('id', bookingIds);
-
-    if (error) return { error: error.message };
-
-    bookingIds.forEach(id => broadcast('booking.updated', { id, status: 'cancelled' }));
+    // Hủy = status cancelled qua Booking change. Mặc định cả nhóm; scope booking khi người dùng chỉ rõ 1 khách
+    const result = await changeStatus(supabase, {
+      source: 'ai',
+      bookingId: params.booking_id,
+      scope: params.scope === 'booking' ? 'booking' : 'group',
+      status: 'cancelled',
+      broadcast
+    });
+    if (!result.ok) return { error: result.error };
 
     // snapshot = toàn bộ các dòng trước khi hủy (để hoàn tác khôi phục đúng trạng thái cũ)
-    return { success: true, cancelled: bookingIds, snapshot: oldRows };
+    // skipped = khách đã đến / đã xong, không bị hủy khi hủy cả nhóm → AI báo lại cho người dùng
+    return { success: true, cancelled: result.updatedIds, skipped: result.skippedIds, snapshot: result.snapshot };
   }
 
     case 'get_available_staff': {
@@ -1642,7 +1632,7 @@ ${employeesStr}
   - Tạo lịch → gọi create_booking NGAY (service_id và id nhân viên lấy từ DỮ LIỆU SPA). create_booking tự kiểm tra lịch trống và tự xếp nhân viên theo thứ tự tour → KHÔNG gọi get_spa_context hay get_available_staff trước.
   - Sửa lịch hoặc lệnh có tên khách + dịch vụ không có giờ → search_bookings → update_booking (dịch vụ/nhân viên lấy từ DỮ LIỆU SPA; update_booking tự chặn trùng lịch). Chỉ tạo mới nếu không tìm thấy lịch.
   - Khách đến/tới/vô/vào spa → search_bookings → check_in_booking. KHÔNG tạo lịch mới. Lịch nhóm: mặc định cả nhóm; chỉ 1 khách trong nhóm tới → scope: "booking" (chưa rõ khách nào → hỏi, nêu NV / giờ / dịch vụ từng khách).
-  - Hủy lịch → search_bookings → delete_booking
+  - Hủy lịch → search_bookings → delete_booking. Lịch nhóm: mặc định cả nhóm; chỉ hủy 1 khách trong nhóm → scope: "booking" (chưa rõ khách nào → hỏi, nêu NV / giờ / dịch vụ từng khách).
   - Cần nhân viên/dịch vụ của chi nhánh KHÁC → get_spa_context
   - Hỏi ai đang rảnh lúc nào → get_available_staff (danh sách đã xếp theo tour)
   - Nếu có reply_to_booking_ids → gọi thẳng update_booking, delete_booking hoặc check_in_booking (lệnh "đến/tới"). KHÔNG gọi get_available_staff. KHÔNG tạo lịch mới.

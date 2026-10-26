@@ -92,13 +92,15 @@ export const getBookingsRange = (dateFrom, dateTo, branchId) => {
   return request(`/bookings?${query}`);
 };
 export const createBooking = (data) => request('/bookings', { method: 'POST', body: JSON.stringify(data) });
-export const updateBookingStatus = (id, status) => request(`/bookings/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) });
+// scope: 'group' (Cả nhóm) | 'booking' (Chỉ khách này); lịch thuộc nhóm mà không gửi → 409 SCOPE_REQUIRED
+export const updateBookingStatus = (id, status, { scope, allow_conflict } = {}) =>
+  request(`/bookings/${id}/status`, { method: 'PUT', body: JSON.stringify({ status, scope, allow_conflict }) });
 export const updateBooking = (id, data) => request(`/bookings/${id}`, { method: 'PUT', body: JSON.stringify(data) });
 // body.allow_conflict = true sau khi người dùng xác nhận "Vẫn lưu" (khách trễ chồng lên lịch kế tiếp)
 export const checkInBooking = (id, body) => request(`/bookings/${id}/check-in`, { method: 'POST', body: JSON.stringify(body || {}) });
-// { group: true } → xóa luôn các lịch cùng nhóm khách
-export const deleteBooking = (id, { group = false } = {}) =>
-  request(`/bookings/${id}${group ? '?group=1' : ''}`, { method: 'DELETE' });
+// Hủy lịch (status cancelled, không xóa). scope như updateBookingStatus
+export const cancelBooking = (id, { scope } = {}) =>
+  request(`/bookings/${id}${scope ? `?scope=${scope}` : ''}`, { method: 'DELETE' });
 
 // Availability
 export const getAvailability = (params) => {

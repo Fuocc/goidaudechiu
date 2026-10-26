@@ -136,7 +136,8 @@ router.delete('/:id', async (req, res) => {
 
     if (count > 0) {
       return res.status(400).json({ 
-        error: 'Không thể xóa khách hàng này vì đã có lịch sử đặt lịch. Vui lòng xóa các lịch hẹn liên quan trước.' 
+        // Lịch hủy cũng giữ lại (hủy = status cancelled) → khách có lịch sử thì giữ hồ sơ
+        error: 'Không thể xóa khách hàng này vì đã có lịch sử đặt lịch (kể cả lịch đã hủy).'
       });
     }
 

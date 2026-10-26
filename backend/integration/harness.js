@@ -193,6 +193,26 @@ function staffCheckIn(bookingId, { allowConflict, scope, role = 'admin' } = {}) 
   return http('POST', `/${bookingId}/check-in`, { role, body: Object.keys(body).length ? body : undefined });
 }
 
+/** Nhân viên hủy lịch (DELETE /:id = hủy bằng status). scope: 'group' | 'booking' | undefined */
+function staffCancel(bookingId, { scope, role = 'admin' } = {}) {
+  return http('DELETE', `/${bookingId}${scope ? `?scope=${scope}` : ''}`, { role });
+}
+
+/** Nhân viên đổi trạng thái lịch (hoàn thành, khôi phục lịch đã hủy…). */
+function staffStatus(bookingId, status, { scope, allowConflict, role = 'admin' } = {}) {
+  const body = { status };
+  if (scope) body.scope = scope;
+  if (allowConflict !== undefined) body.allow_conflict = allowConflict;
+  return http('PUT', `/${bookingId}/status`, { role, body });
+}
+
+/** Đọc thẳng 1 dòng lịch từ DB (kể cả lịch đã hủy); null nếu không còn. */
+async function bookingRow(id) {
+  const { data, error } = await supabase.from('bookings').select('*').eq('id', id).maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
 /** Gọi đúng hàm tool mà AI dùng (không qua Gemini → kết quả xác định). */
 function aiTool(name, params) {
   const { executeTool } = require('../routes/bookingCommandsV2');
@@ -332,7 +352,7 @@ module.exports = {
   setup, teardown, cleanup, toMin, toHHMM, vnNowMinutes,
   service, employee, insertFixture, insertCustomer, occupyStaff,
   withHours, availableStarts,
-  onlineBook, onlineHold, staffBook, staffUpdate, staffCheckIn, aiTool, aiCreate,
+  onlineBook, onlineHold, staffBook, staffUpdate, staffCheckIn, staffCancel, staffStatus, bookingRow, aiTool, aiCreate,
   activeBookings, findOverlaps, getSetting, withSetting, withShift,
   otherBranch, withBedsInactive, withoutSetting, expireHolds
 };

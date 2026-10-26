@@ -45,7 +45,8 @@ Words as in `GLOSSARY.md`: **Booking** = one guest, **Group** = Bookings of gues
 - **Branch change (every Source, one guest or Group):** keep the therapist if they work at the new branch that day and are free; otherwise pick a free on-shift therapist there; nobody free → "Vẫn lưu?" (saves unassigned). Bed always re-picked. A therapist chosen in the edit applies to this guest only and must work at the new branch (otherwise refused); leaving it empty auto-picks (agreed 24/10).
 - **Contact (agreed 24/10):** "Cả nhóm" fixing the Contact's phone / email / habits only updates the Contact's profile; guests who have their own name keep it. Picking another Contact or renaming it with "Cả nhóm" links every guest to it again, including those with their own name. "Chỉ khách này" + a name change gives that guest their own name (unlinked from the Contact; the profile is unchanged); "Chỉ khách này" + a phone / email / habits change is refused (those belong to the whole Group).
 - **Membership:** a Booking never leaves its Group. Cancelled guests stay in it but are skipped by later Group changes. Group size = number of non-cancelled Bookings.
-- **Cancel** = `status: cancelled` (no hard delete) for staff and AI, with the same scope question. Only expired holds are deleted.
+- **Cancel** = `status: cancelled` (no hard delete) for staff and AI, with the same scope question. Only expired holds are deleted. "Cả nhóm" cancel skips guests who already arrived or completed (agreed 24/10), including the guest it was started from, and says who was skipped (agreed 26/10); they don't count toward asking the question either. Nothing left to cancel → refused. A customer with any Booking (cancelled included) can't be deleted: their history is kept.
+- **Leaving cancelled** (staff, e.g. cancel pressed by mistake; agreed 24/10): a cancelled Booking can be set to confirmed / pending / completed, with the same scope question (asked only if other guests in the Group are cancelled too; Cả nhóm = every cancelled guest). Each goes back to their own time and therapist through the booking engine, all-or-nothing, one "Vẫn lưu?" (bed re-picked if taken). No Last booking time check. `arrived` only comes from check-in.
 - **Undo** of a Group change restores every Booking it touched, in one step.
 
 ### Time limits (agreed 23/10)
@@ -85,7 +86,7 @@ Rules: "Group rules" and "Time limits" above. One fresh session per ticket (`/im
 |---|---|---|
 | 1 | [x] #9 Prefactor: Booking change module + staff edit of a single Booking (23/10; the 3 check-in guard tests still need a run between 10:30 and 20:00, tracked in #10) | now |
 | 2 | [x] #10 Staff move a Group (Cả nhóm / Chỉ khách này) (24/10; check-in guard tests from #9 ran and passed) · [x] #11 Start-time limits (24/10; Last booking time = `close`, midnight refused, fallback 08:00–20:00) | #9 done |
-| 3 | [x] #12 Staff group-wide fields (26/10; Contact rule + chosen-therapist rule added to "Group rules"; AI branch change still its own logic, moves to #15) · [ ] #13 Cancel as status · [x] #14 Check-in scope + Late arrival grace (24/10; real-app check, AI confirm-token scope fix + its guard test, and the AI guest list when the guest is unclear carried to #15) | #12, #13: #10 done · #14: #10 and #11 done |
+| 3 | [x] #12 Staff group-wide fields (26/10; Contact rule + chosen-therapist rule added to "Group rules"; AI branch change still its own logic, moves to #15) · [x] #13 Cancel as status (26/10; cancel + status with scope, leaving cancelled through the engine, Cả nhóm skips arrived / completed; no status buttons yet, they come with §7) · [x] #14 Check-in scope + Late arrival grace (24/10; real-app check, AI confirm-token scope fix + its guard test, and the AI guest list when the guest is unclear carried to #15) | #12, #13: #10 done · #14: #10 and #11 done |
 | 4 | [ ] #15 AI update_booking through the module (+ pending from #14, see the issue comment) | #12 and #11 done |
 | 5 | [ ] #16 Undo + AI reassign through the module | #15 and #13 done |
 
@@ -106,7 +107,7 @@ Running tickets in parallel:
 - [ ] Status visible in card's popup details (confirmed / arrived / late / completed)
 
 ## 4. Booking history (P1)
-- [ ] Cancel = `status: cancelled` (no more hard delete)
+- [x] Cancel = `status: cancelled` (no more hard delete) — #13, 26/10
 - [ ] Store `source` (web / ai / staff), `created_by`, `updated_by`
 - [ ] `booking_events` table with before/after for each change
 - [ ] "Lịch sử" tab in booking detail

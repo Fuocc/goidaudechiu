@@ -888,3 +888,154 @@ describe('Nhân viên đổi field áp cho cả nhóm', () => {
     assert.ok(other.employees.some(e => e.id === rowA.employee_id), `A phải được xếp NV của chi nhánh mới: ${rowA.employee_id}`);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Hủy = status cancelled, đổi trạng thái theo "Cả nhóm / Chỉ khách này" (#13) — ROADMAP.md › "Group rules"
+describe('Hủy lịch và đổi trạng thái theo nhóm', () => {
+  // A 14:00–15:00 (NV 0), B 14:30–16:00 (NV 1), cùng nhóm
+  async function groupOfTwo(status = 'confirmed') {
+    const groupId = crypto.randomUUID();
+    const a = await h.insertFixture({ employeeId: h.employee(0).id, bedId: h.ctx.beds[0].id, start: '14:00', end: '15:00', name: 'Group A', groupId, status });
+    const b = await h.insertFixture({ employeeId: h.employee(1).id, bedId: h.ctx.beds[1].id, start: '14:30', end: '16:00', name: 'Group B', groupId, status });
+    return { a, b };
+  }
+  const hhmm = (t) => String(t).slice(0, 5);
+
+  test('hủy lịch lẻ không cần scope → status cancelled, dòng lịch vẫn còn', T, async () => {
+    const solo = await h.insertFixture({ employeeId: h.employee(0).id, bedId: h.ctx.beds[0].id, start: '14:00', end: '15:00', name: 'Solo' });
+    const r = await h.staffCancel(solo.id);
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    assert.equal((await h.bookingRow(solo.id))?.status, 'cancelled');
+  });
+
+  test('hủy lịch trong nhóm mà không gửi scope → 409 SCOPE_REQUIRED kèm số khách, không hủy ai', T, async () => {
+    const { a, b } = await groupOfTwo();
+    const r = await h.staffCancel(a.id);
+    assert.equal(r.status, 409, JSON.stringify(r.data));
+    assert.equal(r.data?.code, 'SCOPE_REQUIRED');
+    assert.equal(r.data?.group_size, 2);
+    assert.equal((await h.bookingRow(a.id)).status, 'confirmed');
+    assert.equal((await h.bookingRow(b.id)).status, 'confirmed');
+  });
+
+  test('Chỉ khách này → lịch đó cancelled (dòng vẫn còn), khách kia giữ nguyên', T, async () => {
+    const { a, b } = await groupOfTwo();
+    const r = await h.staffCancel(a.id, { scope: 'booking' });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    const [rowA, rowB] = [await h.bookingRow(a.id), await h.bookingRow(b.id)];
+    assert.equal(rowA?.status, 'cancelled', 'dòng lịch vẫn còn, status cancelled');
+    assert.equal(rowB.status, 'confirmed');
+    assert.equal(hhmm(rowB.start_time), '14:30');
+    assert.equal(rowB.num_guests, b.num_guests, 'không ghi lại số khách');
+  });
+
+  test('Cả nhóm → mọi khách cancelled; slot trống lại (AI đặt được đúng NV, đúng giờ)', T, async () => {
+    const { a, b } = await groupOfTwo();
+    const r = await h.staffCancel(a.id, { scope: 'group' });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    assert.equal((await h.bookingRow(a.id)).status, 'cancelled');
+    assert.equal((await h.bookingRow(b.id)).status, 'cancelled');
+
+    const rebook = await h.aiCreate({ start: '14:00', employeeId: h.employee(0).id, name: 'Rebook' });
+    assert.equal(aiOk(rebook), true, JSON.stringify(rebook));
+  });
+
+  test('AI hủy lịch trong nhóm (mặc định) → cả nhóm cancelled; scope booking → chỉ khách đó', T, async () => {
+    const { a, b } = await groupOfTwo();
+    const all = await h.aiTool('delete_booking', { booking_id: a.id });
+    assert.equal(aiOk(all), true, JSON.stringify(all));
+    assert.equal((await h.bookingRow(a.id)).status, 'cancelled');
+    assert.equal((await h.bookingRow(b.id)).status, 'cancelled');
+
+    const other = await groupOfTwo();
+    const one = await h.aiTool('delete_booking', { booking_id: other.a.id, scope: 'booking' });
+    assert.equal(aiOk(one), true, JSON.stringify(one));
+    assert.equal((await h.bookingRow(other.a.id)).status, 'cancelled');
+    assert.equal((await h.bookingRow(other.b.id)).status, 'confirmed');
+  });
+
+  test('Cả nhóm dời giờ sau khi 1 khách đã hủy → khách đã hủy không bị dời, vẫn cancelled', T, async () => {
+    const { a, b } = await groupOfTwo();
+    const c = await h.insertFixture({ employeeId: h.employee(2).id, bedId: h.ctx.beds[2].id, start: '14:00', end: '15:00', name: 'Group C', groupId: a.group_booking_id });
+    assert.equal((await h.staffCancel(c.id, { scope: 'booking' })).status, 200);
+
+    const r = await h.staffUpdate(a, { start_time: '16:00', end_time: '17:00', scope: 'group' });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    assert.deepEqual(r.data.group_updated_ids, [b.id]);
+    const rowC = await h.bookingRow(c.id);
+    assert.equal(rowC.status, 'cancelled');
+    assert.equal(hhmm(rowC.start_time), '14:00');
+  });
+
+  test('đổi trạng thái completed: không scope → SCOPE_REQUIRED; Cả nhóm → cả hai completed', T, async () => {
+    const { a, b } = await groupOfTwo();
+    const ask = await h.staffStatus(a.id, 'completed');
+    assert.equal(ask.status, 409, JSON.stringify(ask.data));
+    assert.equal(ask.data?.code, 'SCOPE_REQUIRED');
+
+    const r = await h.staffStatus(a.id, 'completed', { scope: 'group' });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    assert.equal((await h.bookingRow(a.id)).status, 'completed');
+    assert.equal((await h.bookingRow(b.id)).status, 'completed');
+  });
+
+  test('khôi phục cả nhóm đã hủy → cả hai confirmed, đúng giờ + NV cũ, có giường', T, async () => {
+    const { a, b } = await groupOfTwo('cancelled');
+    const r = await h.staffStatus(a.id, 'confirmed', { scope: 'group' });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    for (const [row, from] of [[await h.bookingRow(a.id), a], [await h.bookingRow(b.id), b]]) {
+      assert.equal(row.status, 'confirmed');
+      assert.equal(hhmm(row.start_time), hhmm(from.start_time));
+      assert.equal(row.employee_id, from.employee_id);
+      assert.ok(row.bed_id, 'có giường');
+    }
+    await assertNoOverlaps();
+  });
+
+  test('khôi phục cả nhóm mà NV của B đã có lịch khác → BOOKING_CONFLICT cho B, không khôi phục ai; allow_conflict → khôi phục cả hai', T, async () => {
+    const { a, b } = await groupOfTwo('cancelled');
+    await h.insertFixture({ employeeId: h.employee(1).id, bedId: h.ctx.beds[2].id, start: '15:00', end: '16:00', name: 'B busy' });
+
+    const warn = await h.staffStatus(a.id, 'confirmed', { scope: 'group' });
+    assert.equal(warn.status, 409, JSON.stringify(warn.data));
+    assert.equal(warn.data?.code, 'BOOKING_CONFLICT');
+    const busy = (warn.data.conflicts || []).filter(c => c.type === 'employee_busy');
+    assert.ok(busy.length && busy.every(c => c.ref === b.id), JSON.stringify(warn.data.conflicts));
+    assert.equal((await h.bookingRow(a.id)).status, 'cancelled', 'không lưu nửa vời');
+    assert.equal((await h.bookingRow(b.id)).status, 'cancelled');
+
+    const confirmed = await h.staffStatus(a.id, 'confirmed', { scope: 'group', allowConflict: true });
+    assert.equal(confirmed.status, 200, JSON.stringify(confirmed.data));
+    assert.equal((await h.bookingRow(a.id)).status, 'confirmed');
+    assert.equal((await h.bookingRow(b.id)).status, 'confirmed');
+  });
+
+  test('khôi phục Chỉ khách này → chỉ A confirmed, B vẫn cancelled', T, async () => {
+    const { a, b } = await groupOfTwo('cancelled');
+    const r = await h.staffStatus(a.id, 'confirmed', { scope: 'booking' });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    assert.equal((await h.bookingRow(a.id)).status, 'confirmed');
+    assert.equal((await h.bookingRow(b.id)).status, 'cancelled');
+  });
+
+  test('lịch lẻ đã hủy đổi thẳng sang completed (bấm nhầm hủy) → completed, có giường', T, async () => {
+    const solo = await h.insertFixture({ employeeId: h.employee(0).id, bedId: h.ctx.beds[0].id, start: '14:00', end: '15:00', name: 'Solo', status: 'cancelled' });
+    const r = await h.staffStatus(solo.id, 'completed');
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    const row = await h.bookingRow(solo.id);
+    assert.equal(row.status, 'completed');
+    assert.ok(row.bed_id);
+  });
+
+  test('AI hủy cả nhóm từ khách đã đến → khách đó giữ nguyên (báo bỏ qua), khách khác cancelled', T, async () => {
+    const groupId = crypto.randomUUID();
+    const a = await h.insertFixture({ employeeId: h.employee(0).id, bedId: h.ctx.beds[0].id, start: '14:00', end: '15:00', name: 'Group A', groupId, status: 'arrived' });
+    const b = await h.insertFixture({ employeeId: h.employee(1).id, bedId: h.ctx.beds[1].id, start: '14:30', end: '16:00', name: 'Group B', groupId });
+    const r = await h.aiTool('delete_booking', { booking_id: a.id });
+    assert.equal(aiOk(r), true, JSON.stringify(r));
+    assert.deepEqual(r.cancelled, [b.id]);
+    assert.deepEqual(r.skipped, [a.id]);
+    assert.equal((await h.bookingRow(a.id)).status, 'arrived');
+    assert.equal((await h.bookingRow(b.id)).status, 'cancelled');
+  });
+});

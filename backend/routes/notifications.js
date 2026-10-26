@@ -269,7 +269,8 @@ router.get('/dashboard', async (req, res) => {
                 }
                 seenGroups.add(groupBookingId);
 
-                const totalGuests = groupCounts[groupBookingId] || booking.num_guests || 1;
+                // Số khách của nhóm = số lịch chưa hủy (không dùng num_guests đã lưu — có thể đã cũ)
+                const totalGuests = groupCounts[groupBookingId] || 1;
                 const updatedBooking = {
                     ...booking,
                     num_guests: totalGuests

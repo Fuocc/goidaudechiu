@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { planChange } = require('./bookingChange');
+const { planChange, planStatusChange } = require('./bookingChange');
 
 // Lịch đang lưu trong DB (giờ dạng HH:MM:SS như Postgres trả về)
 const booking = (o = {}) => ({
@@ -328,4 +328,95 @@ test('Cả nhóm đổi tên khách đặt → mọi khách gắn lại khách �
   const plan = planChange({ booking: groupA(), customer: mia, group: [lan], service: service(), scope: 'group', change: { ...slotA, customer_update: miaUpdate({ name: 'Mia Nguyễn' }) } });
   assert.equal(byId(plan).B.set.customer_id, 'c1');
   assert.equal(byId(plan).B.set.temporary_name, null);
+});
+
+// --- Trạng thái + hủy (#13): hủy = status cancelled, đổi trạng thái theo "Cả nhóm / Chỉ khách này" ---
+const idsOf = (plan) => plan.targets.map(t => t.id).sort();
+
+test('lịch lẻ đổi trạng thái → chỉ lịch này, không hỏi phạm vi', () => {
+  const plan = planStatusChange({ booking: booking(), status: 'cancelled' });
+  assert.deepEqual(idsOf(plan), ['bk1']);
+  assert.deepEqual(plan.targets[0].set, { status: 'cancelled' });
+});
+
+test('lịch thuộc nhóm đổi trạng thái mà không gửi scope → hỏi (scopeRequired + số khách chưa hủy), không có kế hoạch ghi', () => {
+  const cancelled = booking({ id: 'C', group_booking_id: 'g1', status: 'cancelled' });
+  const plan = planStatusChange({ booking: groupA(), group: [groupB(), cancelled], status: 'cancelled' });
+  assert.equal(plan.scopeRequired, true);
+  assert.equal(plan.groupSize, 2);
+  assert.equal(plan.targets, undefined);
+});
+
+test('Cả nhóm đổi trạng thái → mọi khách chưa hủy, khách đã hủy bỏ qua; Chỉ khách này → chỉ lịch này', () => {
+  const cancelled = booking({ id: 'C', group_booking_id: 'g1', status: 'cancelled' });
+  const group = planStatusChange({ booking: groupA(), group: [groupB(), cancelled], status: 'completed', scope: 'group' });
+  assert.deepEqual(idsOf(group), ['A', 'B']);
+  assert.ok(group.targets.every(t => t.set.status === 'completed'));
+
+  const one = planStatusChange({ booking: groupA(), group: [groupB(), cancelled], status: 'completed', scope: 'booking' });
+  assert.deepEqual(idsOf(one), ['A']);
+});
+
+test('hủy Cả nhóm bỏ qua khách đã đến / đã hoàn thành; nếu chỉ còn họ thì không hỏi phạm vi', () => {
+  const arrived = booking({ id: 'C', group_booking_id: 'g1', status: 'arrived' });
+  const done = booking({ id: 'D', group_booking_id: 'g1', status: 'completed' });
+  const plan = planStatusChange({ booking: groupA(), group: [groupB(), arrived, done], status: 'cancelled', scope: 'group' });
+  assert.deepEqual(idsOf(plan), ['A', 'B']);
+
+  const ask = planStatusChange({ booking: groupA(), group: [groupB(), arrived, done], status: 'cancelled' });
+  assert.equal(ask.groupSize, 2);
+
+  const alone = planStatusChange({ booking: groupA(), group: [arrived, done, booking({ id: 'E', group_booking_id: 'g1', status: 'cancelled' })], status: 'cancelled' });
+  assert.deepEqual(idsOf(alone), ['A'], 'không còn ai để hủy cùng → như lịch lẻ');
+});
+
+test('rời trạng thái đã hủy (khôi phục / bấm nhầm hủy) → phải xếp lại vị trí; hỏi phạm vi nếu khách khác cũng đã hủy, Cả nhóm = mọi khách đã hủy', () => {
+  const cancelledA = groupA({ status: 'cancelled' });
+  const cancelledB = groupB({ status: 'cancelled' });
+  const stillOn = booking({ id: 'C', group_booking_id: 'g1', status: 'confirmed' });
+
+  const ask = planStatusChange({ booking: cancelledA, group: [cancelledB, stillOn], status: 'confirmed' });
+  assert.equal(ask.scopeRequired, true);
+  assert.equal(ask.groupSize, 2);
+
+  const all = planStatusChange({ booking: cancelledA, group: [cancelledB, stillOn], status: 'completed', scope: 'group' });
+  assert.deepEqual(idsOf(all), ['A', 'B']);
+  assert.ok(all.targets.every(t => t.placementChanged === true && t.set.status === 'completed'));
+
+  const one = planStatusChange({ booking: cancelledA, group: [cancelledB], status: 'pending', scope: 'booking' });
+  assert.deepEqual(idsOf(one), ['A']);
+  assert.equal(one.targets[0].placementChanged, true);
+
+  // Không rời trạng thái hủy → không đổi vị trí
+  const cancel = planStatusChange({ booking: booking(), status: 'cancelled' });
+  assert.equal(cancel.targets[0].placementChanged, false);
+});
+
+test('đổi sang đúng trạng thái đang có → từ chối, không có kế hoạch ghi', () => {
+  const plan = planStatusChange({ booking: booking({ status: 'cancelled' }), status: 'cancelled' });
+  assert.ok(plan.refused);
+  assert.equal(plan.targets, undefined);
+});
+
+test('Cả nhóm bỏ qua khách đã ở đúng trạng thái đích (không ghi lại, không xoay tour lần nữa)', () => {
+  const done = booking({ id: 'C', group_booking_id: 'g1', status: 'completed' });
+  const plan = planStatusChange({ booking: groupA(), group: [groupB(), done], status: 'completed', scope: 'group' });
+  assert.deepEqual(idsOf(plan), ['A', 'B']);
+
+  const ask = planStatusChange({ booking: groupA(), group: [done], status: 'completed' });
+  assert.equal(ask.scopeRequired, undefined, 'khách còn lại đã hoàn thành → không cần hỏi');
+});
+
+test('hủy Cả nhóm bắt đầu từ khách đã đến / đã xong → bỏ qua cả khách đó (báo trong skippedIds); không còn ai để hủy → từ chối', () => {
+  const plan = planStatusChange({ booking: groupA({ status: 'arrived' }), group: [groupB()], status: 'cancelled', scope: 'group' });
+  assert.deepEqual(idsOf(plan), ['B']);
+  assert.deepEqual(plan.skippedIds, ['A']);
+
+  const nothing = planStatusChange({ booking: booking({ status: 'completed' }), status: 'cancelled', scope: 'group' });
+  assert.ok(nothing.refused, 'không còn ai để hủy');
+  assert.equal(nothing.targets, undefined);
+
+  // Chỉ khách này vẫn hủy được khách đã đến
+  const one = planStatusChange({ booking: groupA({ status: 'arrived' }), group: [groupB()], status: 'cancelled', scope: 'booking' });
+  assert.deepEqual(idsOf(one), ['A']);
 });

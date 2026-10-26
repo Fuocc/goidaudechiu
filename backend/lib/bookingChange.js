@@ -128,6 +128,41 @@ function planCheckIn({ booking, group = [], scope, start }) {
   };
 }
 
+/**
+ * Bước lên kế hoạch đổi trạng thái (thuần, không đụng DB): hủy, hoàn thành, khôi phục lịch đã hủy…
+ * @param scope  'booking' | 'group' | undefined; group = các lịch cùng nhóm (kể cả đã hủy)
+ * @returns {{ targets: { id, set, placementChanged }[] } | { scopeRequired: true, groupSize } | { refused }}
+ *   placementChanged: rời trạng thái hủy → lịch chiếm lại chỗ, phải qua booking engine.
+ */
+function planStatusChange({ booking, status, scope, group = [] }) {
+  if (status === booking.status) return { refused: 'Lịch hẹn đã ở trạng thái này rồi.' };
+
+  // Khách cùng nhóm mà thay đổi này áp được:
+  //  - rời trạng thái hủy (khôi phục) → các khách cũng đã hủy
+  //  - hủy → khách chưa hủy, chưa đến, chưa xong (không hủy khách đang / đã làm)
+  //  - còn lại → khách chưa hủy
+  const leavingCancelled = booking.status === 'cancelled';
+  const applies = leavingCancelled
+    ? (g) => g.status === 'cancelled'
+    : status === 'cancelled'
+      ? (g) => !['cancelled', 'arrived', 'completed'].includes(g.status)
+      : (g) => g.status !== 'cancelled';
+  // Khách đã ở đúng trạng thái đích → bỏ qua (không ghi lại, không xoay tour lần nữa)
+  const others = group.filter(g => g.id !== booking.id && g.status !== status && applies(g));
+  if (others.length && !scope) return { scopeRequired: true, groupSize: others.length + 1 };
+
+  if (scope !== 'group') return { targets: [{ id: booking.id, set: { status }, placementChanged: leavingCancelled }] };
+
+  // Hủy cả nhóm bắt đầu từ khách đã đến / đã xong → bỏ qua cả khách đó (báo lại cho người gọi)
+  const skipSelf = status === 'cancelled' && ['arrived', 'completed'].includes(booking.status);
+  const inScope = skipSelf ? others : [booking, ...others];
+  if (!inScope.length) return { refused: 'Khách đã đến / đã hoàn thành, không hủy cả nhóm được. Hãy chọn "Chỉ khách này" nếu vẫn muốn hủy khách này.' };
+  return {
+    targets: inScope.map(b => ({ id: b.id, set: { status }, placementChanged: leavingCancelled })),
+    skippedIds: skipSelf ? [booking.id] : []
+  };
+}
+
 const UPDATED_SELECT = `
   *,
   customers(name, phone, email, habits),
@@ -319,4 +354,107 @@ async function changeBooking(supabase, { source, bookingId, scope, change, confi
   return { ok: true, booking: updated, before: booking, groupUpdatedIds };
 }
 
-module.exports = { planChange, planCheckIn, changeBooking };
+/**
+ * Đổi trạng thái 1 lịch / cả nhóm (hủy = status cancelled, không xóa). Rời trạng thái hủy → lịch chiếm lại chỗ
+ * ở đúng giờ + NV cũ, qua booking engine (tất cả hoặc không, 1 lần "Vẫn lưu?"). Hoàn thành → NV xuống cuối tour.
+ *
+ * @param opts.source  'staff' | 'ai'
+ * @param opts.scope   'booking' | 'group' | undefined (lịch thuộc nhóm mà không gửi → SCOPE_REQUIRED)
+ * @param opts.status  'pending' | 'confirmed' | 'completed' | 'cancelled'
+ * @param opts.confirm true = đã bấm "Vẫn lưu" cho vướng mắc khi khôi phục
+ * @returns { ok: true, booking, before, updatedIds, skippedIds, snapshot } | { ok: false, code: 'SCOPE_REQUIRED', groupSize }
+ *        | { ok: false, code: 'BOOKING_CONFLICT', conflicts } | { ok: false, status, error }
+ */
+async function changeStatus(supabase, { source, bookingId, scope, status, confirm = false, broadcast = () => { } }) {
+  if (scope !== undefined && scope !== 'booking' && scope !== 'group') throw new Error(`Scope không hợp lệ: ${scope}`);
+  const fail = (code, error) => ({ ok: false, status: code, error });
+
+  const { data: booking, error: bkErr } = await supabase.from('bookings').select('*').eq('id', bookingId).maybeSingle();
+  if (bkErr) throw bkErr;
+  if (!booking) return fail(404, 'Booking not found');
+  // Giữ chỗ tạm thời của khách đang đặt online: job dọn giữ chỗ tự xóa khi hết hạn
+  if (isHoldBooking(booking)) return fail(409, 'Đây là lịch giữ chỗ tạm thời của khách đang đặt online, không thể đổi trạng thái.');
+
+  let group = [];
+  if (booking.group_booking_id) {
+    const { data: members, error: grpErr } = await supabase.from('bookings').select('*')
+      .eq('group_booking_id', booking.group_booking_id).neq('id', booking.id);
+    if (grpErr) throw grpErr;
+    group = members || [];
+  }
+
+  const plan = planStatusChange({ booking, group, status, scope });
+  if (plan.scopeRequired) return { ok: false, code: 'SCOPE_REQUIRED', groupSize: plan.groupSize };
+  if (plan.refused) return fail(400, plan.refused);
+
+  const rowOf = new Map([booking, ...group].map(b => [b.id, b]));
+  const targets = plan.targets.map(t => ({ ...t, from: rowOf.get(t.id) }));
+  const ids = targets.map(t => t.id);
+
+  if (targets[0].placementChanged) {
+    // Khôi phục: chiếm lại chỗ ở đúng giờ + NV cũ; giường cũ bận → tự đổi giường khác.
+    // Booking engine xếp theo 1 chi nhánh + 1 ngày → nhóm đã tách ra nhiều ngày / chi nhánh thì khôi phục từng khách.
+    if (new Set(targets.map(t => `${t.from.branch_id}|${t.from.booking_date}`)).size > 1) {
+      return fail(409, 'Các khách trong nhóm đang ở nhiều ngày / chi nhánh, hãy khôi phục từng khách ("Chỉ khách này").');
+    }
+    const items = targets.map(t => ({
+      ref: t.id, start: t.from.start_time, end: t.from.end_time, employeeId: t.from.employee_id,
+      bedId: t.from.bed_id, name: t.from.temporary_name, skipStartLimit: true
+    }));
+    const result = await placeBookings(supabase, {
+      source,
+      branchId: booking.branch_id,
+      date: booking.booking_date,
+      items,
+      excludeIds: ids,
+      override: confirm === true,
+      build: (assignments) => ({ updates: assignments.map(a => ({ id: a.ref, set: { status, bed_id: a.bed_id } })) })
+    });
+    if (!result.ok) {
+      if (result.refused) return { ok: false, status: 400, code: result.refused.code, error: result.refused.message };
+      const guestName = new Map(items.map(it => [it.ref, it.name]));
+      const conflicts = targets.length > 1
+        ? result.conflicts.map(c => ({ ...c, guest_name: guestName.get(c.ref) || null }))
+        : result.conflicts;
+      return { ok: false, code: 'BOOKING_CONFLICT', conflicts };
+    }
+  } else {
+    // Ngoại lệ có chủ ý với "mọi vị trí qua booking engine": chỉ ghi status, vị trí không đổi
+    // (hủy thì giải phóng chỗ — booking engine và lịch trống đã bỏ qua lịch cancelled)
+    const { error: upErr } = await supabase.from('bookings').update({ status }).in('id', ids);
+    if (upErr) throw upErr;
+  }
+
+  // Hoàn thành → NV xuống cuối thứ tự tour của chi nhánh (mỗi khách 1 lần)
+  if (status === 'completed') {
+    for (const t of targets) {
+      if (t.from.employee_id && t.from.branch_id) await rotateTour(supabase, t.from.branch_id, t.from.employee_id);
+    }
+  }
+
+  const { data: rows, error: selErr } = await supabase.from('bookings').select(UPDATED_SELECT).in('id', ids);
+  if (selErr) throw selErr;
+  (rows || []).forEach(r => broadcast('booking.updated', r));
+
+  return {
+    ok: true,
+    // Hủy cả nhóm bỏ qua chính khách đã đến → trả về khách đầu tiên được đổi
+    booking: (rows || []).find(r => r.id === booking.id) || (rows || [])[0],
+    before: booking,
+    updatedIds: ids,
+    skippedIds: plan.skippedIds || [],
+    snapshot: targets.map(t => t.from) // các dòng trước khi đổi — để AI hoàn tác
+  };
+}
+
+async function rotateTour(supabase, branchId, employeeId) {
+  const tourKey = `tour_order_${branchId}`;
+  const { data: settingData } = await supabase.from('settings').select('value').eq('key', tourKey).maybeSingle();
+  if (!settingData || !Array.isArray(settingData.value)) return;
+  const tour = settingData.value.filter(id => id !== employeeId);
+  if (tour.length === settingData.value.length) return;
+  tour.push(employeeId);
+  await supabase.from('settings').upsert({ key: tourKey, value: tour }, { onConflict: 'key' });
+}
+
+module.exports = { planChange, planCheckIn, planStatusChange, changeBooking, changeStatus };
