@@ -670,7 +670,7 @@ router.get('/:id', async (req, res) => {
  *         customer_update? { name, phone, email, habits }, allow_conflict? (đã bấm "Vẫn lưu"),
  *         scope? ('group' = Cả nhóm | 'booking' = Chỉ khách này) }
  * Adapter: dịch request thành 1 Booking change (lib/bookingChange).
- * Lịch thuộc nhóm đổi ngày / giờ mà không gửi scope → 409 SCOPE_REQUIRED (kèm group_size) để dashboard hỏi rồi gửi lại.
+ * Lịch thuộc nhóm đổi field áp cho cả nhóm (ngày / giờ, chi nhánh, dịch vụ, ghi chú, khách đặt) mà không gửi scope → 409 SCOPE_REQUIRED (kèm group_size) để dashboard hỏi rồi gửi lại.
  */
 router.put('/:id', async (req, res) => {
   try {

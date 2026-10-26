@@ -90,8 +90,8 @@ test('lịch thuộc nhóm đổi giờ bắt đầu hoặc ngày mà không g�
   assert.equal(date.scopeRequired, true);
 });
 
-test('lịch thuộc nhóm chỉ đổi NV / giờ kết thúc / ghi chú, không gửi scope → không hỏi, chỉ lịch này', () => {
-  for (const c of [{ employee_id: 'e9' }, { end_time: '15:30' }, { notes: 'Mới' }]) {
+test('lịch thuộc nhóm chỉ đổi NV / giờ kết thúc, không gửi scope → không hỏi, chỉ lịch này', () => {
+  for (const c of [{ employee_id: 'e9' }, { end_time: '15:30' }]) {
     const plan = planChange({ booking: groupA(), group: [groupB()], service: service(), change: { ...slotA, ...c } });
     assert.equal(plan.scopeRequired, undefined, JSON.stringify(c));
     assert.equal(only(plan).id, 'A');
@@ -187,4 +187,145 @@ test('check-in lịch lẻ, hoặc nhóm mà khách khác đã hủy hết → k
 test('check-in: dịch vụ không có thời lượng → 60 phút', () => {
   const plan = planCheckIn({ booking: arriving({ services: null }), start: '17:05' });
   assert.equal(plan.targets[0].end, '18:05');
+});
+
+// --- #12: các field áp cho cả nhóm khác (dịch vụ, chi nhánh, ghi chú, ghi chú nội bộ, khách đặt) ---
+test('lịch thuộc nhóm đổi dịch vụ / chi nhánh / ghi chú / ghi chú nội bộ / khách đặt mà không gửi scope → hỏi', () => {
+  const cases = [
+    { service_id: 's2' }, { branch_id: 'br2' }, { notes: 'Mới' }, { internal_note: 'Nội bộ mới' },
+    { customer_id: 'c2' }, { customer_id: null, temporary_name: 'Chị Lan' },
+    { customer_update: { name: 'Mia Nguyễn', phone: '0900000000' } }
+  ];
+  for (const c of cases) {
+    const plan = planChange({ booking: groupA(), group: [groupB()], service: service(), change: { ...slotA, ...c } });
+    assert.equal(plan.scopeRequired, true, JSON.stringify(c));
+    assert.equal(plan.groupSize, 2);
+  }
+});
+
+test('dashboard gửi lại giá trị cũ (ghi chú trống "" thay cho null…) hoặc chỉ đổi NV → không hỏi', () => {
+  const walkIn = groupA({ customer_id: null, temporary_name: 'Chị Mia', notes: null, internal_note: null });
+  const resent = { ...slotA, notes: '', internal_note: '', customer_id: null, temporary_name: 'Chị Mia' };
+  for (const c of [{}, { employee_id: 'e9' }]) {
+    const plan = planChange({ booking: walkIn, group: [groupB()], service: service(), change: { ...resent, ...c } });
+    assert.equal(plan.scopeRequired, undefined, JSON.stringify(c));
+    assert.equal(only(plan).id, 'A');
+  }
+});
+
+test('Cả nhóm + đổi ghi chú / ghi chú nội bộ → ghi đè đúng nội dung mới cho mọi khách chưa hủy, không đổi vị trí', () => {
+  const cancelled = booking({ id: 'C', group_booking_id: 'g1', status: 'cancelled' });
+  const t = byId(planChange({
+    booking: groupA(), group: [groupB({ notes: 'Ghi chú riêng của B' }), cancelled], service: service(), scope: 'group',
+    change: { ...slotA, notes: 'Cả nhóm dị ứng tinh dầu', internal_note: 'Khách quen' }
+  }));
+  assert.deepEqual(Object.keys(t).sort(), ['A', 'B']);
+  for (const id of ['A', 'B']) {
+    assert.equal(t[id].set.notes, 'Cả nhóm dị ứng tinh dầu', id);
+    assert.equal(t[id].set.internal_note, 'Khách quen', id);
+    assert.equal(t[id].placementChanged, false, id);
+  }
+  assert.equal('start_time' in t.B.set, false, 'không đụng giờ của B');
+});
+
+test('Chỉ khách này + đổi ghi chú → chỉ lịch này', () => {
+  const plan = planChange({ booking: groupA(), group: [groupB()], service: service(), scope: 'booking', change: { ...slotA, notes: 'Chỉ A' } });
+  assert.equal(only(plan).set.notes, 'Chỉ A');
+});
+
+test('Cả nhóm + đổi dịch vụ → mọi khách dịch vụ mới + giá mới, giờ kết thúc = giờ bắt đầu của từng người + thời lượng mới', () => {
+  const s2 = service({ id: 's2', duration_minutes: 120, price: 500000 });
+  const t = byId(planChange({ booking: groupA(), group: [groupB()], service: s2, scope: 'group', change: { ...slotA, service_id: 's2', end_time: '16:00' } }));
+  assert.equal(t.B.set.service_id, 's2');
+  assert.equal(t.B.set.total_price, 500000);
+  assert.equal('start_time' in t.B.set, false, 'B giữ giờ bắt đầu 14:30');
+  assert.equal(t.B.set.end_time, '16:30');
+  assert.equal(t.B.placementChanged, true, 'dài hơn → qua booking engine');
+});
+
+test('Cả nhóm + đổi dịch vụ + giờ → cùng giờ bắt đầu mới, kết thúc theo thời lượng dịch vụ mới', () => {
+  const s2 = service({ id: 's2', duration_minutes: 120, price: 500000 });
+  const t = byId(planChange({ booking: groupA(), group: [groupB()], service: s2, scope: 'group', change: { ...slotA, service_id: 's2', start_time: '16:00', end_time: '18:00' } }));
+  assert.equal(t.B.set.start_time, '16:00');
+  assert.equal(t.B.set.end_time, '18:00');
+});
+
+test('Cả nhóm + đổi dịch vụ cùng thời lượng với lịch của khách khác → khách đó không đổi vị trí', () => {
+  // B đang 14:30–16:00 (90 phút); dịch vụ mới 90 phút
+  const s2 = service({ id: 's2', duration_minutes: 90 });
+  const t = byId(planChange({ booking: groupA(), group: [groupB()], service: s2, scope: 'group', change: { ...slotA, service_id: 's2', end_time: '15:30' } }));
+  assert.equal(t.B.set.service_id, 's2');
+  assert.equal(t.B.placementChanged, false);
+});
+
+test('Cả nhóm + đổi chi nhánh → mọi khách sang chi nhánh mới, đều qua booking engine (xếp lại NV + giường)', () => {
+  const t = byId(planChange({ booking: groupA(), group: [groupB()], service: service(), scope: 'group', change: { ...slotA, branch_id: 'br2' } }));
+  assert.equal(t.A.set.branch_id, 'br2');
+  assert.equal(t.B.set.branch_id, 'br2');
+  assert.equal(t.B.placementChanged, true);
+  assert.equal('employee_id' in t.B.set, false, 'NV của B do booking engine quyết định');
+});
+
+// Khách đặt (Contact) của nhóm: hồ sơ khách c1 "Miss Mia", mọi khách trong nhóm cùng customer_id c1
+const mia = { id: 'c1', name: 'Miss Mia', phone: '0901111111', email: null, habits: null };
+const miaUpdate = (o = {}) => ({ name: 'Miss Mia', phone: '0901111111', email: '', habits: '', ...o });
+
+test('Cả nhóm + đổi khách đặt → mọi khách cùng khách đặt mới; sửa hồ sơ khách đặt 1 lần', () => {
+  const linked = byId(planChange({ booking: groupA(), group: [groupB({ customer_id: null, temporary_name: 'Tên riêng của B' })], service: service(), scope: 'group', change: { ...slotA, customer_id: 'c2', temporary_name: null } }));
+  assert.equal(linked.B.set.customer_id, 'c2');
+  assert.equal(linked.B.set.temporary_name, null, 'B về lại khách đặt chung');
+
+  const plan = planChange({ booking: groupA(), customer: mia, group: [groupB()], service: service(), scope: 'group', change: { ...slotA, customer_update: miaUpdate({ phone: '0902222222' }) } });
+  assert.deepEqual(plan.customerUpdate, { id: 'c1', data: { name: 'Miss Mia', phone: '0902222222', email: '', habits: null } });
+  // ROADMAP › Contact (24/10): chỉ sửa SĐT → không gắn lại khách, hồ sơ chung đã đủ
+  assert.equal('customer_id' in byId(plan).B.set, false);
+});
+
+test('Chỉ khách này + đổi tên → khách này có tên riêng (tách khỏi khách đặt), hồ sơ khách đặt giữ nguyên', () => {
+  const plan = planChange({ booking: groupA(), customer: mia, group: [groupB()], service: service(), scope: 'booking', change: { ...slotA, customer_update: miaUpdate({ name: 'Chị Lan' }) } });
+  const t = only(plan);
+  assert.equal(t.set.customer_id, null);
+  assert.equal(t.set.temporary_name, 'Chị Lan');
+  assert.equal(plan.customerUpdate, null, 'không sửa hồ sơ Miss Mia');
+});
+
+test('Chỉ khách này + đổi SĐT / email / thói quen của khách đặt chung → từ chối (là thông tin của cả nhóm)', () => {
+  for (const o of [{ phone: '0902222222' }, { email: 'mia@x.vn' }, { habits: 'Thích nhẹ tay' }, { name: 'Chị Lan', phone: '0902222222' }]) {
+    const plan = planChange({ booking: groupA(), customer: mia, group: [groupB()], service: service(), scope: 'booking', change: { ...slotA, customer_update: miaUpdate(o) } });
+    assert.ok(plan.refused, JSON.stringify(o));
+  }
+});
+
+test('lịch lẻ + sửa hồ sơ khách → sửa hồ sơ như cũ', () => {
+  const plan = planChange({ booking: booking(), customer: mia, service: service(), change: { ...sameSlot, customer_update: miaUpdate({ name: 'Mia Nguyễn' }) } });
+  assert.equal(plan.customerUpdate.data.name, 'Mia Nguyễn');
+  assert.equal(only(plan).set.customer_id, 'c1');
+});
+
+test('Cả nhóm chỉ đổi ghi chú → ghi chú nội bộ của khách khác giữ nguyên; chỉ đổi ghi chú nội bộ → ghi chú của khách khác giữ nguyên', () => {
+  const a = groupA({ notes: 'Ghi chú A', internal_note: 'Cảnh báo spam A' });
+  const b = groupB({ notes: 'Ghi chú riêng B', internal_note: 'Nội bộ B' });
+  const notesOnly = byId(planChange({ booking: a, group: [b], service: service(), scope: 'group', change: { ...slotA, notes: 'Mới cho cả nhóm' } }));
+  assert.equal(notesOnly.B.set.notes, 'Mới cho cả nhóm');
+  assert.equal('internal_note' in notesOnly.B.set, false, 'không chép ghi chú nội bộ của A sang B');
+
+  const internalOnly = byId(planChange({ booking: a, group: [b], service: service(), scope: 'group', change: { ...slotA, notes: 'Ghi chú A', internal_note: null } }));
+  assert.equal(internalOnly.B.set.internal_note, null);
+  assert.equal('notes' in internalOnly.B.set, false, 'không chép ghi chú của A sang B');
+});
+
+test('Cả nhóm chỉ sửa SĐT / email / thói quen của khách đặt → sửa hồ sơ, khách có tên riêng giữ tên riêng', () => {
+  const lan = groupB({ customer_id: null, temporary_name: 'Chị Lan' });
+  const plan = planChange({ booking: groupA(), customer: mia, group: [lan], service: service(), scope: 'group', change: { ...slotA, customer_update: miaUpdate({ phone: '0902222222' }) } });
+  assert.equal(plan.customerUpdate.data.phone, '0902222222');
+  const b = byId(plan).B;
+  assert.equal('customer_id' in b.set, false, 'Chị Lan không bị gắn lại vào khách đặt');
+  assert.equal('temporary_name' in b.set, false);
+});
+
+test('Cả nhóm đổi tên khách đặt → mọi khách gắn lại khách đặt, kể cả khách có tên riêng', () => {
+  const lan = groupB({ customer_id: null, temporary_name: 'Chị Lan' });
+  const plan = planChange({ booking: groupA(), customer: mia, group: [lan], service: service(), scope: 'group', change: { ...slotA, customer_update: miaUpdate({ name: 'Mia Nguyễn' }) } });
+  assert.equal(byId(plan).B.set.customer_id, 'c1');
+  assert.equal(byId(plan).B.set.temporary_name, null);
 });

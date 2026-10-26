@@ -11,20 +11,35 @@ const pick = (change, booking, key) => (change[key] !== undefined ? change[key] 
 /**
  * Bước lên kế hoạch (thuần, không đụng DB): lịch + dịch vụ + thay đổi → trạng thái đích của từng lịch.
  * @param scope  'booking' | 'group' | undefined; group = các lịch cùng nhóm (có thể gồm cả lịch đã hủy)
- * @returns {{ targets: { id, set, placementChanged }[] } | { scopeRequired: true, groupSize } | { refused }}
- *   targets[0] luôn là lịch đang sửa; các phần tử sau là khách cùng nhóm (chỉ đổi ngày / giờ).
+ * @param customer hồ sơ khách đặt hiện tại { name, phone, email, habits } (khi có customer_update)
+ * @returns {{ targets: { id, set, placementChanged }[], customerUpdate: { id, data } | null } | { scopeRequired: true, groupSize } | { refused }}
+ *   targets[0] luôn là lịch đang sửa; các phần tử sau là khách cùng nhóm (chỉ các field áp cho cả nhóm đã đổi).
+ *   customerUpdate: hồ sơ khách đặt cần sửa (null = không sửa).
  *   placementChanged: NV / chi nhánh / ngày / giờ thật sự đổi → phải qua booking engine;
  *   không đổi (VD chỉ sửa ghi chú) → ghi thẳng, lịch vốn đã chồng nhau vẫn lưu được.
  */
-function planChange({ booking, service, change, scope, group = [] }) {
+function planChange({ booking, service, change, scope, group = [], customer = null }) {
   const start_time = pick(change, booking, 'start_time');
   const booking_date = pick(change, booking, 'booking_date');
   const startChanged = toMinutes(start_time) !== toMinutes(booking.start_time);
   const timingChanged = booking_date !== booking.booking_date || startChanged;
 
-  // Lịch thuộc nhóm đổi ngày / giờ bắt đầu mà không nói rõ phạm vi → hỏi lại (backend không tự đoán)
+  // Field áp cho cả nhóm (ROADMAP › "Group rules"); NV và giờ kết thúc luôn chỉ cho khách này
+  // Dashboard luôn gửi lại mọi field: "" và null cùng nghĩa là trống → không tính là đổi
+  const changed = (key) => change[key] !== undefined && (change[key] || null) !== (booking[key] || null);
+  const serviceChanged = changed('service_id');
+  const branchChanged = changed('branch_id');
+  const notesChanged = changed('notes');
+  const internalNoteChanged = changed('internal_note');
+  // Đổi khách đặt (chọn khách khác / đổi tên) → gắn lại mọi khách; chỉ sửa SĐT / email / thói quen → chỉ sửa hồ sơ
+  const contactLinkChanged = changed('customer_id') || changed('temporary_name')
+    || (!!change.customer_update && (change.customer_update.name || null) !== (customer?.name || null));
+  const contactChanged = contactLinkChanged || !!change.customer_update;
+  const groupWideChanged = timingChanged || serviceChanged || branchChanged || notesChanged || internalNoteChanged || contactChanged;
+
+  // Lịch thuộc nhóm đổi field áp cho cả nhóm mà không nói rõ phạm vi → hỏi lại (backend không tự đoán)
   const others = group.filter(g => g.id !== booking.id && g.status !== 'cancelled');
-  if (others.length && timingChanged && !scope) return { scopeRequired: true, groupSize: others.length + 1 };
+  if (others.length && groupWideChanged && !scope) return { scopeRequired: true, groupSize: others.length + 1 };
 
   // Dashboard gửi end_time (kéo dài / rút ngắn trên lịch) thì dùng đúng giờ đó
   const end_time = change.end_time || endTime(start_time, service.duration_minutes || 60);
@@ -46,26 +61,54 @@ function planChange({ booking, service, change, scope, group = [] }) {
     || set.booking_date !== booking.booking_date
     || startChanged
     || toMinutes(end_time) !== toMinutes(booking.end_time);
-  const targets = [{ id: booking.id, set, placementChanged }];
-
-  // Cả nhóm (ADR 0001): khách còn lại cùng giờ bắt đầu mới, mỗi người giữ thời lượng đang đặt + NV của mình.
-  // Field khác (dịch vụ, ghi chú, chi nhánh…) vẫn chỉ cho khách này (#12 mới áp cho cả nhóm).
-  // Chỉ đổi ngày → mỗi người giữ giờ bắt đầu của mình.
-  if (scope === 'group' && timingChanged) {
-    for (const g of others) {
-      const length = toMinutes(g.end_time) - toMinutes(g.start_time);
-      const start = startChanged ? start_time : toHHMM(toMinutes(g.start_time));
-      if (toMinutes(start) + length > 24 * 60) {
-        return { refused: 'Dời cả nhóm làm lịch của khách khác trong nhóm vượt qua nửa đêm. Hãy chọn giờ khác hoặc "Chỉ khách này".' };
+  // Sửa hồ sơ khách đặt (cùng cách ghi với PUT /customers/:id). Nhóm + "Chỉ khách này": đổi tên → khách này
+  // có tên riêng (tách khỏi khách đặt, hồ sơ giữ nguyên); SĐT / email / thói quen là của cả nhóm → từ chối.
+  let customerUpdate = null;
+  const cu = change.customer_update;
+  if (cu && typeof cu === 'object' && set.customer_id) {
+    const data = { name: cu.name, phone: cu.phone, email: cu.email, habits: cu.habits || null };
+    if (others.length && scope === 'booking') {
+      const same = (k) => (data[k] || null) === (customer?.[k] || null);
+      if (!same('phone') || !same('email') || !same('habits')) {
+        return { refused: 'SĐT / email / thói quen là của khách đặt (cả nhóm) — hãy chọn "Cả nhóm".' };
       }
-      targets.push({
-        id: g.id,
-        set: { booking_date, start_time: start, end_time: endTime(start, length) },
-        placementChanged: true
-      });
+      if (!same('name')) Object.assign(set, { customer_id: null, temporary_name: data.name });
+    } else {
+      customerUpdate = { id: set.customer_id, data };
     }
   }
-  return { targets };
+
+  const targets = [{ id: booking.id, set, placementChanged }];
+
+  // Cả nhóm: field áp cho cả nhóm đã đổi → chép sang mọi khách chưa hủy; NV mỗi người giữ nguyên.
+  // Giờ (ADR 0001): cùng giờ bắt đầu mới, mỗi người giữ thời lượng đang đặt; chỉ đổi ngày → giữ giờ bắt đầu của mình.
+  if (scope === 'group' && groupWideChanged) {
+    for (const g of others) {
+      const s = {};
+      let moved = false;
+      if (timingChanged || serviceChanged) {
+        // Đổi dịch vụ → thời lượng của dịch vụ mới; không thì giữ thời lượng đang đặt của khách đó
+        const length = serviceChanged ? (service.duration_minutes || 60) : toMinutes(g.end_time) - toMinutes(g.start_time);
+        const start = startChanged ? start_time : toHHMM(toMinutes(g.start_time));
+        if (toMinutes(start) + length > 24 * 60) {
+          return { refused: 'Áp cho cả nhóm làm lịch của khách khác trong nhóm vượt qua nửa đêm. Hãy chọn giờ khác hoặc "Chỉ khách này".' };
+        }
+        const end = endTime(start, length);
+        if (timingChanged) Object.assign(s, { booking_date, start_time: start });
+        s.end_time = end;
+        moved = timingChanged || toMinutes(end) !== toMinutes(g.end_time);
+      }
+      if (branchChanged) { s.branch_id = set.branch_id; moved = true; }
+      if (serviceChanged) Object.assign(s, { service_id: set.service_id, total_price: set.total_price });
+      // Mỗi field chỉ chép khi chính nó đổi (dashboard không gửi ghi chú nội bộ khi sửa ghi chú)
+      if (notesChanged) s.notes = set.notes;
+      if (internalNoteChanged) s.internal_note = set.internal_note;
+      // Khách có tên riêng cũng về lại khách đặt chung
+      if (contactLinkChanged) Object.assign(s, { customer_id: set.customer_id, temporary_name: set.temporary_name });
+      targets.push({ id: g.id, set: s, placementChanged: moved });
+    }
+  }
+  return { targets, customerUpdate };
 }
 /**
  * Bước lên kế hoạch check-in (thuần): khách đến → bắt đầu từ "bây giờ", giữ thời lượng dịch vụ, status = arrived.
@@ -96,10 +139,11 @@ const UPDATED_SELECT = `
 
 /**
  * Đổi 1 lịch đã có: kiểm tra → (tùy chọn) cập nhật hồ sơ khách → ghi (đổi vị trí thì qua booking engine)
- * → đọc lại + broadcast. Lịch thuộc nhóm: scope 'group' dời ngày / giờ cho cả nhóm, 'booking' chỉ khách này.
+ * → đọc lại + broadcast. Lịch thuộc nhóm: scope 'group' áp field áp cho cả nhóm (ngày / giờ, chi nhánh,
+ * dịch vụ, ghi chú, ghi chú nội bộ, khách đặt) cho mọi khách chưa hủy, 'booking' chỉ khách này. NV luôn chỉ cho khách này.
  *
  * @param opts.source   'staff' | 'ai'
- * @param opts.scope    'booking' | 'group' | undefined (lịch thuộc nhóm đổi ngày / giờ mà không gửi → SCOPE_REQUIRED)
+ * @param opts.scope    'booking' | 'group' | undefined (lịch thuộc nhóm đổi field áp cho cả nhóm mà không gửi → SCOPE_REQUIRED)
  * @param opts.change   service_id, branch_id, employee_id, booking_date, start_time, end_time, notes,
  *                      internal_note, customer_id, temporary_name, customer_update ({ name, phone, email, habits })
  * @param opts.confirm  true = đã bấm "Vẫn lưu" cho vướng mắc
@@ -121,6 +165,8 @@ async function changeBooking(supabase, { source, bookingId, scope, change, confi
   const serviceId = pick(change, booking, 'service_id');
   const branchId = pick(change, booking, 'branch_id');
   const employeeId = pick(change, booking, 'employee_id');
+  // NV được CHỌN trong lần sửa này (khác NV đang xếp) → giữ đúng người cho khách này, bận / ngoài ca thì hỏi "Vẫn lưu?"
+  const employeeChosen = change.employee_id !== undefined && (change.employee_id || null) !== (booking.employee_id || null);
 
   const { data: service, error: svcErr } = await supabase.from('services').select('id, duration_minutes, price').eq('id', serviceId).single();
   if (svcErr || !service) return fail(404, 'Service not found');
@@ -128,11 +174,11 @@ async function changeBooking(supabase, { source, bookingId, scope, change, confi
   const { data: branch, error: brErr } = await supabase.from('branches').select('id').eq('id', branchId).single();
   if (brErr || !branch) return fail(404, 'Branch not found');
 
-  if (employeeId) {
+  if (employeeChosen && employeeId) {
     const { data: emp, error: empErr } = await supabase.from('employees').select('id, branch_id, is_active').eq('id', employeeId).single();
     if (empErr || !emp) return fail(404, 'Employee not found');
     if (!emp.is_active) return fail(409, 'Employee is inactive');
-    if (emp.branch_id !== branchId) return fail(409, 'Employee does not belong to selected branch');
+    if (emp.branch_id !== branchId) return fail(409, 'Nhân viên được chọn không làm ở chi nhánh này. Hãy chọn nhân viên khác hoặc để trống để tự xếp.');
   }
 
   // Khách cùng nhóm (kể cả đã hủy — bước lên kế hoạch tự bỏ qua)
@@ -144,19 +190,40 @@ async function changeBooking(supabase, { source, bookingId, scope, change, confi
     group = members || [];
   }
 
-  const plan = planChange({ booking, service, change, scope, group });
+  // Hồ sơ khách đặt hiện tại — để biết lần sửa hồ sơ có đổi tên / SĐT… không
+  let customer = null;
+  const customerId = pick(change, booking, 'customer_id');
+  if (change.customer_update && customerId) {
+    const { data: cust, error: custLoadErr } = await supabase
+      .from('customers').select('id, name, phone, email, habits').eq('id', customerId).single();
+    if (custLoadErr || !cust) return fail(404, 'Customer not found');
+    customer = cust;
+  }
+
+  const plan = planChange({ booking, service, change, scope, group, customer });
   if (plan.scopeRequired) return { ok: false, code: 'SCOPE_REQUIRED', groupSize: plan.groupSize };
   if (plan.refused) return fail(400, plan.refused);
 
-  const [target, ...siblingTargets] = plan.targets;
-  const { set } = target;
-  const siblings = siblingTargets.map(t => ({ ...t, from: group.find(g => g.id === t.id) }));
-  // Booking engine xếp NV + giường theo 1 chi nhánh → nhóm ở nhiều chi nhánh không dời chung được (tất cả hoặc không)
-  if (siblings.some(s => s.from.branch_id !== set.branch_id)) {
-    // Đổi chi nhánh cho cả nhóm làm ở #12; giờ chỉ đổi được chi nhánh cho khách này
-    return fail(409, set.branch_id !== booking.branch_id
-      ? 'Chưa đổi được chi nhánh khi dời cả nhóm. Hãy chọn "Chỉ khách này", hoặc dời giờ và đổi chi nhánh ở 2 lần lưu.'
-      : 'Nhóm đang ở nhiều chi nhánh, hãy dời từng khách ("Chỉ khách này").');
+  // Mỗi lịch trong lệnh: trạng thái cũ (from) + phần đổi (set) → vị trí đích (eff)
+  const rows = plan.targets.map(t => {
+    const from = t.id === booking.id ? booking : group.find(g => g.id === t.id);
+    return { ...t, from, eff: { ...from, ...t.set } };
+  });
+  const [target] = rows;
+  const siblings = rows.slice(1);
+  const placed = rows.filter(r => r.placementChanged);
+  // Booking engine xếp NV + giường theo 1 chi nhánh, 1 ngày → nhóm ở nhiều chi nhánh / ngày không đổi vị trí chung được
+  if (placed.some(r => r.eff.branch_id !== target.eff.branch_id || r.eff.booking_date !== target.eff.booking_date)) {
+    return fail(409, 'Nhóm đang ở nhiều chi nhánh / ngày, hãy đổi từng khách ("Chỉ khách này").');
+  }
+
+  // Đổi chi nhánh: NV đang xếp làm ở chi nhánh mới thì giữ (bận / ngoài ca → tự xếp người rảnh khác), không thì tự xếp
+  let newBranchStaff = new Set();
+  if (placed.some(r => r.eff.branch_id !== r.from.branch_id)) {
+    const { data: staff, error: staffErr } = await supabase.from('employees').select('id')
+      .eq('branch_id', target.eff.branch_id).eq('is_active', true);
+    if (staffErr) throw staffErr;
+    newBranchStaff = new Set((staff || []).map(e => e.id));
   }
 
   // Cập nhật hồ sơ khách trong CÙNG lệnh — làm trước (hay lỗi nhất, VD trùng SĐT);
@@ -167,45 +234,55 @@ async function changeBooking(supabase, { source, bookingId, scope, change, confi
     const { error: rbErr } = await supabase.from('customers').update(customerRollback.data).eq('id', customerRollback.id);
     if (rbErr) console.error('[bookingChange] Không hoàn lại được thông tin khách:', rbErr.message);
   };
-  const customerUpdate = change.customer_update;
-  if (customerUpdate && typeof customerUpdate === 'object' && set.customer_id) {
-    const { data: oldCustomer, error: oldCustErr } = await supabase
-      .from('customers').select('id, name, phone, email, habits').eq('id', set.customer_id).single();
-    if (oldCustErr || !oldCustomer) return fail(404, 'Customer not found');
-
-    // Cùng cách ghi với PUT /customers/:id
-    const { name, phone, email, habits } = customerUpdate;
-    const { error: custErr } = await supabase.from('customers').update({ name, phone, email, habits: habits || null }).eq('id', set.customer_id);
+  if (plan.customerUpdate) {
+    const { error: custErr } = await supabase.from('customers').update(plan.customerUpdate.data).eq('id', plan.customerUpdate.id);
     if (custErr) return fail(400, `Không cập nhật được thông tin khách: ${custErr.message}`);
-
     customerRollback = {
-      id: oldCustomer.id,
-      data: { name: oldCustomer.name, phone: oldCustomer.phone, email: oldCustomer.email, habits: oldCustomer.habits }
+      id: customer.id,
+      data: { name: customer.name, phone: customer.phone, email: customer.email, habits: customer.habits }
     };
   }
 
-  // Đổi vị trí → qua booking engine: NV bận / ngoài ca / hết giường → BOOKING_CONFLICT để hỏi "Vẫn lưu?".
-  // Giường cũ bận ở giờ mới → tự đổi sang giường trống khác.
-  // Cả nhóm: mọi khách trong CÙNG 1 lệnh → vướng mắc của mọi người báo chung, xác nhận 1 lần, không lưu nửa vời.
+  // Đổi vị trí → qua booking engine: NV bận / ngoài ca / hết giường / không ai rảnh → BOOKING_CONFLICT để hỏi "Vẫn lưu?".
+  // Giường cũ bận ở giờ mới → tự đổi sang giường trống khác; đổi chi nhánh → luôn lấy giường của chi nhánh mới.
+  // Cả nhóm: mọi khách trong CÙNG 1 lệnh (cả khách chỉ đổi ghi chú / khách đặt) → vướng mắc báo chung, xác nhận 1 lần,
+  // ghi trong 1 transaction, không lưu nửa vời.
   try {
-    if (target.placementChanged) {
-      // Giờ nhận khách muộn nhất chỉ xét khi đặt giờ bắt đầu mới (đổi ngày / giờ / chi nhánh); chỉ đổi NV / kéo dài → không hỏi lại
-      const startMoved = set.booking_date !== booking.booking_date || set.branch_id !== booking.branch_id
-        || toMinutes(set.start_time) !== toMinutes(booking.start_time);
-      const items = [
-        { ref: booking.id, start: set.start_time, end: set.end_time, employeeId: set.employee_id, bedId: booking.bed_id, name: set.temporary_name, skipStartLimit: !startMoved },
-        ...siblings.map(s => ({ ref: s.id, start: s.set.start_time, end: s.set.end_time, employeeId: s.from.employee_id, bedId: s.from.bed_id, name: s.from.temporary_name }))
-      ];
-      const setOf = new Map([[booking.id, set], ...siblings.map(s => [s.id, s.set])]);
+    if (placed.length || siblings.length) {
+      const items = placed.map(r => {
+        const { eff, from } = r;
+        const branchMoved = eff.branch_id !== from.branch_id;
+        // Giờ nhận khách muộn nhất chỉ xét khi đặt giờ bắt đầu mới (đổi ngày / giờ / chi nhánh); chỉ đổi NV / kéo dài → không hỏi lại
+        const startMoved = branchMoved || eff.booking_date !== from.booking_date || toMinutes(eff.start_time) !== toMinutes(from.start_time);
+        // NV được chọn → giữ đúng người; đổi chi nhánh mà để trống NV → tự xếp người rảnh của chi nhánh mới
+        const chosen = r.id === booking.id && employeeChosen && eff.employee_id;
+        const kept = !(r.id === booking.id && employeeChosen) && newBranchStaff.has(from.employee_id) ? from.employee_id : null;
+        const employee = !branchMoved || chosen
+          ? { employeeId: eff.employee_id }
+          : { employeeId: kept, fallbackAuto: true, autoEmployee: true };
+        return {
+          ref: r.id, start: eff.start_time, end: eff.end_time, ...employee,
+          bedId: branchMoved ? null : from.bed_id, name: eff.temporary_name, skipStartLimit: !startMoved
+        };
+      });
       const result = await placeBookings(supabase, {
         source,
-        branchId: set.branch_id,
-        date: set.booking_date,
+        branchId: target.eff.branch_id,
+        date: target.eff.booking_date,
         items,
         excludeIds: items.map(it => it.ref),
-        lockDates: [booking.booking_date, ...siblings.map(s => s.from.booking_date)],
+        lockDates: [...new Set(rows.flatMap(r => [r.from.booking_date, r.eff.booking_date]))],
         override: confirm === true,
-        build: (assignments) => ({ updates: assignments.map(a => ({ id: a.ref, set: { ...setOf.get(a.ref), bed_id: a.bed_id } })) })
+        // Lịch đổi vị trí → gắn NV + giường do engine xếp; lịch chỉ đổi ghi chú / khách đặt… → ghi đúng phần đổi
+        build: (assignments) => {
+          const byRef = new Map(assignments.map(a => [a.ref, a]));
+          return {
+            updates: rows.map(r => {
+              const a = byRef.get(r.id);
+              return { id: r.id, set: a ? { ...r.set, employee_id: a.employee_id, bed_id: a.bed_id } : r.set };
+            })
+          };
+        }
       });
       if (!result.ok) {
         await rollbackCustomer();
@@ -219,8 +296,8 @@ async function changeBooking(supabase, { source, bookingId, scope, change, confi
       }
     } else {
       // Ngoại lệ có chủ ý với quy tắc "mọi vị trí qua booking engine": nhánh này chỉ chạy khi vị trí KHÔNG đổi
-      // (NV / chi nhánh / ngày / giờ ghi lại đúng giá trị cũ) → không cần khóa + kiểm tra trùng
-      const { error: upErr } = await supabase.from('bookings').update(set).eq('id', booking.id);
+      // (NV / chi nhánh / ngày / giờ ghi lại đúng giá trị cũ) và chỉ 1 lịch → không cần khóa + kiểm tra trùng
+      const { error: upErr } = await supabase.from('bookings').update(target.set).eq('id', booking.id);
       if (upErr) throw upErr;
     }
   } catch (writeErr) {

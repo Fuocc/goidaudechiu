@@ -779,3 +779,112 @@ describe('Check-in nhóm khách + Late arrival grace', () => {
     assert.equal((await rowOf(b.id)).status, 'arrived');
   })));
 });
+
+// ---------------------------------------------------------------------------
+// #12 — ROADMAP › "Group rules": dịch vụ, chi nhánh, ghi chú, khách đặt áp cho cả nhóm
+describe('Nhân viên đổi field áp cho cả nhóm', () => {
+  // A 14:00–15:00 (NV 0), B 14:30–16:00 (NV 1), cùng nhóm
+  async function groupOfTwo({ customerId = null, employeeA = h.employee(0).id } = {}) {
+    const groupId = crypto.randomUUID();
+    const a = await h.insertFixture({ employeeId: employeeA, bedId: h.ctx.beds[0].id, start: '14:00', end: '15:00', name: 'Group A', groupId, customerId });
+    const b = await h.insertFixture({ employeeId: h.employee(1).id, bedId: h.ctx.beds[1].id, start: '14:30', end: '16:00', name: 'Group B', groupId, customerId });
+    return { a, b };
+  }
+  const rowOf = async (id) => (await h.activeBookings()).find(r => r.id === id);
+  const hhmm = (t) => String(t).slice(0, 5);
+
+  test('Cả nhóm đổi dịch vụ → mọi khách dịch vụ mới, giờ kết thúc = giờ bắt đầu của từng người + thời lượng mới', T, async () => {
+    const combo = h.service('Combo dễ chịu'); // 100 phút
+    const { a, b } = await groupOfTwo();
+    const r = await h.staffUpdate(a, { service_id: combo.id, end_time: h.toHHMM(h.toMin('14:00') + combo.duration_minutes), scope: 'group' });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    const [rowA, rowB] = [await rowOf(a.id), await rowOf(b.id)];
+    assert.equal(rowA.service_id, combo.id);
+    assert.equal(rowB.service_id, combo.id);
+    assert.equal(hhmm(rowA.end_time), '15:40');
+    assert.equal(hhmm(rowB.start_time), '14:30');
+    assert.equal(hhmm(rowB.end_time), '16:10');
+    assert.equal(rowB.employee_id, h.employee(1).id, 'B giữ NV của mình');
+    await assertNoOverlaps();
+  });
+
+  test('Cả nhóm đổi chi nhánh → NV làm ở chi nhánh mới + rảnh thì giữ, không thì xếp người khác ở đó; giường của chi nhánh mới', T, async () => {
+    const other = await h.otherBranch();
+    assert.ok(other.employees.length >= 2 && other.beds.length >= 2, 'chi nhánh thứ 2 cần ≥ 2 NV + 2 giường');
+    // A đang do NV của chi nhánh kia làm (NV đó rảnh); B do NV của chi nhánh test làm
+    const { a, b } = await groupOfTwo({ employeeA: other.employees[0].id });
+    const r = await h.staffUpdate(a, { branch_id: other.branch.id, scope: 'group' });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    const [rowA, rowB] = [await rowOf(a.id), await rowOf(b.id)];
+    assert.equal(rowA.branch_id, other.branch.id);
+    assert.equal(rowB.branch_id, other.branch.id);
+    assert.equal(rowA.employee_id, other.employees[0].id, 'A giữ NV (làm ở chi nhánh mới, rảnh)');
+    assert.ok(other.employees.some(e => e.id === rowB.employee_id), `B phải được xếp NV của chi nhánh mới: ${rowB.employee_id}`);
+    assert.notEqual(rowB.employee_id, rowA.employee_id);
+    for (const row of [rowA, rowB]) assert.ok(other.beds.some(x => x.id === row.bed_id), `giường phải thuộc chi nhánh mới: ${row.bed_id}`);
+    await assertNoOverlaps();
+  });
+
+  test('đổi chi nhánh mà ở đó không ai rảnh → no_employee, không lưu gì; allow_conflict → lưu chưa xếp NV', T, async () => {
+    const other = await h.otherBranch();
+    // Mọi NV chi nhánh kia bận (không chiếm giường → giường vẫn trống)
+    for (const e of other.employees) {
+      await h.insertFixture({ branchId: other.branch.id, employeeId: e.id, start: '13:00', end: '17:00', name: `Other busy ${e.name}` });
+    }
+    const { a, b } = await groupOfTwo();
+    const warn = await h.staffUpdate(a, { branch_id: other.branch.id, scope: 'group' });
+    assert.equal(warn.status, 409, JSON.stringify(warn.data));
+    assert.equal(warn.data?.code, 'BOOKING_CONFLICT');
+    assert.ok((warn.data.conflicts || []).some(c => c.type === 'no_employee'), JSON.stringify(warn.data.conflicts));
+    assert.equal((await rowOf(a.id)).branch_id, h.ctx.branch.id, 'không lưu nửa vời');
+    assert.equal((await rowOf(b.id)).branch_id, h.ctx.branch.id);
+
+    const saved = await h.staffUpdate(a, { branch_id: other.branch.id, scope: 'group' }, { allowConflict: true });
+    assert.equal(saved.status, 200, JSON.stringify(saved.data));
+    for (const row of [await rowOf(a.id), await rowOf(b.id)]) {
+      assert.equal(row.branch_id, other.branch.id);
+      assert.equal(row.employee_id, null, 'chưa xếp NV');
+      assert.ok(other.beds.some(x => x.id === row.bed_id), `giường phải thuộc chi nhánh mới: ${row.bed_id}`);
+    }
+  });
+
+  test('Cả nhóm sửa khách đặt → mọi khách hiện khách đặt mới; Chỉ khách này đổi tên → chỉ khách đó có tên riêng', T, async () => {
+    const mia = await h.insertCustomer('Mia');
+    const { a, b } = await groupOfTwo({ customerId: mia.id });
+    const phone = '0988' + String(Date.now()).slice(-6);
+    const all = await h.staffUpdate(a, {
+      customer_id: mia.id, temporary_name: null, scope: 'group',
+      customer_update: { name: h.TEST_PREFIX + 'Mia Nguyễn', phone, email: '', habits: '' }
+    });
+    assert.equal(all.status, 200, JSON.stringify(all.data));
+    const { data: profile } = await h.supabase.from('customers').select('name, phone').eq('id', mia.id).single();
+    assert.equal(profile.name, h.TEST_PREFIX + 'Mia Nguyễn');
+    assert.equal(profile.phone, phone);
+    for (const row of [await rowOf(a.id), await rowOf(b.id)]) {
+      assert.equal(row.customer_id, mia.id);
+      assert.equal(row.temporary_name, null);
+    }
+
+    const own = await h.staffUpdate(await rowOf(a.id), {
+      customer_id: mia.id, temporary_name: null, scope: 'booking',
+      customer_update: { name: h.TEST_PREFIX + 'Lan', phone, email: '', habits: '' }
+    });
+    assert.equal(own.status, 200, JSON.stringify(own.data));
+    const [rowA, rowB] = [await rowOf(a.id), await rowOf(b.id)];
+    assert.equal(rowA.temporary_name, h.TEST_PREFIX + 'Lan', 'A có tên riêng');
+    assert.equal(rowA.customer_id, null);
+    assert.equal(rowB.customer_id, mia.id, 'B vẫn là khách của Mia');
+    const { data: after } = await h.supabase.from('customers').select('name').eq('id', mia.id).single();
+    assert.equal(after.name, h.TEST_PREFIX + 'Mia Nguyễn', 'hồ sơ Mia giữ nguyên');
+  });
+
+  test('đổi chi nhánh và để trống NV → tự xếp người rảnh của chi nhánh mới (không lưu chưa xếp NV)', T, async () => {
+    const other = await h.otherBranch();
+    const { a } = await groupOfTwo();
+    const r = await h.staffUpdate(a, { branch_id: other.branch.id, employee_id: null, scope: 'booking' });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    const rowA = await rowOf(a.id);
+    assert.equal(rowA.branch_id, other.branch.id);
+    assert.ok(other.employees.some(e => e.id === rowA.employee_id), `A phải được xếp NV của chi nhánh mới: ${rowA.employee_id}`);
+  });
+});

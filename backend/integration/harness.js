@@ -94,7 +94,7 @@ function service(name) {
 function employee(index) { return ctx.employees[index]; }
 
 /** Ghi thẳng 1 lịch mẫu vào DB (không qua code đang test). */
-async function insertFixture({ employeeId = null, bedId = null, branchId = ctx.branch.id, date = TEST_DATE, start, end, name = 'Fixture', status = 'confirmed', serviceName = 'Ý dễ chịu', groupId = null }) {
+async function insertFixture({ employeeId = null, bedId = null, branchId = ctx.branch.id, date = TEST_DATE, start, end, name = 'Fixture', status = 'confirmed', serviceName = 'Ý dễ chịu', groupId = null, customerId = null }) {
   const { data, error } = await supabase.from('bookings').insert({
     branch_id: branchId,
     employee_id: employeeId,
@@ -104,11 +104,20 @@ async function insertFixture({ employeeId = null, bedId = null, branchId = ctx.b
     start_time: start,
     end_time: end,
     status,
-    temporary_name: TEST_PREFIX + name,
+    // Gắn hồ sơ khách (khách đặt) → không có tên riêng, tên hiển thị lấy từ hồ sơ
+    customer_id: customerId,
+    temporary_name: customerId ? null : TEST_PREFIX + name,
     num_guests: 1,
     total_price: 0,
     group_booking_id: groupId // khách đi nhóm: các fixture cùng groupId
   }).select('*').single();
+  if (error) throw error;
+  return data;
+}
+
+/** Ghi thẳng 1 hồ sơ khách mẫu (tên mang TEST_PREFIX → được dọn cùng dữ liệu test). */
+async function insertCustomer(name) {
+  const { data, error } = await supabase.from('customers').insert({ name: TEST_PREFIX + name, phone: nextPhone() }).select('*').single();
   if (error) throw error;
   return data;
 }
@@ -321,7 +330,7 @@ async function expireHolds(ids) {
 module.exports = {
   TEST_PREFIX, TEST_DATE, TODAY, ctx, supabase,
   setup, teardown, cleanup, toMin, toHHMM, vnNowMinutes,
-  service, employee, insertFixture, occupyStaff,
+  service, employee, insertFixture, insertCustomer, occupyStaff,
   withHours, availableStarts,
   onlineBook, onlineHold, staffBook, staffUpdate, staffCheckIn, aiTool, aiCreate,
   activeBookings, findOverlaps, getSetting, withSetting, withShift,

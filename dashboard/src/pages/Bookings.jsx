@@ -463,9 +463,10 @@ function Bookings() {
     booking?.group_booking_id ? bookings.filter(b => b.group_booking_id === booking.group_booking_id) : []
   );
 
-  // Backend báo SCOPE_REQUIRED (lịch thuộc nhóm đổi ngày / giờ, check-in) → hỏi, "Cả nhóm" là nút mặc định.
-  // action = việc đang hỏi, VD "Đổi ngày / giờ", "Check-in". Trả 'group' / 'booking' / null (không lưu)
-  const askScope = async (groupSize, action = 'Đổi ngày / giờ') => {
+  // Backend báo SCOPE_REQUIRED (lịch thuộc nhóm đổi field áp cho cả nhóm: ngày / giờ, chi nhánh, dịch vụ, ghi chú,
+  // khách đặt; check-in) → hỏi, "Cả nhóm" là nút mặc định.
+  // action = việc đang hỏi, VD "Check-in". Trả 'group' / 'booking' / null (không lưu)
+  const askScope = async (groupSize, action = 'Áp dụng thay đổi') => {
     const choice = await confirmDialog({
       title: 'Lịch nhóm',
       message: `Lịch này thuộc nhóm ${groupSize} khách. ${action} cho cả nhóm hay chỉ khách này?`,
@@ -479,9 +480,9 @@ function Bookings() {
 
   const notifySaved = (saved, fallbackMsg) => {
     const movedSiblings = saved?.group_updated_ids?.length || 0;
-    notify(movedSiblings > 0 ? `Đã dời cả nhóm ${movedSiblings + 1} khách!` : fallbackMsg);
+    notify(movedSiblings > 0 ? `Đã cập nhật cả nhóm ${movedSiblings + 1} khách!` : fallbackMsg);
     if (saved?.group_failed_count > 0) {
-      toast.warn(`Có ${saved.group_failed_count} lịch trong nhóm chưa dời được, vui lòng kiểm tra lại.`);
+      toast.warn(`Có ${saved.group_failed_count} lịch trong nhóm chưa cập nhật được, vui lòng kiểm tra lại.`);
     }
   };
 
@@ -1240,6 +1241,7 @@ function Bookings() {
     if (!detailModal || !detailEdit) return false;
     return (
       detailEdit.service_id !== (detailModal.service_id || detailModal.services?.id) ||
+      detailEdit.branch_id !== (detailModal.branch_id || detailModal.branches?.id) ||
       detailEdit.booking_date !== detailModal.booking_date ||
       detailEdit.start_time !== (detailModal.start_time || '').substring(0, 5) ||
       detailEdit.end_time !== (detailModal.end_time || '').substring(0, 5) ||
@@ -1275,6 +1277,8 @@ function Bookings() {
           notes: booking.notes || '',
           internal_note: null // Clear warning
         };
+        // Cảnh báo chống spam gắn với cả lần đặt online → tắt cho cả nhóm, không hỏi "Cả nhóm / Chỉ khách này"
+        if (getGroupMembers(booking).length > 1) bookingUpdate.scope = 'group';
 
         await updateBooking(booking.id, bookingUpdate);
 
