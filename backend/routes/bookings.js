@@ -13,7 +13,8 @@ const {
   releaseActiveHoldsForIp, checkSlotBudget, computeSpamFlag
 } = require('../lib/antiSpam');
 const { checkInBooking } = require('../lib/checkIn');
-const { UNDO_RESTORE_FIELDS, UNDO_MAX_AGE_MS, fingerprintRow, verifyUndoAction } = require('../lib/undoToken');
+const { changeBooking, changeStatus, restoreBookings } = require('../lib/bookingChange');
+const { UNDO_MAX_AGE_MS, fingerprintRow, verifyUndoAction } = require('../lib/undoToken');
 
 // ---- Kiểm tra dữ liệu đầu vào (dùng cho request từ landing page / chưa đăng nhập) ----
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -268,17 +269,33 @@ function getBroadcast(req) {
 }
 
 // Trả vướng mắc của booking engine. Khách online chỉ thấy loại vướng mắc (không lộ lịch của khách khác).
-function respondConflict(res, conflicts, { isPublic = false } = {}) {
+// result = kết quả không lưu được từ booking engine / Booking change / check-in: { conflicts, refused? }
+function respondConflict(res, { conflicts = [], refused } = {}, { isPublic = false } = {}) {
+  // Từ chối hẳn (VD vượt qua nửa đêm) → không hỏi "Vẫn lưu?"
+  if (refused) return res.status(400).json({ code: refused.code, error: refused.message });
   if (isPublic) {
     const noBed = conflicts.some(c => c.type === 'no_bed') && !conflicts.some(c => c.type === 'no_employee');
+    const tooLate = conflicts.some(c => c.type === 'after_last_booking');
     return res.status(409).json({
       code: 'BOOKING_CONFLICT',
-      error: noBed ? 'Không còn giường trống cho khung giờ này.' : 'Không có nhân viên trống cho khung giờ này.',
+      error: tooLate ? 'Đã quá giờ nhận khách của chi nhánh, vui lòng chọn giờ sớm hơn.'
+        : noBed ? 'Không còn giường trống cho khung giờ này.' : 'Không có nhân viên trống cho khung giờ này.',
       conflicts: publicConflicts(conflicts)
     });
   }
   return res.status(409).json({ code: 'BOOKING_CONFLICT', error: summarizeConflicts(conflicts), conflicts: withMessages(conflicts) });
 }
+
+// Lịch thuộc nhóm mà không gửi scope → dashboard hỏi "Cả nhóm / Chỉ khách này" rồi gửi lại kèm scope
+function respondScopeRequired(res, groupSize) {
+  return res.status(409).json({
+    code: 'SCOPE_REQUIRED',
+    error: `Lịch này thuộc nhóm ${groupSize} khách — chọn "Cả nhóm" hoặc "Chỉ khách này".`,
+    group_size: groupSize
+  });
+}
+
+const scopeOf = (body) => (['booking', 'group'].includes(body?.scope) ? body.scope : undefined);
 
 /**
  * GET /api/bookings
@@ -451,7 +468,7 @@ router.post('/hold', holdLimiter, async (req, res) => {
         }))
       })
     });
-    if (!result.ok) return respondConflict(res, result.conflicts, { isPublic: true });
+    if (!result.ok) return respondConflict(res, result, { isPublic: true });
     const createdHoldIds = result.ids;
 
     // Broadcast SSE for live dashboard updates
@@ -509,12 +526,11 @@ router.delete('/hold', async (req, res) => {
  * Hoàn tác các thao tác của AI chat. Body: { actions: [{ type, booking_ids, snapshot?, after, iat, uid, sig }] }
  * Action phải do chính server ký lúc AI thực hiện (xem lib/undoToken.js) — client không tự tạo/sửa được.
  *  - type 'create'                      → xóa các lịch vừa tạo (chỉ lịch tạo trong 24h và chưa hoàn thành)
- *  - type 'update' | 'check_in' | 'cancel' → khôi phục toàn bộ các trường từ snapshot (kể cả status)
+ *  - type 'update' | 'check_in' | 'cancel' → khôi phục các trường từ snapshot (kể cả status) qua Booking change:
+ *    booking engine, không hỏi "Vẫn lưu?", giường cũ đã có người → giường trống khác
  * Lịch đã bị thay đổi sau thao tác của AI (dấu vân tay khác `after`) sẽ bị bỏ qua, không ghi đè.
  * Các action được hoàn tác theo thứ tự ngược (thao tác sau cùng hoàn tác trước).
  */
-const UNDO_VALID_STATUSES = ['pending', 'confirmed', 'arrived', 'completed', 'cancelled'];
-
 router.post('/undo', async (req, res) => {
   try {
     const actions = Array.isArray(req.body?.actions) ? req.body.actions : [];
@@ -569,44 +585,21 @@ router.post('/undo', async (req, res) => {
         }
       } else if (['update', 'check_in', 'cancel'].includes(action.type)) {
         const snapshot = Array.isArray(action.snapshot) ? action.snapshot : [];
+        const rows = [];
         for (const row of snapshot) {
           // Chỉ khôi phục những lịch thuộc đúng action này
           if (!row || typeof row.id !== 'string' || !ids.includes(row.id)) continue;
-          // Đã có người sửa lịch sau thao tác của AI (hoặc đã hoàn tác rồi) → không ghi đè
+          // Đã có người sửa lịch sau thao tác của AI (hoặc đã hoàn tác rồi / đã bị xóa) → không ghi đè
           if (!unchangedSinceAction(row.id)) {
             skipped.push(row.id);
             continue;
           }
-
-          const patch = {};
-          for (const field of UNDO_RESTORE_FIELDS) {
-            if (field in row) patch[field] = row[field];
-          }
-          if (patch.status && !UNDO_VALID_STATUSES.includes(patch.status)) delete patch.status;
-          if (Object.keys(patch).length === 0) continue;
-
-          const { data: updated, error: updErr } = await supabase
-            .from('bookings')
-            .update(patch)
-            .eq('id', row.id)
-            .select(`
-              *,
-              customers(name, phone),
-              services(name, duration_minutes, price, color),
-              employees(name),
-              beds(name),
-              branches(name)
-            `)
-            .maybeSingle();
-          if (updErr) throw updErr;
-
-          if (updated) {
-            broadcast('booking.updated', updated);
-            restored.push(row.id);
-          } else {
-            skipped.push(row.id); // lịch đã bị xóa hẳn
-          }
+          rows.push({ current: currentById.get(row.id), snapshot: row });
         }
+        // Cả nhóm khôi phục trong 1 bước, qua Booking change (booking engine, không hỏi "Vẫn lưu?")
+        const { restoredIds, failedIds } = await restoreBookings(supabase, { rows, broadcast });
+        restored.push(...restoredIds);
+        skipped.push(...failedIds);
       }
     }
 
@@ -647,243 +640,38 @@ router.get('/:id', async (req, res) => {
 });
 
 /**
- * PUT /api/bookings/:id
- * Update booking detail (service, branch, start_time, employee)
- * Body: { service_id, branch_id, start_time, employee_id }
+ * PUT /api/bookings/:id — nhân viên sửa 1 lịch (sửa chi tiết, kéo thả trên lịch)
+ * Body: { service_id, branch_id, start_time, employee_id (bắt buộc, null = chưa xếp NV),
+ *         end_time?, booking_date?, notes?, internal_note?, customer_id?, temporary_name?,
+ *         customer_update? { name, phone, email, habits }, allow_conflict? (đã bấm "Vẫn lưu"),
+ *         scope? ('group' = Cả nhóm | 'booking' = Chỉ khách này) }
+ * Adapter: dịch request thành 1 Booking change (lib/bookingChange).
+ * Lịch thuộc nhóm đổi field áp cho cả nhóm (ngày / giờ, chi nhánh, dịch vụ, ghi chú, khách đặt) mà không gửi scope → 409 SCOPE_REQUIRED (kèm group_size) để dashboard hỏi rồi gửi lại.
  */
 router.put('/:id', async (req, res) => {
   try {
-    const { service_id, branch_id, start_time, end_time: clientEndTime, notes, customer_id, booking_date, internal_note, temporary_name } = req.body;
-    // employee_id rỗng / null = lịch chưa xếp nhân viên (cột "Chưa xếp NV")
-    const employee_id = req.body.employee_id || null;
-
-    // Basic validation
+    const { service_id, branch_id, start_time, end_time, notes, customer_id, booking_date, internal_note, temporary_name, customer_update } = req.body;
     if (!service_id || !branch_id || !start_time || !('employee_id' in req.body)) {
       return res.status(400).json({ error: 'service_id, branch_id, start_time, employee_id are required' });
     }
 
-    // 1) Load booking
-    const { data: booking, error: bkErr } = await supabase
-      .from('bookings')
-      .select('*')
-      .eq('id', req.params.id)
-      .single();
-
-    if (bkErr || !booking) return res.status(404).json({ error: 'Booking not found' });
-
-    // Lịch giữ chỗ tạm thời do khách đang đặt online: không cho sửa (xóa internal_note sẽ làm job dọn giữ chỗ bỏ sót)
-    if (isHoldBooking(booking)) {
-      return res.status(409).json({ error: 'Đây là lịch giữ chỗ tạm thời của khách đang đặt online, không thể chỉnh sửa.' });
-    }
-
-    // 2) Load service (duration/price)
-    const { data: service, error: svcErr } = await supabase
-      .from('services')
-      .select('id, duration_minutes, price')
-      .eq('id', service_id)
-      .single();
-
-    if (svcErr || !service) return res.status(404).json({ error: 'Service not found' });
-
-    // 3) Validate branch exists
-    const { data: branch, error: brErr } = await supabase
-      .from('branches')
-      .select('id')
-      .eq('id', branch_id)
-      .single();
-
-    if (brErr || !branch) return res.status(404).json({ error: 'Branch not found' });
-
-    // 4) Validate employee exists and belongs to branch
-    if (employee_id) {
-      const { data: emp, error: empErr } = await supabase
-        .from('employees')
-        .select('id, branch_id, is_active')
-        .eq('id', employee_id)
-        .single();
-
-      if (empErr || !emp) return res.status(404).json({ error: 'Employee not found' });
-      if (!emp.is_active) return res.status(409).json({ error: 'Employee is inactive' });
-      if (emp.branch_id !== branch_id) {
-        return res.status(409).json({ error: 'Employee does not belong to selected branch' });
-      }
-    }
-
-    // 5) Recalculate end_time & price (Use client's end_time if provided)
-    let end_time = clientEndTime;
-    if (!end_time) {
-      const startMinutes = timeToMinutes(start_time);
-      const endMinutes = startMinutes + (service.duration_minutes || 60);
-      const endH = Math.floor(endMinutes / 60);
-      const endM = endMinutes % 60;
-      end_time = `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
-    }
-
-    // NOTE: total_price in your create flow is stored as service.price (not * num_guests)
-    const total_price = service.price || 0;
-
-    // Chỉ kiểm tra trùng khi NV / chi nhánh / ngày / giờ thật sự đổi → sửa ghi chú trên lịch vốn đã chồng nhau vẫn lưu được.
-    const targetDate = booking_date !== undefined ? booking_date : booking.booking_date;
-    const placementChanged = employee_id !== booking.employee_id
-      || branch_id !== booking.branch_id
-      || targetDate !== booking.booking_date
-      || timeToMinutes(start_time) !== timeToMinutes(String(booking.start_time || '0:0'))
-      || timeToMinutes(end_time) !== timeToMinutes(String(booking.end_time || '0:0'));
-
-    // 5.0) Dời cả nhóm (dashboard gửi apply_to_group khi người dùng chọn "Dời cả nhóm"):
-    // các lịch cùng nhóm dời sang cùng ngày và lệch giờ đúng bằng lịch này; mỗi người giữ nguyên
-    // thời lượng + nhân viên của mình (dùng độ lệch vì giờ trong nhóm có thể đã khác nhau từ trước).
-    const shiftMinutes = timeToMinutes(start_time) - timeToMinutes(String(booking.start_time || '0:0'));
-    const siblingMoves = [];
-    if (req.body.apply_to_group === true && booking.group_booking_id &&
-      (shiftMinutes !== 0 || targetDate !== booking.booking_date)) {
-      const { data: siblings, error: sibErr } = await supabase
-        .from('bookings')
-        .select('id, employee_id, bed_id, booking_date, start_time, end_time, temporary_name')
-        .eq('group_booking_id', booking.group_booking_id)
-        .neq('id', req.params.id)
-        .neq('status', 'cancelled');
-      if (sibErr) throw sibErr;
-
-      for (const s of siblings || []) {
-        const newStart = timeToMinutes(String(s.start_time)) + shiftMinutes;
-        const newEnd = timeToMinutes(String(s.end_time)) + shiftMinutes;
-        if (newStart < 0 || newEnd > 24 * 60) {
-          return res.status(400).json({ error: 'Dời cả nhóm làm lịch của khách khác trong nhóm vượt qua nửa đêm. Hãy chọn giờ khác hoặc "Chỉ khách này".' });
-        }
-        siblingMoves.push({
-          id: s.id,
-          employee_id: s.employee_id,
-          bed_id: s.bed_id,
-          old_date: s.booking_date,
-          booking_date: targetDate,
-          start_time: minutesToTime(newStart),
-          end_time: minutesToTime(newEnd),
-          name: s.temporary_name
-        });
-      }
-    }
-
-    // 5.2) (Tùy chọn) cập nhật hồ sơ khách trong CÙNG request — trước đây dashboard gọi 2 request riêng,
-    // request thứ 2 lỗi thì dữ liệu chỉ cập nhật một nửa. Làm khách trước (hay lỗi nhất, VD trùng SĐT);
-    // nếu cập nhật lịch ở bước 6 lỗi / bị chặn vì trùng lịch thì ghi lại thông tin khách cũ.
-    let customerRollback = null;
-    const rollbackCustomer = async () => {
-      if (!customerRollback) return;
-      const { error: rbErr } = await supabase.from('customers').update(customerRollback.data).eq('id', customerRollback.id);
-      if (rbErr) console.error('[bookings PUT] Không hoàn lại được thông tin khách:', rbErr.message);
-    };
-    const customerUpdate = req.body.customer_update;
-    const finalCustomerId = customer_id !== undefined ? customer_id : booking.customer_id;
-    if (customerUpdate && typeof customerUpdate === 'object' && finalCustomerId) {
-      const { data: oldCustomer, error: oldCustErr } = await supabase
-        .from('customers')
-        .select('id, name, phone, email, habits')
-        .eq('id', finalCustomerId)
-        .single();
-      if (oldCustErr || !oldCustomer) return res.status(404).json({ error: 'Customer not found' });
-
-      // Cùng cách ghi với PUT /customers/:id
-      const { name, phone, email, habits } = customerUpdate;
-      const { error: custErr } = await supabase
-        .from('customers')
-        .update({ name, phone, email, habits: habits || null })
-        .eq('id', finalCustomerId);
-      if (custErr) return res.status(400).json({ error: `Không cập nhật được thông tin khách: ${custErr.message}` });
-
-      customerRollback = {
-        id: oldCustomer.id,
-        data: { name: oldCustomer.name, phone: oldCustomer.phone, email: oldCustomer.email, habits: oldCustomer.habits }
-      };
-    }
-
-    const patch = {
-      service_id,
-      branch_id,
-      employee_id,
-      customer_id: customer_id !== undefined ? customer_id : booking.customer_id,
-      temporary_name: temporary_name !== undefined ? temporary_name : booking.temporary_name,
-      booking_date: targetDate,
-      start_time,
-      end_time,
-      total_price,
-      notes: notes !== undefined ? notes : booking.notes,
-      internal_note: internal_note !== undefined ? internal_note : booking.internal_note
-    };
-
-    // 6) Ghi. Đổi vị trí (NV / giờ / ngày / chi nhánh, kể cả dời cả nhóm) → qua booking engine:
-    // NV bận / ngoài ca / hết giường → 409 BOOKING_CONFLICT để dashboard hỏi "Vẫn lưu?" (allow_conflict: true).
-    // Giường cũ bận ở giờ mới → tự đổi sang giường trống khác.
-    try {
-      if (placementChanged || siblingMoves.length > 0) {
-        const items = [
-          { ref: req.params.id, start: start_time, end: end_time, employeeId: employee_id, bedId: booking.bed_id, name: patch.temporary_name },
-          ...siblingMoves.map(m => ({ ref: m.id, start: m.start_time, end: m.end_time, employeeId: m.employee_id, bedId: m.bed_id, name: m.name }))
-        ];
-        const result = await placeBookings(supabase, {
-          source: 'staff',
-          branchId: branch_id,
-          date: targetDate,
-          items,
-          excludeIds: items.map(it => it.ref),
-          lockDates: [booking.booking_date, ...siblingMoves.map(m => m.old_date)],
-          override: req.body.allow_conflict === true,
-          build: (assignments) => ({
-            updates: assignments.map(a => {
-              if (a.ref === req.params.id) return { id: a.ref, set: { ...patch, bed_id: a.bed_id } };
-              const m = siblingMoves.find(s => s.id === a.ref);
-              return { id: a.ref, set: { booking_date: m.booking_date, start_time: m.start_time, end_time: m.end_time, bed_id: a.bed_id } };
-            })
-          })
-        });
-        if (!result.ok) {
-          await rollbackCustomer();
-          return respondConflict(res, result.conflicts);
-        }
-      } else {
-        const { error: upErr } = await supabase.from('bookings').update(patch).eq('id', req.params.id);
-        if (upErr) throw upErr;
-      }
-    } catch (writeErr) {
-      await rollbackCustomer();
-      throw writeErr;
-    }
-
-    const { data: updated, error: selErr } = await supabase
-      .from('bookings')
-      .select(`
-        *,
-        customers(name, phone, email, habits),
-        services(name, duration_minutes, price),
-        employees(name),
-        beds(name),
-        branches(name)
-      `)
-      .eq('id', req.params.id)
-      .single();
-    if (selErr) throw selErr;
-
-    // Broadcast SSE for live dashboard updates
-    const broadcast = getBroadcast(req);
-    broadcast('booking.updated', updated);
-
-    // 7) Các lịch còn lại của nhóm đã được dời cùng transaction ở bước 6
-    const groupUpdatedIds = siblingMoves.map(m => m.id);
-    if (groupUpdatedIds.length) {
-      const { data: sibs } = await supabase
-        .from('bookings')
-        .select('*, employees(name), services(name), branches(name)')
-        .in('id', groupUpdatedIds);
-      (sibs || []).forEach(sib => broadcast('booking.updated', sib));
-    }
-
-    res.json({
-      ...updated,
-      oldBooking: booking,
-      group_updated_ids: groupUpdatedIds,
-      group_failed_count: 0
+    const result = await changeBooking(supabase, {
+      source: 'staff',
+      bookingId: req.params.id,
+      scope: scopeOf(req.body),
+      change: {
+        service_id, branch_id, start_time, end_time, notes, customer_id, booking_date, internal_note, temporary_name, customer_update,
+        // employee_id rỗng / null = lịch chưa xếp nhân viên (cột "Chưa xếp NV")
+        employee_id: req.body.employee_id || null
+      },
+      confirm: req.body.allow_conflict === true,
+      broadcast: getBroadcast(req)
     });
+    if (result.code === 'SCOPE_REQUIRED') return respondScopeRequired(res, result.groupSize);
+    if (result.code === 'BOOKING_CONFLICT') return respondConflict(res, result);
+    if (!result.ok) return res.status(result.status).json({ code: result.code, error: result.error });
 
+    res.json({ ...result.booking, oldBooking: result.before, group_updated_ids: result.groupUpdatedIds, group_failed_count: 0 });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1211,7 +999,7 @@ router.post('/', bookingRateLimiter, async (req, res) => {
         }))
       })
     });
-    if (!result.ok) return respondConflict(res, result.conflicts, { isPublic });
+    if (!result.ok) return respondConflict(res, result, { isPublic });
 
     const createdBookings = await fetchCreated(result.ids);
     return respondCreated(createdBookings, 201);
@@ -1221,7 +1009,29 @@ router.post('/', bookingRateLimiter, async (req, res) => {
 });
 
 /**
- * PUT /api/bookings/:id/status
+ * Adapter chung cho đổi trạng thái / hủy: dịch kết quả Booking change thành response HTTP.
+ */
+async function respondStatusChange(req, res, { status, scope, allowConflict }) {
+  const result = await changeStatus(supabase, {
+    source: 'staff',
+    bookingId: req.params.id,
+    scope,
+    status,
+    confirm: allowConflict === true,
+    broadcast: getBroadcast(req)
+  });
+  if (result.code === 'SCOPE_REQUIRED') return respondScopeRequired(res, result.groupSize);
+  if (result.code === 'BOOKING_CONFLICT') return respondConflict(res, result);
+  if (!result.ok) return res.status(result.status).json({ code: result.code, error: result.error });
+  return result;
+}
+
+/**
+ * PUT /api/bookings/:id/status — nhân viên đổi trạng thái (hoàn thành, khôi phục lịch đã hủy…)
+ * Body: { status, scope? ('group' = Cả nhóm | 'booking' = Chỉ khách này), allow_conflict? (đã bấm "Vẫn lưu") }
+ * Lịch thuộc nhóm mà không gửi scope → 409 SCOPE_REQUIRED (kèm group_size).
+ * Rời trạng thái hủy → lịch chiếm lại chỗ cũ; vướng mắc → 409 BOOKING_CONFLICT, gửi lại kèm allow_conflict.
+ * 'arrived' chỉ đặt qua check-in.
  */
 router.put('/:id/status', async (req, res) => {
   try {
@@ -1230,68 +1040,9 @@ router.put('/:id/status', async (req, res) => {
     if (!validStatuses.includes(status)) {
       return res.status(400).json({ error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` });
     }
-    // Get a snapshot of the booking before modifying its status
-    const { data: oldBooking, error: snapErr } = await supabase
-      .from('bookings')
-      .select('*')
-      .eq('id', req.params.id)
-      .single();
-
-    if (snapErr || !oldBooking) {
-      return res.status(404).json({ error: 'Booking not found' });
-    }
-
-    const { data, error } = await supabase
-      .from('bookings')
-      .update({ status })
-      .eq('id', req.params.id)
-      .select(`
-        *,
-        customers(name, phone, email),
-        services(name, duration_minutes, price),
-        employees(name),
-        beds(name),
-        branches(name)
-      `)
-      .single();
-
-    if (error) throw error;
-
-    // --- Automatic Tour Rotation ---
-    if (status === 'completed' && data.employee_id && data.branch_id) {
-      const tourKey = `tour_order_${data.branch_id}`;
-      // Get current settings
-      const { data: settingData } = await supabase
-        .from('settings')
-        .select('value')
-        .eq('key', tourKey)
-        .single();
-
-      if (settingData && Array.isArray(settingData.value)) {
-        let tour = [...settingData.value];
-        const idx = tour.indexOf(data.employee_id);
-        if (idx !== -1) {
-          // Remove from current position and push to the end
-          tour.splice(idx, 1);
-          tour.push(data.employee_id);
-
-          await supabase
-            .from('settings')
-            .upsert({ key: tourKey, value: tour }, { onConflict: 'key' });
-        }
-      }
-    }
-
-    // Broadcast SSE for live dashboard updates
-    const broadcast = getBroadcast(req);
-    broadcast('booking.updated', data);
-
-    // Send the updated data along with the status snapshot
-    res.json({
-      ...data,
-      oldBooking
-    });
-    
+    const result = await respondStatusChange(req, res, { status, scope: scopeOf(req.body), allowConflict: req.body.allow_conflict });
+    if (!result?.ok) return;
+    res.json({ ...result.booking, oldBooking: result.before, updated_ids: result.updatedIds });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1299,16 +1050,21 @@ router.put('/:id/status', async (req, res) => {
 
 /**
  * POST /api/bookings/:id/check-in — khách đã đến (dùng chung logic với AI check_in_booking)
- * Giờ mới chồng lên lịch kế tiếp của NV (khách trễ) → 409 BOOKING_CONFLICT; gửi lại kèm allow_conflict: true sau "Vẫn lưu".
+ * Body: { allow_conflict?, scope? ('group' = Cả nhóm | 'booking' = Chỉ khách này) }
+ * Lịch thuộc nhóm mà không gửi scope → 409 SCOPE_REQUIRED (kèm group_size).
+ * Giờ mới chồng lên lịch kế tiếp của NV hoặc trễ hơn Last booking time + Late arrival grace → 409 BOOKING_CONFLICT;
+ * gửi lại kèm allow_conflict: true sau "Vẫn lưu".
  */
 router.post('/:id/check-in', async (req, res) => {
   try {
     const result = await checkInBooking(req.params.id, getBroadcast(req), {
       source: 'staff',
+      scope: scopeOf(req.body),
       override: req.body?.allow_conflict === true
     });
     if (result.error) return res.status(404).json({ error: result.error });
-    if (result.blocked) return respondConflict(res, result.conflicts);
+    if (result.scopeRequired) return respondScopeRequired(res, result.groupSize);
+    if (result.blocked) return respondConflict(res, result);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1316,51 +1072,15 @@ router.post('/:id/check-in', async (req, res) => {
 });
 
 /**
- * DELETE /api/bookings/:id
- * Query: group=1 → xóa luôn các lịch cùng nhóm (group_booking_id).
- * Chỉ xóa 1 người trong nhóm → cập nhật num_guests của những người còn lại cho đúng số thực tế.
+ * DELETE /api/bookings/:id — nhân viên hủy lịch: status cancelled, KHÔNG xóa dòng lịch (chỉ giữ chỗ hết hạn mới bị xóa).
+ * Query: scope=group (Cả nhóm) | scope=booking (Chỉ khách này). Lịch thuộc nhóm mà không gửi → 409 SCOPE_REQUIRED.
+ * Số khách của nhóm tính từ các lịch chưa hủy, không ghi lại num_guests.
  */
 router.delete('/:id', async (req, res) => {
   try {
-    const { data: booking } = await supabase
-      .from('bookings')
-      .select('id, group_booking_id')
-      .eq('id', req.params.id)
-      .maybeSingle();
-
-    const groupId = booking?.group_booking_id || null;
-    const deleteWholeGroup = groupId && (req.query.group === '1' || req.query.group === 'true');
-
-    let query = supabase.from('bookings').delete();
-    query = deleteWholeGroup ? query.eq('group_booking_id', groupId) : query.eq('id', req.params.id);
-    const { data: deletedRows, error } = await query.select('id');
-
-    if (error) throw error;
-    const deletedIds = (deletedRows || []).map(r => r.id);
-    if (deletedIds.length === 0) deletedIds.push(req.params.id);
-
-    const broadcast = getBroadcast(req);
-
-    if (groupId && !deleteWholeGroup) {
-      const { data: remaining, error: remErr } = await supabase
-        .from('bookings')
-        .select('id')
-        .eq('group_booking_id', groupId)
-        .neq('status', 'cancelled');
-      if (!remErr && remaining?.length) {
-        const { error: countErr } = await supabase
-          .from('bookings')
-          .update({ num_guests: remaining.length })
-          .in('id', remaining.map(r => r.id));
-        if (countErr) console.warn('[bookings DELETE] Không cập nhật được num_guests của nhóm:', countErr.message);
-        else remaining.forEach(r => broadcast('booking.updated', { id: r.id, num_guests: remaining.length }));
-      }
-    }
-
-    // Broadcast SSE for live dashboard updates
-    deletedIds.forEach(id => broadcast('booking.deleted', { id }));
-
-    res.json({ message: 'Booking deleted successfully', deleted_ids: deletedIds });
+    const result = await respondStatusChange(req, res, { status: 'cancelled', scope: scopeOf(req.query) });
+    if (!result?.ok) return;
+    res.json({ message: 'Booking cancelled successfully', cancelled_ids: result.updatedIds, skipped_ids: result.skippedIds });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1369,10 +1089,6 @@ router.delete('/:id', async (req, res) => {
 function timeToMinutes(timeStr) {
   const parts = timeStr.split(':');
   return parseInt(parts[0]) * 60 + parseInt(parts[1]);
-}
-
-function minutesToTime(totalMinutes) {
-  return `${String(Math.floor(totalMinutes / 60)).padStart(2, '0')}:${String(totalMinutes % 60).padStart(2, '0')}`;
 }
 
 async function fireWebhooks(event, bookings) {

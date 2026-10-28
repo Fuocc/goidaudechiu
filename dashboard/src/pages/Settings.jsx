@@ -21,10 +21,11 @@ function Settings() {
   const [activeTab, setActiveTab] = useState('general'); // 'general', 'webhooks', or 'tour'
 
   // General Settings State
-  // Mặc định khớp backend: chưa cài buffer = 0, chưa cài confirm_staff_overlap = bật hỏi
+  // Mặc định khớp backend: chưa cài buffer = 0, chưa cài confirm_staff_overlap = bật hỏi, chưa cài late_arrival_grace = 15
   const [settings, setSettings] = useState({
     buffer_time: 0,
-    confirm_staff_overlap: true
+    confirm_staff_overlap: true,
+    late_arrival_grace: 15
   });
   const [loading, setLoading] = useState(true);
   // Thao tác đang chạy (lưu / thêm / xóa / test...) → khóa nút + chữ "Đang ..."
@@ -90,6 +91,7 @@ function Settings() {
   // Mỗi nút một key riêng: buffer_time và tour_order_<chi nhánh> là 2 dòng cài đặt khác nhau
   // (updateSetting chỉ ghi đúng 1 key) → lưu cái này không cần khóa / hiện "Đang lưu..." ở cái kia.
   const saveBufferTime = () => run('save:buffer_time', () => handleSaveSetting('buffer_time', settings.buffer_time));
+  const saveLateArrivalGrace = () => run('save:late_arrival_grace', () => handleSaveSetting('late_arrival_grace', settings.late_arrival_grace));
 
   const askBeforeOverlap = !(settings.confirm_staff_overlap === false || settings.confirm_staff_overlap === 'false');
   const toggleAskBeforeOverlap = () => run('save:confirm_staff_overlap', () => handleSaveSetting('confirm_staff_overlap', !askBeforeOverlap));
@@ -334,6 +336,40 @@ function Settings() {
                     aria-busy={isBusy('save:buffer_time')}
                   >
                     <BusyLabel busy={isBusy('save:buffer_time')} text="Đang lưu...">
+                      <FiSave className="btn-icon" />
+                      Lưu cài đặt
+                    </BusyLabel>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="card-header" style={{ display: 'flex', justifyContent: 'start', alignItems: 'center', gap: '12px' }}>
+                <FiClock size={20} color="#e67e22" />
+                <h3 className="card-title">Thời gian chờ khách đến trễ</h3>
+              </div>
+              <div className="card-body">
+                <p className="settings-desc">
+                  Khách đặt đúng giờ nhận khách muộn nhất vẫn được check-in trễ tối đa số phút này mà không cần hỏi. Check-in trễ hơn → nhân viên được hỏi "Vẫn lưu?", trợ lý AI hỏi lại trong khung chat. Mặc định 15 phút.
+                </p>
+                <div className="settings-input-group">
+                  <input
+                    type="number"
+                    className="form-input max-w-120"
+                    value={settings.late_arrival_grace}
+                    onChange={e => setSettings({ ...settings, late_arrival_grace: Math.max(0, parseInt(e.target.value) || 0) })}
+                    min="0"
+                    step="5"
+                  />
+                  <span className="settings-input-suffix">phút</span>
+                  <button
+                    className="btn btn-primary btn-save"
+                    onClick={saveLateArrivalGrace}
+                    disabled={isBusy('save:late_arrival_grace')}
+                    aria-busy={isBusy('save:late_arrival_grace')}
+                  >
+                    <BusyLabel busy={isBusy('save:late_arrival_grace')} text="Đang lưu...">
                       <FiSave className="btn-icon" />
                       Lưu cài đặt
                     </BusyLabel>

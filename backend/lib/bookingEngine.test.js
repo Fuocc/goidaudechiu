@@ -177,3 +177,79 @@ test('mỗi loại vướng mắc có câu tiếng Việt dễ hiểu', () => {
   assert.match(describeConflict({ type: 'no_employee' }), /nhân viên/);
   assert.match(describeConflict({ type: 'no_bed' }), /giường/);
 });
+
+// ---- Giờ nhận khách muộn nhất (Last booking time) — ROADMAP.md › "Time limits" ----
+const closingAt = (lastBookingTime, o) => ({ ...makeDay(o), lastBookingTime });
+
+test('bắt đầu đúng Last booking time → không vướng; muộn 1 phút → after_last_booking', () => {
+  const day = closingAt('20:00');
+  assert.deepEqual(planPlacements({ day, policy: staff, items: [item({ start: '20:00', end: '21:30' })] }).conflicts, []);
+  const late = planPlacements({ day, policy: staff, items: [item({ start: '20:01', end: '21:31' })] });
+  assert.deepEqual(types(late), ['after_last_booking']);
+  assert.equal(late.conflicts[0].last_booking_time, '20:00');
+});
+
+test('Last booking time có phút (19:30): 19:30 được, 19:31 vướng', () => {
+  const day = closingAt('19:30');
+  assert.deepEqual(planPlacements({ day, policy: staff, items: [item({ start: '19:30', end: '21:00' })] }).conflicts, []);
+  assert.deepEqual(types(planPlacements({ day, policy: staff, items: [item({ start: '19:31', end: '21:01' })] })), ['after_last_booking']);
+});
+
+test('lịch kết thúc sau Last booking time nhưng bắt đầu trước → không vướng (Closing time = sau khách cuối)', () => {
+  const plan = planPlacements({ day: closingAt('20:00'), policy: staff, items: [item({ start: '19:00', end: '21:30' })] });
+  assert.deepEqual(plan.conflicts, []);
+});
+
+test('check-in (skipStartLimit) chưa áp Last booking time — chờ Late arrival grace (#14)', () => {
+  const plan = planPlacements({ day: closingAt('20:00'), policy: staff, items: [item({ start: '20:30', end: '21:30', skipStartLimit: true })] });
+  assert.deepEqual(plan.conflicts, []);
+});
+
+test('lý do "Vẫn lưu?" cho after_last_booking nêu giờ nhận khách muộn nhất', () => {
+  assert.equal(describeConflict({ type: 'after_last_booking', last_booking_time: '20:00' }), 'Quá giờ nhận khách (nhận khách muộn nhất 20:00)');
+});
+
+test('lịch vượt qua nửa đêm → refusal CROSSES_MIDNIGHT (không phải vướng mắc để "Vẫn lưu"); kết thúc đúng 24:00 thì được', () => {
+  const day = makeDay({ schedules: { e1: shift('09:00', '24:00'), e2: shift('09:00', '24:00'), e3: shift('09:00', '24:00') } });
+  const over = planPlacements({ day, policy: staff, items: [item({ start: '23:00', end: '24:30' })] });
+  assert.equal(over.refusal.code, 'CROSSES_MIDNIGHT');
+  assert.match(over.refusal.message, /nửa đêm/);
+  const wrapped = planPlacements({ day, policy: staff, items: [item({ start: '23:00', end: '00:30' })] });
+  assert.equal(wrapped.refusal.code, 'CROSSES_MIDNIGHT');
+  const exact = planPlacements({ day, policy: staff, items: [item({ start: '23:00', end: '24:00' })] });
+  assert.equal(exact.refusal, undefined);
+});
+
+// ---- Late arrival grace (#14): check-in muộn hơn Last booking time + grace → "Vẫn lưu?" ----
+test('late_arrival_grace: chưa cài = 15; "0" = 0; "20" = 20; giá trị sai = 15', () => {
+  assert.equal(policyFor('staff', {}).lateArrivalGrace, 15);
+  assert.equal(policyFor('staff', { late_arrival_grace: '0' }).lateArrivalGrace, 0);
+  assert.equal(policyFor('ai', { late_arrival_grace: '20' }).lateArrivalGrace, 20);
+  assert.equal(policyFor('staff', { late_arrival_grace: 'abc' }).lateArrivalGrace, 15);
+  assert.equal(policyFor('staff', { late_arrival_grace: -5 }).lateArrivalGrace, 15);
+});
+
+test('check-in đúng Last booking time + grace → không vướng; muộn 1 phút → late_check_in', () => {
+  const day = closingAt('20:00');
+  const atGrace = planPlacements({ day, policy: staff, items: [item({ start: '20:15', end: '21:15', checkIn: true })] });
+  assert.deepEqual(atGrace.conflicts, []);
+  const late = planPlacements({ day, policy: staff, items: [item({ start: '20:16', end: '21:16', checkIn: true })] });
+  assert.deepEqual(types(late), ['late_check_in']);
+  assert.equal(late.conflicts[0].last_booking_time, '20:00');
+  assert.equal(late.conflicts[0].grace, 15);
+});
+
+test('check-in trong grace (20:10, nhận khách muộn nhất 20:00) → không có lý do after_last_booking', () => {
+  const plan = planPlacements({ day: closingAt('20:00'), policy: staff, items: [item({ start: '20:10', end: '21:10', checkIn: true })] });
+  assert.deepEqual(plan.conflicts, []);
+});
+
+test('grace theo setting: 0 → check-in 20:01 đã vướng; ngày nghỉ (không có Last booking time) → không vướng', () => {
+  const noGrace = policyFor('staff', { late_arrival_grace: 0 });
+  assert.deepEqual(types(planPlacements({ day: closingAt('20:00'), policy: noGrace, items: [item({ start: '20:01', end: '21:01', checkIn: true })] })), ['late_check_in']);
+  assert.deepEqual(planPlacements({ day: closingAt(null), policy: staff, items: [item({ start: '21:00', end: '22:00', checkIn: true })] }).conflicts, []);
+});
+
+test('lý do "Vẫn lưu?" cho late_check_in nêu giờ nhận khách muộn nhất và số phút trễ tối đa', () => {
+  assert.equal(describeConflict({ type: 'late_check_in', last_booking_time: '20:00', grace: 15 }), 'Check-in quá giờ (nhận khách muộn nhất 20:00, trễ tối đa 15 phút)');
+});

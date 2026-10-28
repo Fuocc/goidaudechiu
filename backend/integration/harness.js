@@ -45,6 +45,7 @@ async function setup() {
   });
   app.set('broadcastSSE', () => { });
   app.use('/api/bookings', require('../routes/bookings'));
+  app.use('/api/availability', require('../routes/availability'));
   await new Promise((resolve) => { server = app.listen(0, resolve); });
   baseUrl = `http://127.0.0.1:${server.address().port}`;
 
@@ -93,7 +94,7 @@ function service(name) {
 function employee(index) { return ctx.employees[index]; }
 
 /** Ghi thẳng 1 lịch mẫu vào DB (không qua code đang test). */
-async function insertFixture({ employeeId = null, bedId = null, branchId = ctx.branch.id, date = TEST_DATE, start, end, name = 'Fixture', status = 'confirmed', serviceName = 'Ý dễ chịu' }) {
+async function insertFixture({ employeeId = null, bedId = null, branchId = ctx.branch.id, date = TEST_DATE, start, end, name = 'Fixture', status = 'confirmed', serviceName = 'Ý dễ chịu', groupId = null, customerId = null, notes = null }) {
   const { data, error } = await supabase.from('bookings').insert({
     branch_id: branchId,
     employee_id: employeeId,
@@ -103,10 +104,21 @@ async function insertFixture({ employeeId = null, bedId = null, branchId = ctx.b
     start_time: start,
     end_time: end,
     status,
-    temporary_name: TEST_PREFIX + name,
+    // Gắn hồ sơ khách (khách đặt) → không có tên riêng, tên hiển thị lấy từ hồ sơ
+    customer_id: customerId,
+    temporary_name: customerId ? null : TEST_PREFIX + name,
     num_guests: 1,
-    total_price: 0
+    total_price: 0,
+    group_booking_id: groupId, // khách đi nhóm: các fixture cùng groupId
+    notes
   }).select('*').single();
+  if (error) throw error;
+  return data;
+}
+
+/** Ghi thẳng 1 hồ sơ khách mẫu (tên mang TEST_PREFIX → được dọn cùng dữ liệu test). */
+async function insertCustomer(name, phone = nextPhone()) {
+  const { data, error } = await supabase.from('customers').insert({ name: TEST_PREFIX + name, phone }).select('*').single();
   if (error) throw error;
   return data;
 }
@@ -175,13 +187,36 @@ function staffUpdate(booking, changes, { allowConflict, role = 'admin' } = {}) {
   return http('PUT', `/${booking.id}`, { role, body });
 }
 
-function staffCheckIn(bookingId, { allowConflict, role = 'admin' } = {}) {
-  const body = allowConflict !== undefined ? { allow_conflict: allowConflict } : undefined;
-  return http('POST', `/${bookingId}/check-in`, { role, body });
+function staffCheckIn(bookingId, { allowConflict, scope, role = 'admin' } = {}) {
+  const body = {};
+  if (allowConflict !== undefined) body.allow_conflict = allowConflict;
+  if (scope !== undefined) body.scope = scope;
+  return http('POST', `/${bookingId}/check-in`, { role, body: Object.keys(body).length ? body : undefined });
+}
+
+/** Nhân viên hủy lịch (DELETE /:id = hủy bằng status). scope: 'group' | 'booking' | undefined */
+function staffCancel(bookingId, { scope, role = 'admin' } = {}) {
+  return http('DELETE', `/${bookingId}${scope ? `?scope=${scope}` : ''}`, { role });
+}
+
+/** Nhân viên đổi trạng thái lịch (hoàn thành, khôi phục lịch đã hủy…). */
+function staffStatus(bookingId, status, { scope, allowConflict, role = 'admin' } = {}) {
+  const body = { status };
+  if (scope) body.scope = scope;
+  if (allowConflict !== undefined) body.allow_conflict = allowConflict;
+  return http('PUT', `/${bookingId}/status`, { role, body });
+}
+
+/** Đọc thẳng 1 dòng lịch từ DB (kể cả lịch đã hủy); null nếu không còn. */
+async function bookingRow(id) {
+  const { data, error } = await supabase.from('bookings').select('*').eq('id', id).maybeSingle();
+  if (error) throw error;
+  return data;
 }
 
 /** Gọi đúng hàm tool mà AI dùng (không qua Gemini → kết quả xác định). */
-function aiTool(name, params) {
+/** chat: { command, conversation_history } như AI chat gửi lên (không truyền = tool gọi ngoài chat). */
+function aiTool(name, params, chat) {
   const { executeTool } = require('../routes/bookingCommandsV2');
   if (typeof executeTool !== 'function') throw new Error('routes/bookingCommandsV2 chưa export executeTool');
   return executeTool(name, params, {
@@ -190,8 +225,22 @@ function aiTool(name, params) {
     todayDateStr: TODAY,
     dbBranches: ctx.allBranches,
     canManageStaff: true,
-    req: { app: { get: () => () => { } }, auth: { id: 'test-admin', role: 'admin', level: 2 } }
+    req: { app: { get: () => () => { } }, auth: { id: 'test-admin', role: 'admin', level: 2 }, body: chat }
   });
+}
+
+/** Gọi tool AI + tạo action hoàn tác đã ký đúng như AI chat (buildAction + signUndoAction). */
+async function aiAction(name, params) {
+  const { buildAction } = require('../routes/bookingCommandsV2');
+  const { signUndoAction } = require('../lib/undoToken');
+  const result = await aiTool(name, params);
+  const action = buildAction(name, result);
+  return { result, action: action && await signUndoAction(action, 'test-admin') };
+}
+
+/** Bấm "Hoàn tác" trên tin nhắn AI (cùng người đã ra lệnh: test-admin). */
+function undo(actions, { role = 'admin' } = {}) {
+  return http('POST', '/undo', { role, body: { actions } });
 }
 
 function aiCreate({ start, employeeId, serviceName = 'Ý dễ chịu', guests = 1, date = TEST_DATE, name = 'AI' }) {
@@ -282,6 +331,27 @@ async function withoutSetting(key, fn) {
   }
 }
 
+/** Đổi giờ mở cửa (mọi thứ trong tuần) của chi nhánh trong lúc chạy fn, rồi trả lại như cũ. */
+async function withHours(branchId, { open = '09:00', close }, fn) {
+  const { data: before } = await supabase.from('branches').select('opening_hours').eq('id', branchId).single();
+  const day = { isOpen: true, open, close };
+  const opening_hours = Object.fromEntries(['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map(d => [d, day]));
+  await supabase.from('branches').update({ opening_hours }).eq('id', branchId);
+  try { return await fn(); } finally {
+    await supabase.from('branches').update({ opening_hours: before.opening_hours }).eq('id', branchId);
+  }
+}
+
+/** Lịch trống online (GET /api/availability) → danh sách giờ bắt đầu được mở. */
+async function availableStarts({ serviceName = 'Ý dễ chịu', date = TEST_DATE, guests = 1 }) {
+  const qs = new URLSearchParams({ branch_id: ctx.branch.id, service_id: service(serviceName).id, date, num_guests: guests });
+  const res = await fetch(`${baseUrl}/api/availability?${qs}`);
+  const body = await res.json();
+  if (!res.ok) throw new Error(`availability ${res.status}: ${JSON.stringify(body)}`);
+  const slots = Array.isArray(body) ? body : body.slots;
+  return slots.filter(s => s.available !== false).map(s => s.start_time || s.time);
+}
+
 /** Cho các lịch giữ chỗ hết hạn ngay (cả cách lưu cũ EXPIRES: trong ghi chú lẫn cột hold_expires_at nếu đã có). */
 async function expireHolds(ids) {
   const past = Date.now() - 60e3;
@@ -296,8 +366,9 @@ async function expireHolds(ids) {
 module.exports = {
   TEST_PREFIX, TEST_DATE, TODAY, ctx, supabase,
   setup, teardown, cleanup, toMin, toHHMM, vnNowMinutes,
-  service, employee, insertFixture, occupyStaff,
-  onlineBook, onlineHold, staffBook, staffUpdate, staffCheckIn, aiTool, aiCreate,
+  service, employee, insertFixture, insertCustomer, occupyStaff,
+  withHours, availableStarts,
+  onlineBook, onlineHold, staffBook, staffUpdate, staffCheckIn, staffCancel, staffStatus, bookingRow, aiTool, aiAction, undo, aiCreate,
   activeBookings, findOverlaps, getSetting, withSetting, withShift,
   otherBranch, withBedsInactive, withoutSetting, expireHolds
 };

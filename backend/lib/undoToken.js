@@ -13,11 +13,7 @@ const crypto = require('crypto');
 const supabase = require('../supabaseClient');
 
 // Các trường được khôi phục khi hoàn tác (cũng là các trường dùng để tính dấu vân tay)
-const UNDO_RESTORE_FIELDS = [
-  'service_id', 'employee_id', 'bed_id', 'branch_id', 'customer_id', 'temporary_name',
-  'num_guests', 'booking_date', 'start_time', 'end_time', 'status', 'total_price',
-  'notes', 'internal_note', 'group_booking_id'
-];
+const { RESTORE_FIELDS: UNDO_RESTORE_FIELDS } = require('./bookingChange');
 const UNDO_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 let cachedKey = null;
@@ -114,7 +110,6 @@ function verifyUndoAction(action, userId) {
 }
 
 module.exports = {
-  UNDO_RESTORE_FIELDS,
   UNDO_MAX_AGE_MS,
   fingerprintRow,
   signUndoAction,

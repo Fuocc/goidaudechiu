@@ -8,7 +8,10 @@ const { hasRole } = require('../middleware/auth');
 const { loadTourOrder, sortByTourOrder } = require('../lib/tourOrder');
 const { signUndoAction } = require('../lib/undoToken');
 const { checkInBooking } = require('../lib/checkIn');
+const { changeBooking, changeStatus, reassignEmployee } = require('../lib/bookingChange');
+const { toBookingChange, normalizeScope, guestChoice, matchContact, bareName } = require('../lib/aiBookingChange');
 const { placeBookings, withMessages, summarizeConflicts } = require('../lib/bookingEngine');
+const { branchDayHours } = require('../lib/branchHours');
 const { issueConfirmToken, consumeConfirmToken, rememberPending, peekPending } = require('../lib/confirmToken');
 
 /*
@@ -23,7 +26,10 @@ function aiOverride(context, tool, params) {
   }).ok;
 }
 
-function aiBlocked(context, tool, params, conflicts, prefix = '') {
+// failed = kết quả không lưu được từ booking engine / check-in: { conflicts, refused? }
+function aiBlocked(context, tool, params, { conflicts = [], refused } = {}, prefix = '') {
+  // Từ chối hẳn (VD vượt qua nửa đêm) → không có confirm_token, "Vẫn lưu" cũng không lưu được
+  if (refused) return { success: false, blocked: true, code: refused.code, reason: `${prefix}${refused.message}` };
   const uid = context.req?.auth?.id;
   const result = {
     success: false,
@@ -39,6 +45,55 @@ function aiBlocked(context, tool, params, conflicts, prefix = '') {
     rememberPending(uid, { tool, args: { ...args, confirm_token: result.confirm_token }, token: result.confirm_token });
   }
   return result;
+}
+
+// Đối chiếu tên khách trong lệnh gốc với tên thật của lịch → tránh sửa / check-in / hủy nhầm khách
+function nameMismatch(hintRaw, actualRaw, verb) {
+  if (!hintRaw) return null;
+  const stripPrefix = (str) => (str || '').toLowerCase().replace(/^(chị|anh|c\.|a\.)\s+/i, '').trim();
+  const hint = stripPrefix(hintRaw);
+  const actualName = stripPrefix(actualRaw);
+  if (!hint || !actualName || actualName.includes(hint) || hint.includes(actualName)) return null;
+  return {
+    error: `Tên khách không khớp: lịch hẹn này thuộc về "${actualRaw}", không phải "${hintRaw}". Vui lòng gọi lại search_bookings để xác nhận đúng lịch trước khi ${verb}.`
+  };
+}
+
+const GUEST_SELECT = 'id, group_booking_id, temporary_name, status, start_time, customers(name), employees(name), services(name)';
+
+// Người dùng chỉ 1 khách mà nhóm có nhiều khách cùng tên → chưa lưu gì, trả danh sách khách để AI hỏi khách nào
+async function askWhichGuest(bookingId, scope, guestConfirmed) {
+  if (scope !== 'booking' || guestConfirmed === true) return null;
+  const { data: booking, error } = await supabase.from('bookings').select(GUEST_SELECT).eq('id', bookingId).maybeSingle();
+  if (error) throw error;
+  if (!booking?.group_booking_id) return null;
+  const { data: group, error: grpErr } = await supabase.from('bookings').select(GUEST_SELECT)
+    .eq('group_booking_id', booking.group_booking_id).neq('id', booking.id);
+  if (grpErr) throw grpErr;
+  const guests = guestChoice({ booking, group: group || [], scope, guestConfirmed });
+  if (!guests) return null;
+  return {
+    success: false,
+    needs_guest_choice: true,
+    reason: 'Nhóm có nhiều khách cùng tên, chưa biết là khách nào. Chưa lưu gì.',
+    guests,
+    hint: 'Liệt kê các khách (NV / giờ / dịch vụ) và hỏi người dùng là khách nào. Sau khi họ chọn → gọi lại ĐÚNG tool này với booking_id của khách đó, giữ các tham số khác, thêm guest_confirmed: true.'
+  };
+}
+
+// Phạm vi của lệnh AI: thiếu / lạ = cả nhóm; ask ≠ null → chưa lưu gì, trả về để AI hỏi khách nào
+async function aiScope(params) {
+  const scope = normalizeScope(params.scope);
+  return { scope, ask: await askWhichGuest(params.booking_id, scope, params.guest_confirmed) };
+}
+
+// Lời người dùng của lượt chat: lệnh này + lượt người dùng trước đó (VD giờ nói trước khi AI hỏi khách nào).
+// Tool gọi ngoài chat (không có lệnh) → undefined = không lọc
+function userTextsOf(req) {
+  const { command, conversation_history: history } = req?.body || {};
+  if (typeof command !== 'string') return undefined;
+  const previous = Array.isArray(history) ? history.filter(m => m?.role === 'user').at(-1)?.text : undefined;
+  return [command, previous].filter(t => typeof t === 'string');
 }
 
 // Initialize Gemini SDK
@@ -125,36 +180,29 @@ const spaTools = [
   },
   {
     name: "update_booking",
-    description: "Cập nhật hoặc điều chỉnh một lịch hẹn hiện có qua ID. Nếu lịch thuộc một nhóm khách đi cùng (đặt chung nhiều người) và lệnh là dời giờ/ngày, chỉ cần truyền 1 booking_id đại diện — hệ thống sẽ tự dời cả nhóm.",
+    description: "Sửa 1 lịch hẹn qua ID (dời ngày / giờ, đổi dịch vụ, chi nhánh, nhân viên, ghi chú). Lịch thuộc nhóm → mặc định áp cho CẢ NHÓM (cùng giờ bắt đầu mới, mỗi người giữ thời lượng của mình); scope = booking khi người dùng chỉ rõ 1 khách. Chỉ cần 1 booking_id đại diện cho nhóm. Lịch khác (không cùng nhóm) → gọi riêng từng lịch.",
     parameters: {
       type: "object",
       properties: {
         booking_id: { type: "string", description: "UUID của lịch hẹn cần sửa." },
-        booking_ids: {
-          type: "array",
-          items: { type: "string" },
-          description: "Dùng khi cần cập nhật nhiều lịch hẹn cụ thể cùng lúc (ví dụ search_bookings trả về nhiều kết quả trùng tên cần sửa hết)."
+        scope: {
+          type: "string",
+          enum: ["group", "booking"],
+          description: "group (mặc định) = cả nhóm. booking = chỉ khách này (VD: \"chỉ khách này\", \"đổi dịch vụ cho 1 người trong nhóm\"). Nhân viên luôn chỉ áp cho khách này."
         },
-        start_time: { type: "string", description: "Giờ mới HH:MM nếu có thay đổi." },
-        branch_id: { type: "string", description: "UUID chi nhánh mới nếu khách muốn đổi chi nhánh." },
-        status: { type: "string", enum: ["confirmed", "arrived", "pending", "cancelled", "completed"] },
-        employee_ids: {
-          type: "array",
-          items: { type: "string" },
-          description: "UUID nhân viên mới nếu đổi thợ. 1 nhân viên cho 1 khách."
-        },
-        num_guests: { type: "integer", description: "Số khách mới nếu thay đổi." },
-        notes: { type: "string", description: "Ghi chú cần bổ sung/thay đổi. Chỉ điền phần nội dung mới - hệ thống sẽ tự nối vào ghi chú cũ, không cần lặp lại ghi chú cũ." },
-        service_id: { type: "string", description: "UUID dịch vụ mới nếu thay đổi." },
-        extra_service_ids: {
-          type: "array",
-          items: { type: "string" },
-          description: "UUID các dịch vụ bổ sung nếu có."
-        },
+        booking_date: { type: "string", description: "Ngày mới YYYY-MM-DD nếu dời ngày (VD \"dời sang mai\")." },
+        start_time: { type: "string", description: "Giờ bắt đầu mới HH:MM nếu dời giờ." },
+        service_id: { type: "string", description: "UUID dịch vụ mới nếu đổi dịch vụ (1 dịch vụ / lịch)." },
+        branch_id: { type: "string", description: "UUID chi nhánh mới nếu đổi chi nhánh." },
+        employee_id: { type: "string", description: "UUID nhân viên mới cho ĐÚNG khách này nếu đổi thợ." },
+        notes: { type: "string", description: "TOÀN BỘ ghi chú mới (thay hẳn ghi chú cũ). Ghi chú hiện tại có trong search_bookings: muốn thêm thì gửi ghi chú cũ + phần mới; muốn xóa bớt thì gửi phần còn lại." },
+        customer_name: { type: "string", description: "Tên khách đặt mới khi người dùng nêu tên khách cho lịch (VD \"Chị Linh - 4050\" → \"Chị Linh\"). Hệ thống tự gắn hồ sơ khách hoặc lưu tên riêng. KHÔNG ghi tên khách vào notes." },
+        phone_hint: { type: "string", description: "Vài số trong SĐT khách người dùng nêu kèm tên (VD \"Chị Linh - 4050\" → \"4050\"). Đây là SĐT, KHÔNG phải giờ." },
         customer_name_hint: {
           type: "string",
           description: "Tên khách được nhắc trong lệnh gốc (nếu có). Hệ thống sẽ đối chiếu với tên thật của lịch hẹn trước khi sửa để tránh sửa nhầm lịch của khách khác."
         },
+        guest_confirmed: { type: "boolean", description: "CHỈ truyền true khi tool trước trả needs_guest_choice và người dùng đã chọn khách (hoặc người dùng trả lời đúng thẻ lịch của khách đó). Kèm booking_id của khách được chọn." },
         confirm_token: { type: "string", description: "CHỈ truyền khi lần gọi trước bị chặn (blocked) VÀ người dùng đã đồng ý \"Vẫn lưu\": dán đúng confirm_token đã nhận, giữ nguyên các tham số cũ. KHÔNG tự tạo token." },
       },
       required: ["booking_id"]
@@ -162,15 +210,21 @@ const spaTools = [
   },
   {
     name: "check_in_booking",
-    description: "Cập nhật khách đã đến: tự động set giờ hiện tại (làm tròn 5 phút) làm start_time, tính lại end_time theo dịch vụ, cập nhật status = arrived. Lịch nhóm → check-in cả nhóm. Gọi sau search_bookings.",
+    description: "Cập nhật khách đã đến: tự động set giờ hiện tại (làm tròn 5 phút) làm start_time, tính lại end_time theo dịch vụ, cập nhật status = arrived. Lịch nhóm → mặc định check-in cả nhóm; scope = booking khi người dùng chỉ nói 1 khách đến. Gọi sau search_bookings.",
     parameters: {
       type: "object",
       properties: {
         booking_id: { type: "string", description: "UUID của lịch hẹn cần check-in." },
+        scope: {
+          type: "string",
+          enum: ["group", "booking"],
+          description: "group (mặc định) = check-in cả nhóm. booking = chỉ khách này (VD: \"1 người trong nhóm chị Mia tới rồi\", \"chỉ khách này\"). Chưa rõ khách nào trong nhóm → hỏi lại người dùng (nêu NV / giờ / dịch vụ) trước khi gọi."
+        },
         customer_name_hint: {
           type: "string",
           description: "Tên khách được nhắc trong lệnh gốc. Hệ thống sẽ đối chiếu với tên thật của lịch hẹn trước khi check-in để tránh nhầm khách."
         },
+        guest_confirmed: { type: "boolean", description: "CHỈ truyền true khi tool trước trả needs_guest_choice và người dùng đã chọn khách (hoặc người dùng trả lời đúng thẻ lịch của khách đó). Kèm booking_id của khách được chọn." },
         confirm_token: { type: "string", description: "CHỈ truyền khi lần gọi trước bị chặn (blocked) VÀ người dùng đã đồng ý \"Vẫn lưu\": dán đúng confirm_token đã nhận, giữ nguyên các tham số cũ. KHÔNG tự tạo token." }
       },
       required: ["booking_id"]
@@ -178,16 +232,17 @@ const spaTools = [
   },
   {
     name: "delete_booking",
-    description: "Hủy hoặc xóa một lịch hẹn theo ID.",
+    description: "Hủy lịch hẹn theo ID (đánh dấu đã hủy, không xóa). Mặc định hủy cả nhóm khách.",
     parameters: {
       type: "object",
       properties: {
         booking_id: { type: "string", description: "UUID của lịch hẹn cần hủy." },
-        cancel_group: { type: "boolean", description: "True nếu muốn hủy toàn bộ nhóm." },
+        scope: { type: "string", enum: ["group", "booking"], description: "Mặc định group = hủy cả nhóm khách (lịch không thuộc nhóm thì chỉ lịch đó). booking = chỉ khách này, khi người dùng chỉ rõ 1 khách trong nhóm." },
         customer_name_hint: {
           type: "string",
           description: "Tên khách được nhắc trong lệnh gốc. Hệ thống sẽ đối chiếu với tên thật của lịch hẹn trước khi hủy để tránh hủy nhầm lịch của khách khác."
-        }
+        },
+        guest_confirmed: { type: "boolean", description: "CHỈ truyền true khi tool trước trả needs_guest_choice và người dùng đã chọn khách (hoặc người dùng trả lời đúng thẻ lịch của khách đó). Kèm booking_id của khách được chọn." }
       },
       required: ["booking_id"]
     }
@@ -643,23 +698,16 @@ async function executeTool(toolName, params, context) {
         bookingParams.end_time = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
       }
 
-      // Reject bookings that fall outside the branch's opening hours for
-      // that day of week — previously unchecked, letting e.g. 2AM bookings
-      // through silently.
-      if (bookingParams.booking_date && bookingParams.start_time && bookingParams.end_time) {
+      // Bắt đầu trước giờ mở cửa → từ chối. Bắt đầu sau giờ nhận khách muộn nhất → booking engine chặn
+      // + confirm_token như mọi vướng mắc khác (ROADMAP.md › "Time limits"); kết thúc sau `close` vẫn được.
+      if (bookingParams.booking_date && bookingParams.start_time) {
         const branch = (dbBranches || []).find(b => b.id === branch_id);
-        const weekday = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][
-          new Date(bookingParams.booking_date + 'T00:00:00').getDay()
-        ];
-        const hours = branch?.opening_hours?.[weekday];
-        const openTime = hours?.open || '09:00';
-        const closeTime = hours?.close || '22:00';
-
-        if (bookingParams.start_time < openTime || bookingParams.end_time > closeTime) {
+        const { open: openTime } = branchDayHours(branch?.opening_hours, bookingParams.booking_date);
+        if (openTime && bookingParams.start_time < openTime) {
           return {
             success: false,
             blocked: true,
-            reason: `Chi nhánh chỉ mở cửa từ ${openTime} đến ${closeTime} vào ngày ${bookingParams.booking_date}. Không thể đặt lịch ${bookingParams.start_time}-${bookingParams.end_time}. Vui lòng chọn giờ khác trong khung giờ mở cửa.`
+            reason: `Chi nhánh mở cửa từ ${openTime} vào ngày ${bookingParams.booking_date}. Không thể đặt lịch ${bookingParams.start_time}. Vui lòng chọn giờ khác.`
           };
         }
       }
@@ -716,7 +764,7 @@ async function executeTool(toolName, params, context) {
         })
       });
       if (!result.ok) {
-        return aiBlocked(context, 'create_booking', params, result.conflicts,
+        return aiBlocked(context, 'create_booking', params, result,
           `Chưa tạo lịch ${bookingParams.start_time}-${bookingParams.end_time}: `);
       }
 
@@ -733,408 +781,100 @@ async function executeTool(toolName, params, context) {
       return { success: true, count: created.length, bookings: created };
     }
 
-    // case 'create_booking': {
-    //   const { num_guests = 1, ...bookingParams } = params;
-    //   const broadcast = context.req.app.get('broadcastSSE') || (() => {});
-
-    //   // Better handle for edge cases like 3cb17, 2ng, 3kh
-    //   // if (bookingParams.notes) {
-    //   //   bookingParams.notes = bookingParams.notes.replace(/^\d+(ng|kh|khách)?\s*/i, '');
-    //   // }
-
-    //   // Walk-in: round to nearest 5 minutes
-    //   if (params.is_walk_in && params.start_time) {
-    //     const [h, m] = params.start_time.split(':').map(Number);
-    //     const totalMinutes = h * 60 + m;
-    //     const rounded = Math.ceil(totalMinutes / 5) * 5;
-    //     bookingParams.start_time = `${String(Math.floor(rounded / 60)).padStart(2, '0')}:${String(rounded % 60).padStart(2, '0')}`;
-    //   }
-
-    //   // Look up service durations from DB
-    //   let duration = params.duration_minutes || 0;
-    //   let serviceNames = [];
-
-    //   if (!params.duration_minutes) {
-    //     const allServiceIds = [params.service_id, ...(params.extra_service_ids || [])].filter(Boolean);
-    //     const { data: services } = await supabase
-    //       .from('services')
-    //       .select('id, name, duration_minutes')
-    //       .in('id', allServiceIds);
-
-    //     if (services?.length) {
-    //       duration = services.reduce((sum, s) => sum + (s.duration_minutes || 0), 0);
-    //       serviceNames = services.map(s => s.name);
-    //     }
-    //   }
-
-    //   if (serviceNames.length > 1 && !bookingParams.notes) {
-    //     bookingParams.notes = serviceNames.join(' + ');
-    //   }
-
-    //   if (!duration) duration = 60;
-    //   delete bookingParams.extra_service_ids;
-    //   delete bookingParams.employee_ids;
-
-    //   // Compute end_time
-    //   if (bookingParams.start_time) {
-    //     const [h, m] = bookingParams.start_time.split(':').map(Number);
-    //     const endMinutes = h * 60 + m + duration;
-    //     bookingParams.end_time = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
-    //   }
-
-    //   // Resolve requested staff
-    //   const requestedIds = params.employee_ids || [];
-    //   const lockedIds = new Set(requestedIds.filter(Boolean));
-
-    //   // Fetch available staff excluding locked and busy
-    //   const { data: onDutyStaff } = await supabase
-    //     .from('employee_schedules')
-    //     .select('employee_id, employees!inner(id, name, branch_id)')
-    //     .eq('date', bookingParams.booking_date)
-    //     .eq('is_day_off', false)
-    //     .eq('employees.branch_id', branch_id)
-    //     .eq('employees.is_active', true);
-
-    //   const { data: overlapping } = await supabase
-    //     .from('bookings')
-    //     .select('employee_id')
-    //     .eq('booking_date', bookingParams.booking_date)
-    //     .eq('branch_id', branch_id)
-    //     .neq('status', 'cancelled')
-    //     .lt('start_time', bookingParams.end_time)
-    //     .gt('end_time', bookingParams.start_time);
-
-    //   const busyIds = new Set(overlapping?.map(b => b.employee_id) || []);
-    //   const availableStaff = onDutyStaff
-    //     ?.filter(s => !busyIds.has(s.employee_id) && !lockedIds.has(s.employee_id))
-    //     .map(s => s.employee_id) || [];
-
-    //   // Block if not enough staff for auto-assignment
-    //   const autoNeeded = num_guests - lockedIds.size;
-    //   if (availableStaff.length < autoNeeded) {
-    //     return {
-    //       success: false,
-    //       blocked: true,
-    //       reason: `Không đủ nhân viên rảnh. Cần ${autoNeeded} nhân viên tự động nhưng chỉ còn ${availableStaff.length} trống.`
-    //     };
-    //   }
-
-    //   // Build rows
-    //   const group_booking_id = num_guests > 1 ? crypto.randomUUID() : null;
-    //   let autoIndex = 0;
-    //   const rows = Array.from({ length: num_guests }, (_, i) => ({
-    //     ...bookingParams,
-    //     branch_id,
-    //     group_booking_id,
-    //     employee_id: requestedIds[i] || availableStaff[autoIndex++]
-    //   }));
-
-    //   const { data: inserted, error } = await supabase
-    //     .from('bookings')
-    //     .insert(rows)
-    //     .select('*, employees(name), services(name), branches(name)');
-
-    //   if (error) return { error: error.message };
-    //   inserted.forEach(b => broadcast('booking.created', b));
-
-    //   return { success: true, count: inserted.length, bookings: inserted };
-    // }
-
     case 'update_booking': {
-      const { booking_id, booking_ids, ...updateParams } = params;
+      // Adapter mỏng quanh Booking change: cùng quy tắc nhóm, giờ, chi nhánh, vướng mắc như trên lịch (spec #8)
       const broadcast = context.req.app.get('broadcastSSE') || (() => { });
-      const explicitNewNotes = typeof params.notes === 'string' ? params.notes.trim() : null;
+      if (!params.booking_id) return { error: 'Thiếu booking_id để cập nhật.' };
 
-      let targetIds = Array.isArray(booking_ids) && booking_ids.length
-        ? booking_ids
-        : [booking_id].filter(Boolean);
-      if (targetIds.length > 10) {
-        return { error: 'Mỗi lần chỉ được sửa tối đa 10 lịch hẹn. Hãy báo người dùng tách lệnh.' };
+      const { data: booking } = await supabase.from('bookings').select('*').eq('id', params.booking_id).maybeSingle();
+      if (!booking || booking.status === 'cancelled') {
+        return { error: 'Không tìm thấy lịch hẹn còn hiệu lực để cập nhật (có thể đã bị hủy hoặc không tồn tại). Gọi lại search_bookings.' };
       }
+      const mismatch = nameMismatch(params.customer_name_hint, booking.temporary_name, 'sửa');
+      if (mismatch) return mismatch;
 
-      if (!targetIds.length) return { error: 'Thiếu booking_id để cập nhật.' };
-
-      // Rescheduling date/time should move the whole group together, since
-      // num_guests > 1 bookings from create_booking share one group_booking_id.
-      const isReschedule = Boolean(updateParams.start_time || updateParams.booking_date);
-      if (targetIds.length === 1 && isReschedule) {
-        const { data: originBooking } = await supabase
-          .from('bookings')
-          .select('group_booking_id')
-          .eq('id', targetIds[0])
-          .single();
-
-        if (originBooking?.group_booking_id) {
-          const { data: siblings } = await supabase
-            .from('bookings')
-            .select('id')
-            .eq('group_booking_id', originBooking.group_booking_id)
-            .neq('status', 'cancelled');
-          if (siblings?.length > 1) targetIds = siblings.map(s => s.id);
+      const { scope, ask } = await aiScope(params);
+      if (ask) return ask;
+      // Tên (+ số SĐT) khách đặt → gắn hồ sơ / tên riêng; nhiều hồ sơ cùng tên + số → chưa lưu, hỏi lại
+      let contact;
+      // "Chỉ khách này" trong nhóm: khách đó mang tên riêng, không gắn hồ sơ khác nhóm (ROADMAP › Contact)
+      if (params.customer_name && scope === 'booking' && booking.group_booking_id) {
+        contact = { temporaryName: String(params.customer_name).trim() };
+      } else if (params.customer_name) {
+        const { data: found, error: custErr } = await supabase.from('customers').select('id, name, phone')
+          .ilike('name', `%${bareName(params.customer_name)}%`);
+        if (custErr) throw custErr;
+        contact = matchContact({ name: params.customer_name, phoneHint: params.phone_hint, customers: found || [] });
+        if (contact.candidates) {
+          return {
+            success: false,
+            needs_contact_choice: true,
+            reason: 'Có nhiều hồ sơ khách cùng tên và cùng các số SĐT này. Chưa lưu gì.',
+            candidates: contact.candidates,
+            hint: 'Liệt kê các hồ sơ (tên + SĐT) và hỏi người dùng là ai. Sau khi họ chọn → gọi lại update_booking với customer_name + phone_hint là SĐT đầy đủ của hồ sơ đó.'
+          };
         }
       }
-
-      const prepared = []; // { id, oldBooking, rowUpdate, autoEmployee }
-      const skippedIds = [];
-      const stripPrefix = (str) => (str || '').toLowerCase().replace(/^(chị|anh|c\.|a\.)\s+/i, '').trim();
-
-      for (let i = 0; i < targetIds.length; i++) {
-        const id = targetIds[i];
-
-        // Snapshot for undo. A booking that no longer exists, or that was
-        // already cancelled, must NOT be silently reported as updated —
-        // that's how the agent used to hallucinate "success" on stale
-        // reply-to references.
-        const { data: oldBooking } = await supabase
-          .from('bookings')
-          .select('*')
-          .eq('id', id)
-          .single();
-        if (!oldBooking || oldBooking.status === 'cancelled') {
-          skippedIds.push(id);
-          continue;
+      const { change, ignoredStartTime } = toBookingChange(params, booking, { userTexts: userTextsOf(context.req), contact });
+      // Giờ model gửi mà người dùng không nói → đã bỏ; báo lý do để AI nói lại, không im lặng
+      const ignored = ignoredStartTime && {
+        ignored_start_time: {
+          sent: ignoredStartTime,
+          kept: String(booking.start_time).slice(0, 5),
+          reason: `Bỏ giờ ${ignoredStartTime}: người dùng không nói giờ trong lệnh này hay lượt trước → lịch giữ giờ ${String(booking.start_time).slice(0, 5)}. Muốn dời giờ thì hỏi người dùng giờ mới.`
         }
-
-        // Double-check the booking actually belongs to the customer named in
-        // the original command before mutating it, to avoid acting on the
-        // wrong record when search_bookings only found a fuzzy/partial match.
-        if (params.customer_name_hint) {
-          const hint = stripPrefix(params.customer_name_hint);
-          const actualName = stripPrefix(oldBooking.temporary_name);
-          if (hint && actualName && !actualName.includes(hint) && !hint.includes(actualName)) {
-            skippedIds.push(id);
-            continue;
-          }
-        }
-
-        const rowUpdate = { ...updateParams };
-
-        if (rowUpdate.duration_minutes && !rowUpdate.service_id) {
-          const [h, m] = (rowUpdate.start_time || oldBooking.start_time).split(':').map(Number);
-          const endMinutes = h * 60 + m + rowUpdate.duration_minutes;
-          rowUpdate.end_time = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
-          delete rowUpdate.duration_minutes;
-        }
-
-        if (rowUpdate.start_time && !rowUpdate.service_id && !rowUpdate.duration_minutes) {
-          const duration = oldBooking.end_time && oldBooking.start_time
-            ? (() => {
-              const [oh, om] = oldBooking.start_time.split(':').map(Number);
-              const [eh, em] = oldBooking.end_time.split(':').map(Number);
-              return (eh * 60 + em) - (oh * 60 + om);
-            })()
-            : 60;
-          const [h, m] = rowUpdate.start_time.split(':').map(Number);
-          const endMinutes = h * 60 + m + duration;
-          rowUpdate.end_time = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
-        }
-
-        // Recalculate duration if service changed or extra services are provided
-        if (rowUpdate.service_id || rowUpdate.extra_service_ids?.length) {
-          const primaryServiceId = rowUpdate.service_id || oldBooking.service_id;
-
-          const allServiceIds = [
-            primaryServiceId,
-            ...(rowUpdate.extra_service_ids || [])
-          ].filter(Boolean);
-
-          const { data: services } = await supabase
-            .from('services')
-            .select('id, name, duration_minutes')
-            .in('id', allServiceIds);
-
-          const foundIds = new Set((services || []).map(s => s.id));
-          const missingIds = allServiceIds.filter(id => !foundIds.has(id));
-          if (missingIds.length > 0) {
-            return {
-              error: `service_id không hợp lệ hoặc không tồn tại: ${missingIds.join(', ')}. Hãy gọi get_spa_context để lấy đúng UUID dịch vụ rồi thử lại, KHÔNG tự đoán UUID.`
-            };
-          }
-
-          if (services?.length) {
-            const duration = services.reduce((sum, s) => sum + (s.duration_minutes || 0), 0);
-            const [h, m] = (rowUpdate.start_time || oldBooking.start_time).split(':').map(Number);
-            const endMinutes = h * 60 + m + duration;
-            rowUpdate.end_time = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
-
-            if (services.length > 1) {
-              rowUpdate.notes = services.map(s => s.name).join(' + ');
-            }
-          }
-        }
-
-        // Đổi chi nhánh (ROADMAP.md › Booking rules): NV được chỉ định / NV hiện tại nếu thuộc chi nhánh mới,
-        // không thì tự xếp người rảnh + giường trống của chi nhánh mới; không ai rảnh → chặn, lịch giữ nguyên.
-        // (Trước đây xóa NV và giữ giường của chi nhánh cũ → lịch "mồ côi".)
-        let autoEmployee = false;
-        if (rowUpdate.branch_id && rowUpdate.branch_id !== oldBooking.branch_id) {
-          const requestedEmpId = params.employee_ids?.[i] ?? params.employee_ids?.[0];
-          const candidates = [requestedEmpId, oldBooking.employee_id].filter(Boolean);
-          const { data: inNewBranch } = candidates.length
-            ? await supabase.from('employees').select('id').in('id', candidates).eq('branch_id', rowUpdate.branch_id).eq('is_active', true)
-            : { data: [] };
-          const keep = candidates.find(id => (inNewBranch || []).some(e => e.id === id));
-          rowUpdate.employee_id = keep || null;
-          autoEmployee = !keep;
-        }
-
-        // Remove extra_service_ids / employee_ids (plural) and the name-hint
-        // guard param before sending to Supabase — the bookings table only
-        // has singular employee_id/service_id columns and no name-hint column.
-        delete rowUpdate.extra_service_ids;
-        delete rowUpdate.employee_ids;
-        delete rowUpdate.customer_name_hint;
-        delete rowUpdate.confirm_token;
-
-        // Map employee_ids to employee_id. For a single booking, take the first id.
-        // For a whole group, only assign per-guest if the array lines up 1:1 with the
-        // group — otherwise leave employee_id untouched to avoid double-booking the
-        // same staff member across the group.
-        if (!('employee_id' in rowUpdate) && params.employee_ids?.length > 0) {
-          if (targetIds.length === 1) {
-            rowUpdate.employee_id = params.employee_ids[0];
-          } else if (params.employee_ids.length === targetIds.length) {
-            rowUpdate.employee_id = params.employee_ids[i];
-          }
-        }
-
-        // Merge new notes into this booking's existing notes instead of overwriting
-        // them, so a follow-up command that only adds a note doesn't wipe out the
-        // note set earlier.
-        if (explicitNewNotes) {
-          const baseNotes = (rowUpdate.notes && rowUpdate.notes !== explicitNewNotes)
-            ? rowUpdate.notes.trim()
-            : (oldBooking?.notes || '').trim();
-          if (baseNotes && baseNotes !== explicitNewNotes &&
-            !explicitNewNotes.includes(baseNotes) && !baseNotes.includes(explicitNewNotes)) {
-            rowUpdate.notes = `${baseNotes} + ${explicitNewNotes}`;
-          } else {
-            rowUpdate.notes = explicitNewNotes;
-          }
-        }
-
-        prepared.push({ id, oldBooking, rowUpdate, autoEmployee });
-      }
-
-      if (prepared.length === 0) {
-        return {
-          error: `Không tìm thấy lịch hẹn còn hiệu lực để cập nhật (có thể đã bị hủy, không tồn tại, hoặc tên khách không khớp). ID đã bỏ qua: ${skippedIds.join(', ') || targetIds.join(', ')}.`
-        };
-      }
-
-      // Ghi. Lịch đổi vị trí (giờ / ngày / NV / chi nhánh / thời lượng) → booking engine, mỗi (chi nhánh, ngày)
-      // 1 transaction có khóa: NV bận / ngoài ca / hết giường → chặn + confirm_token, chưa ghi gì của nhóm đó.
-      // Giường cũ bận ở giờ mới hoặc thuộc chi nhánh cũ → tự lấy giường trống của chi nhánh đích.
-      const t5 = (t) => String(t || '').slice(0, 5);
-      const eff = (p) => ({
-        branch: p.rowUpdate.branch_id || p.oldBooking.branch_id,
-        date: p.rowUpdate.booking_date || p.oldBooking.booking_date,
-        start: t5(p.rowUpdate.start_time || p.oldBooking.start_time),
-        end: t5(p.rowUpdate.end_time || p.oldBooking.end_time),
-        employee: 'employee_id' in p.rowUpdate ? p.rowUpdate.employee_id : p.oldBooking.employee_id
-      });
-      const moves = (p) => {
-        const e = eff(p);
-        return e.branch !== p.oldBooking.branch_id || e.date !== p.oldBooking.booking_date
-          || e.start !== t5(p.oldBooking.start_time) || e.end !== t5(p.oldBooking.end_time)
-          || e.employee !== p.oldBooking.employee_id;
       };
 
-      const groups = new Map();
-      for (const p of prepared.filter(moves)) {
-        const e = eff(p);
-        const key = `${e.branch}|${e.date}`;
-        if (!groups.has(key)) groups.set(key, { branch: e.branch, date: e.date, rows: [] });
-        groups.get(key).rows.push(p);
+      // Token xác nhận gắn với tham số đã chuẩn hóa (thiếu scope = group) → gửi lại kèm scope: "group" vẫn khớp
+      const { end_time: _derived, ...requestedFields } = change;
+      const tokenParams = { booking_id: booking.id, scope, ...requestedFields, confirm_token: params.confirm_token };
+      const result = await changeBooking(supabase, {
+        source: 'ai',
+        bookingId: booking.id,
+        scope,
+        change,
+        confirm: aiOverride(context, 'update_booking', tokenParams),
+        broadcast
+      });
+      if (!result.ok) {
+        if (result.code === 'BOOKING_CONFLICT') return { ...aiBlocked(context, 'update_booking', tokenParams, { conflicts: result.conflicts }, 'Chưa cập nhật: '), ...ignored };
+        // Từ chối hẳn (VD vượt qua nửa đêm) → không có token
+        if (result.code) return { ...aiBlocked(context, 'update_booking', tokenParams, { refused: { code: result.code, message: result.error } }, 'Chưa cập nhật: '), ...ignored };
+        return { error: result.error, ...ignored };
       }
 
-      const override = aiOverride(context, 'update_booking', params);
-      for (const g of groups.values()) {
-        const items = g.rows.map(p => {
-          const e = eff(p);
-          const branchChanged = e.branch !== p.oldBooking.branch_id;
-          return {
-            ref: p.id, start: e.start, end: e.end, employeeId: e.employee,
-            autoEmployee: p.autoEmployee, bedId: branchChanged ? null : p.oldBooking.bed_id,
-            name: p.oldBooking.temporary_name
-          };
-        });
-        const result = await placeBookings(supabase, {
-          source: 'ai',
-          branchId: g.branch,
-          date: g.date,
-          items,
-          excludeIds: prepared.map(p => p.id),
-          lockDates: g.rows.map(p => p.oldBooking.booking_date),
-          override,
-          build: (assignments) => ({
-            updates: assignments.map(a => {
-              const p = g.rows.find(r => r.id === a.ref);
-              return { id: a.ref, set: { ...p.rowUpdate, employee_id: a.employee_id, bed_id: a.bed_id } };
-            })
-          })
-        });
-        if (!result.ok) {
-          const done = prepared.filter(p => p.written);
-          return aiBlocked(context, 'update_booking', params, result.conflicts,
-            `Chưa cập nhật${done.length ? ` (đã cập nhật ${done.length} lịch khác trước đó)` : ''}: `);
-        }
-        g.rows.forEach(p => { p.written = true; });
-      }
-
-      // Không đổi vị trí (ghi chú, trạng thái, số khách...) → ghi thẳng
-      for (const p of prepared.filter(p => !p.written)) {
-        const { error } = await supabase.from('bookings').update(p.rowUpdate).eq('id', p.id);
-        if (error) return { error: error.message };
-      }
-
-      const { data: updatedRows, error: selErr } = await supabase
-        .from('bookings')
-        .select('*, employees(name), services(name), branches(name)')
-        .in('id', prepared.map(p => p.id));
-      if (selErr) return { error: selErr.message };
-      const byId = new Map((updatedRows || []).map(b => [b.id, b]));
-      const updatedBookings = prepared.map(p => byId.get(p.id)).filter(Boolean);
-      const oldBookings = prepared.map(p => p.oldBooking);
-      updatedBookings.forEach(b => broadcast('booking.updated', b));
-
-      if (updatedBookings.length === 1) {
-        return {
-          success: true,
-          booking: updatedBookings[0],
-          snapshot: oldBookings[0]
-        };
-      }
-
+      const bookings = [result.booking, ...result.groupBookings];
       return {
         success: true,
-        bookings: updatedBookings,
-        count: updatedBookings.length,
-        skipped: skippedIds,
-        snapshot: oldBookings
+        booking: result.booking,
+        bookings,
+        count: bookings.length,
+        snapshot: result.snapshot,
+        ...ignored,
+        // Ghi chú luôn thay bằng nội dung mới → trả trước / sau để AI trích lại cho người dùng
+        ...(change.notes !== undefined && { notes: { before: booking.notes || '', after: result.booking.notes || '' } })
       };
-  }
+    }
 
-    
     case 'check_in_booking': {
     // Đối chiếu tên khách trong lệnh gốc để không check-in nhầm lịch (giống delete_booking)
     if (params.customer_name_hint) {
       const { data: target } = await supabase.from('bookings').select('temporary_name').eq('id', params.booking_id).maybeSingle();
-      const stripPrefix = (str) => (str || '').toLowerCase().replace(/^(chị|anh|c\.|a\.)\s+/i, '').trim();
-      const hint = stripPrefix(params.customer_name_hint);
-      const actualName = stripPrefix(target?.temporary_name);
-      if (hint && actualName && !actualName.includes(hint) && !hint.includes(actualName)) {
-        return {
-          error: `Tên khách không khớp: lịch hẹn này thuộc về "${target.temporary_name}", không phải "${params.customer_name_hint}". Vui lòng gọi lại search_bookings để xác nhận đúng lịch trước khi check-in.`
-        };
-      }
+      const mismatch = nameMismatch(params.customer_name_hint, target?.temporary_name, 'check-in');
+      if (mismatch) return mismatch;
     }
+    // AI: cả nhóm trừ khi người dùng chỉ ra 1 khách. Chuẩn hóa scope TRƯỚC token → gửi lại kèm scope: "group" vẫn khớp
+    const { scope, ask } = await aiScope(params);
+    if (ask) return ask;
+    // Token chỉ gắn với thay đổi (lịch + phạm vi), không với guest_confirmed / tên gợi ý
+    const tokenParams = { booking_id: params.booking_id, scope, confirm_token: params.confirm_token };
     // Khách trễ: giờ mới chồng lên lịch kế tiếp của NV → chặn + confirm_token, xác nhận rồi mới check-in
     const checkIn = await checkInBooking(params.booking_id, context.req.app.get('broadcastSSE'), {
       source: 'ai',
-      override: aiOverride(context, 'check_in_booking', params)
+      scope,
+      override: aiOverride(context, 'check_in_booking', tokenParams)
     });
-    if (checkIn.blocked) return aiBlocked(context, 'check_in_booking', params, checkIn.conflicts, 'Chưa check-in: ');
+    if (checkIn.blocked) return aiBlocked(context, 'check_in_booking', tokenParams, checkIn, 'Chưa check-in: ');
     return checkIn;
   }
 
@@ -1142,7 +882,7 @@ async function executeTool(toolName, params, context) {
     case 'delete_booking': {
     const broadcast = context.req.app.get('broadcastSSE') || (() => { });
 
-    // Snapshot for undo
+    // Đọc lịch để kiểm tra trước khi hủy (snapshot hoàn tác do changeStatus trả về)
     const { data: oldBooking } = await supabase
       .from('bookings')
       .select('*')
@@ -1155,41 +895,24 @@ async function executeTool(toolName, params, context) {
     // Double-check the booking actually belongs to the customer named in
     // the original command before cancelling it, so a typo'd command or a
     // loose partial match from search_bookings can't cancel the wrong record.
-    if (params.customer_name_hint) {
-      const stripPrefix = (str) => (str || '').toLowerCase().replace(/^(chị|anh|c\.|a\.)\s+/i, '').trim();
-      const hint = stripPrefix(params.customer_name_hint);
-      const actualName = stripPrefix(oldBooking.temporary_name);
-      if (hint && actualName && !actualName.includes(hint) && !hint.includes(actualName)) {
-        return {
-          error: `Tên khách không khớp: lịch hẹn này thuộc về "${oldBooking.temporary_name}", không phải "${params.customer_name_hint}". Vui lòng gọi lại search_bookings để xác nhận đúng lịch trước khi hủy.`
-        };
-      }
-    }
+    const mismatch = nameMismatch(params.customer_name_hint, oldBooking.temporary_name, 'hủy');
+    if (mismatch) return mismatch;
 
-    let oldRows = [oldBooking];
-
-    // Cancel whole group if requested
-    if (params.cancel_group && oldBooking?.group_booking_id) {
-      const { data: groupBookings } = await supabase
-        .from('bookings')
-        .select('*')
-        .eq('group_booking_id', oldBooking.group_booking_id)
-        .neq('status', 'cancelled');
-      if (groupBookings?.length) oldRows = groupBookings;
-    }
-    const bookingIds = oldRows.map(b => b.id);
-
-    const { error } = await supabase
-      .from('bookings')
-      .update({ status: 'cancelled' })
-      .in('id', bookingIds);
-
-    if (error) return { error: error.message };
-
-    bookingIds.forEach(id => broadcast('booking.updated', { id, status: 'cancelled' }));
+    // Hủy = status cancelled qua Booking change. Mặc định cả nhóm; scope booking khi người dùng chỉ rõ 1 khách
+    const { scope, ask } = await aiScope(params);
+    if (ask) return ask;
+    const result = await changeStatus(supabase, {
+      source: 'ai',
+      bookingId: params.booking_id,
+      scope,
+      status: 'cancelled',
+      broadcast
+    });
+    if (!result.ok) return { error: result.error };
 
     // snapshot = toàn bộ các dòng trước khi hủy (để hoàn tác khôi phục đúng trạng thái cũ)
-    return { success: true, cancelled: bookingIds, snapshot: oldRows };
+    // skipped = khách đã đến / đã xong, không bị hủy khi hủy cả nhóm → AI báo lại cho người dùng
+    return { success: true, cancelled: result.updatedIds, skipped: result.skippedIds, snapshot: result.snapshot };
   }
 
     case 'get_available_staff': {
@@ -1354,62 +1077,17 @@ async function executeTool(toolName, params, context) {
   }
 
     case 'reassign_staff_bookings': {
-    const broadcast = context.req.app.get('broadcastSSE') || (() => { });
-    const targetDate = params.date || todayDateStr;
-    const fromId = params.from_employee_id;
-    if (!fromId) return { error: 'Thiếu from_employee_id.' };
-
-    const { data: bookingsToMove, error: fetchErr } = await supabase
-      .from('bookings')
-      .select('id, start_time, end_time, employee_id, branch_id, bed_id')
-      .eq('booking_date', targetDate)
-      .eq('employee_id', fromId)
-      .neq('status', 'cancelled')
-      .order('start_time', { ascending: true });
-
-    if (fetchErr) return { error: fetchErr.message };
-    if (!bookingsToMove || bookingsToMove.length === 0) {
+    // Adapter mỏng quanh Booking change: chỉ dồn lịch chưa bắt đầu, khách đã đến / đã xong giữ NV (ROADMAP › Booking rules)
+    if (!params.from_employee_id) return { error: 'Thiếu from_employee_id.' };
+    const { moved, unassignedIds: unassigned } = await reassignEmployee(supabase, {
+      source: 'ai',
+      fromEmployeeId: params.from_employee_id,
+      toEmployeeId: params.to_employee_id || null,
+      date: params.date || todayDateStr,
+      broadcast: context.req.app.get('broadcastSSE') || (() => { })
+    });
+    if (!moved.length && !unassigned.length) {
       return { success: true, moved: 0, message: 'Nhân viên này không có lịch hẹn nào cần chuyển trong ngày.' };
-    }
-
-    // Mỗi lịch: người nhận được chỉ định nếu rảnh + trong ca, không thì người rảnh đầu tiên theo tour
-    // (trừ chính người đang nghỉ). Ghi qua booking engine → không bao giờ dồn thành lịch chồng nhau.
-    const moved = [];
-    const unassigned = [];
-
-    for (const booking of bookingsToMove) {
-      const result = await placeBookings(supabase, {
-        source: 'ai',
-        branchId: booking.branch_id,
-        date: targetDate,
-        items: [{
-          ref: booking.id,
-          start: String(booking.start_time).slice(0, 5),
-          end: String(booking.end_time).slice(0, 5),
-          employeeId: params.to_employee_id || null,
-          autoEmployee: true,
-          fallbackAuto: true,
-          excludeEmployeeIds: [fromId],
-          bedId: booking.bed_id
-        }],
-        excludeIds: [booking.id],
-        build: (assignments) => ({
-          updates: assignments.map(a => ({ id: a.ref, set: { employee_id: a.employee_id, bed_id: a.bed_id } }))
-        })
-      });
-
-      if (!result.ok) {
-        unassigned.push(booking.id);
-        continue;
-      }
-
-      const { data: updated } = await supabase
-        .from('bookings')
-        .select('*, employees(name), services(name), branches(name)')
-        .eq('id', booking.id)
-        .single();
-      if (updated) broadcast('booking.updated', updated);
-      moved.push({ booking_id: booking.id, new_employee_id: result.assignments[0].employee_id });
     }
 
     return {
@@ -1591,11 +1269,10 @@ async function handleCommand(req, res) {
   ]);
 
   // Fetch and send operating hours to prompt so no need for many API calls
-  const todayKey = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][vnNow.getDay()];
-
+  // close = giờ nhận khách muộn nhất (khách bắt đầu trước giờ này thì được làm quá giờ)
   const branchHoursStr = dbBranches?.map(b => {
-    const hours = b.opening_hours?.[todayKey];
-    return `${b.name}: ${hours?.open || '09:00'} - ${hours?.close || '22:00'}`;
+    const hours = branchDayHours(b.opening_hours, todayDateStr);
+    return hours.isOpen ? `${b.name}: ${hours.open} - ${hours.close} (nhận khách muộn nhất ${hours.lastBookingTime})` : `${b.name}: nghỉ`;
   }).join(', ') || '';
 
   // Get current time for AI
@@ -1634,19 +1311,28 @@ ${employeesStr}
   - Lệnh dạng "Tour" + ngày + danh sách tên nhân viên (VD: "Tour 12/06: 1.Hân 2.Trang 3.Nị"), HOẶC lệnh CHỈ liệt kê tên nhân viên nối tiếp nhau (cách nhau bằng dấu cách/xuống dòng/phẩy) mà KHÔNG có giờ hẹn, tên khách hay dịch vụ → gọi set_staff_duty NGAY, KHÔNG gọi tool nào khác trước. Trích orderedStaffNames theo đúng thứ tự xuất hiện (bỏ số thứ tự "1.", "2." và dòng phân cách "---", "==="). Nhân viên hiện đang ở chi nhánh khác vẫn có thể xuất hiện trong danh sách — hệ thống sẽ tự chuyển họ sang chi nhánh hiện tại, không cần hỏi lại.
   - Lệnh xóa/bỏ lịch trực tour trong ngày (VD: "bỏ tour hôm nay", "xóa lịch trực tour, cho tất cả đi làm bình thường") → gọi set_staff_duty với orderedStaffNames: [] (mảng rỗng). KHÔNG được trả lời là đã xóa nếu không gọi tool này.
   - Tìm lịch → search_bookings
+  - Nhiều khách cùng lúc (VD "2 kl", "3 khách", "2yvv") → gọi create_booking ĐÚNG 1 LẦN với num_guests = số khách (hệ thống tự tạo nhóm). KHÔNG gọi create_booking nhiều lần cho từng khách, KHÔNG tự đặt tên kiểu "Khách Lạ (2)".
   - Tạo lịch → gọi create_booking NGAY (service_id và id nhân viên lấy từ DỮ LIỆU SPA). create_booking tự kiểm tra lịch trống và tự xếp nhân viên theo thứ tự tour → KHÔNG gọi get_spa_context hay get_available_staff trước.
   - Sửa lịch hoặc lệnh có tên khách + dịch vụ không có giờ → search_bookings → update_booking (dịch vụ/nhân viên lấy từ DỮ LIỆU SPA; update_booking tự chặn trùng lịch). Chỉ tạo mới nếu không tìm thấy lịch.
-  - Khách đến/tới/vô/vào spa → search_bookings → check_in_booking. KHÔNG tạo lịch mới.
-  - Hủy lịch → search_bookings → delete_booking
+  - update_booking trên lịch nhóm: mặc định cả nhóm (VD "dời nhóm chị Mia sang 16h" → 1 lần gọi, KHÔNG hỏi lại); người dùng chỉ rõ 1 khách ("chỉ khách này", "1 người trong nhóm") → scope: "booking". Dời sang ngày khác → booking_date.
+  - update_booking CHỈ gửi start_time / booking_date khi người dùng YÊU CẦU dời giờ / ngày (có giờ như "18h50", "6g", "lùi 30p" hoặc ngày). Đổi dịch vụ, tên khách, ghi chú → KHÔNG gửi start_time, lịch giữ giờ cũ.
+  - Dãy số đứng riêng (VD "4050", "1568") là số trong SĐT khách, KHÔNG BAO GIỜ là giờ. Giờ luôn có h / g / : / "giờ".
+  - Người dùng nêu tên khách (+ vài số SĐT) cho lịch đã có (VD trả lời thẻ lịch: "Chị Linh - 4050 - 2yvv") → update_booking với customer_name="Chị Linh", phone_hint="4050" (+ service_id theo mã "yvv"). KHÔNG ghi tên / SĐT vào notes.
+  - update_booking trả ignored_start_time → giờ đó KHÔNG được lưu. Nói rõ lý do (reason) cho người dùng, nêu giờ lịch đang giữ, và hỏi giờ mới nếu họ muốn dời. KHÔNG báo là đã dời giờ.
+  - update_booking trả needs_contact_choice:true → CHƯA lưu gì. Liệt kê các hồ sơ trong candidates (tên + SĐT) và hỏi là ai. Người dùng chọn → gọi lại update_booking với customer_name + phone_hint là SĐT đầy đủ của hồ sơ đó.
+  - Sửa ghi chú: notes là TOÀN BỘ ghi chú mới, thay hẳn ghi chú cũ (ghi chú hiện tại có trong search_bookings). Thêm ý mới → gửi ghi chú cũ + ý mới. Trả lời PHẢI nêu ghi chú trước → sau (lấy từ notes.before / notes.after của kết quả).
+  - Khách đến/tới/vô/vào spa → search_bookings → check_in_booking. KHÔNG tạo lịch mới. Lịch nhóm: mặc định cả nhóm; chỉ 1 khách trong nhóm tới → scope: "booking" (chưa rõ khách nào → hỏi, nêu NV / giờ / dịch vụ từng khách).
+  - Hủy lịch → search_bookings → delete_booking. Lịch nhóm: mặc định cả nhóm; chỉ hủy 1 khách trong nhóm → scope: "booking" (chưa rõ khách nào → hỏi, nêu NV / giờ / dịch vụ từng khách).
+  - update_booking, check_in_booking hoặc delete_booking trả needs_guest_choice:true → CHƯA lưu gì. Liệt kê các khách trong guests (NV / giờ / dịch vụ) và hỏi khách nào. Người dùng chọn → gọi lại ĐÚNG tool đó với booking_id của khách được chọn, giữ các tham số khác, thêm guest_confirmed: true. KHÔNG tự chọn đại.
   - Cần nhân viên/dịch vụ của chi nhánh KHÁC → get_spa_context
   - Hỏi ai đang rảnh lúc nào → get_available_staff (danh sách đã xếp theo tour)
-  - Nếu có reply_to_booking_ids → gọi thẳng update_booking, delete_booking hoặc check_in_booking (lệnh "đến/tới"). KHÔNG gọi get_available_staff. KHÔNG tạo lịch mới.
+  - Nếu có reply_to_booking_ids → gọi thẳng update_booking, delete_booking hoặc check_in_booking (lệnh "đến/tới"). KHÔNG gọi get_available_staff. KHÔNG tạo lịch mới. Người dùng trả lời đúng thẻ của 1 khách và nói "chỉ khách này" → scope: "booking" + guest_confirmed: true với đúng booking_id đó.
   - Hỏi "hôm nay còn slot nào?", "hôm nay đông không?" → get_daily_summary. Trả lời PHẢI nêu rõ total_bookings (tổng số lịch hẹn hôm nay) chứ không chỉ liệt kê tên nhân viên rảnh
   - Cần giờ mở cửa các chi nhánh cho ngày không phải hôm nay → get_branches
   - Người dùng hỏi riêng một nhân viên có bị trùng lịch không → check_conflicts (create_booking/update_booking đã tự kiểm tra trùng, KHÔNG cần gọi check_conflicts trước)
   - Nhân viên A nghỉ đột xuất hoặc cần dồn hết lịch của A cho người khác (KHÔNG phải đổi chi nhánh cố định) → reassign_staff_bookings
   - "Chuyển NV A sang CN2/chi nhánh khác" (đổi nơi làm việc cố định của nhân viên) → move_staff_to_branch. Nếu A còn lịch hẹn cũ cần dồn cho người khác, gọi thêm reassign_staff_bookings.
-  - Nếu create_booking, update_booking hoặc check_in_booking trả về blocked:true (nhân viên đang bận trùng giờ, ngoài ca, hết giường, không ai rảnh) → PHẢI dừng lại, KHÔNG tự gọi lại với nhân viên/giờ khác hay bỏ employee_ids. Báo đúng lý do (reason) và hỏi: "Vẫn lưu?" hay đổi giờ/nhân viên.
+  - Nếu create_booking, update_booking hoặc check_in_booking trả về blocked:true (nhân viên đang bận trùng giờ, ngoài ca, hết giường, không ai rảnh) → PHẢI dừng lại, KHÔNG tự gọi lại với nhân viên/giờ khác hay bỏ employee_ids / employee_id. Báo đúng lý do (reason) và hỏi: "Vẫn lưu?" hay đổi giờ/nhân viên.
   - Người dùng đồng ý vẫn lưu (ừ, ok, vẫn lưu, cứ lưu...) → gọi lại ĐÚNG tool đó với ĐÚNG tham số cũ, thêm confirm_token đã nhận. KHÔNG BAO GIỜ tự bịa confirm_token hay truyền confirm_token khi người dùng chưa đồng ý.
 
   NOTES:
@@ -1829,4 +1515,5 @@ ${employeesStr}
 
 // Cho test tích hợp (integration/bookingGuard.spec.js) gọi đúng tool AI mà không qua Gemini
 router.executeTool = executeTool;
+router.buildAction = buildAction;
 module.exports = router;

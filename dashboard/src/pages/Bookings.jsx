@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { toast } from 'react-toastify';
 
 import {
-  getBookingsRange, createBooking, updateBooking, deleteBooking, checkInBooking,
+  getBookingsRange, createBooking, updateBooking, cancelBooking, checkInBooking,
   getBranches, getServices, getEmployees, getCustomers, getEmployeeSchedules,
   getSettings
 } from '../api';
@@ -83,7 +83,7 @@ function Bookings() {
   // Drag-and-drop reorder state
   const [cardDrag, setCardDrag] = useState(null); // { booking, startCol, startTop }
   const [dragConfirm, setDragConfirm] = useState(null); // { booking, fromStaff, fromTime, toStaff, toTime, toStaffId, newDate, newStart, newEnd }
-  const [dragSavingMode, setDragSavingMode] = useState(null); // nút đang lưu trong popup kéo-thả: 'single' | 'group' | null
+  const [dragSaving, setDragSaving] = useState(false); // popup kéo-thả đang lưu → khóa các nút
   // Drag-to-create state
   const [dragInfo, setDragInfo] = useState(null); // { startY, currentY, staffId, staffName, columnEl }
   const [hoverInfo, setHoverInfo] = useState(null); // { staffId, y, colLeft, colWidth }
@@ -312,8 +312,6 @@ function Bookings() {
         const bk = cardDrag.booking;
         setDragConfirm({
           booking: bk,
-          groupSize: bk.group_booking_id ? bookings.filter(b => b.group_booking_id === bk.group_booking_id).length : 0,
-          timingChanged: timeToMinutes(newStart) !== origStartMin,
           fromStaff: fromStaffName,
           fromTime: `${fromStart} — ${fromEnd}`,
           toStaff: toStaffName,
@@ -465,38 +463,70 @@ function Bookings() {
     booking?.group_booking_id ? bookings.filter(b => b.group_booking_id === booking.group_booking_id) : []
   );
 
-  // Lịch nhóm đổi ngày/giờ → hỏi. Trả true (dời cả nhóm) / false (chỉ khách này) / null (không lưu)
-  const askMoveGroup = async (groupSize) => {
+  // Backend báo SCOPE_REQUIRED (lịch thuộc nhóm đổi field áp cho cả nhóm: ngày / giờ, chi nhánh, dịch vụ, ghi chú,
+  // khách đặt; check-in) → hỏi, "Cả nhóm" là nút mặc định.
+  // action = việc đang hỏi, VD "Check-in". Trả 'group' / 'booking' / null (không lưu)
+  const askScope = async (groupSize, action = 'Áp dụng thay đổi') => {
     const choice = await confirmDialog({
       title: 'Lịch nhóm',
-      message: `Lịch này thuộc nhóm ${groupSize} khách. Dời giờ cho cả nhóm hay chỉ khách này?`,
-      confirmText: `Dời cả nhóm (${groupSize})`,
+      message: `Lịch này thuộc nhóm ${groupSize} khách. ${action} cho cả nhóm hay chỉ khách này?`,
+      confirmText: `Cả nhóm (${groupSize})`,
       altText: 'Chỉ khách này',
       cancelText: 'Không lưu'
     });
     if (!choice) return null;
-    return choice === true;
+    return choice === true ? 'group' : 'booking';
   };
 
   const notifySaved = (saved, fallbackMsg) => {
     const movedSiblings = saved?.group_updated_ids?.length || 0;
-    notify(movedSiblings > 0 ? `Đã dời cả nhóm ${movedSiblings + 1} khách!` : fallbackMsg);
+    notify(movedSiblings > 0 ? `Đã cập nhật cả nhóm ${movedSiblings + 1} khách!` : fallbackMsg);
     if (saved?.group_failed_count > 0) {
-      toast.warn(`Có ${saved.group_failed_count} lịch trong nhóm chưa dời được, vui lòng kiểm tra lại.`);
+      toast.warn(`Có ${saved.group_failed_count} lịch trong nhóm chưa cập nhật được, vui lòng kiểm tra lại.`);
     }
+  };
+
+  // Hủy = status cancelled. Gửi scope khi đã biết; lịch thuộc nhóm mà backend vẫn báo SCOPE_REQUIRED
+  // (VD khách cùng nhóm không hiện trên màn hình) → hỏi "Hủy cả nhóm / Chỉ khách này" rồi gửi lại. null = không hủy
+  const cancelConfirmingScope = async (id, scope) => {
+    try {
+      return await cancelBooking(id, { scope });
+    } catch (err) {
+      if (err?.status !== 409 || err.data?.code !== 'SCOPE_REQUIRED' || scope) throw err;
+      const choice = await confirmDialog({
+        title: 'Hủy lịch nhóm',
+        message: `Lịch này thuộc nhóm ${err.data.group_size} khách. Hủy cả nhóm hay chỉ khách này?`,
+        confirmText: `Hủy cả nhóm (${err.data.group_size})`,
+        altText: 'Chỉ khách này',
+        cancelText: 'Không',
+        danger: true
+      });
+      if (!choice) return null;
+      return await cancelBooking(id, { scope: choice === true ? 'group' : 'booking' });
+    }
+  };
+
+  // Khách sẽ bị hủy khi "Hủy cả nhóm" (backend bỏ qua khách đã đến / đã hoàn thành)
+  const cancellableMembers = (members) => members.filter(b => !['arrived', 'completed'].includes(b.status));
+
+  const notifyCancelled = (result) => {
+    const count = result?.cancelled_ids?.length || 1;
+    notify(count > 1 ? `Đã hủy cả nhóm ${count} khách!` : 'Đã hủy lịch hẹn thành công!');
   };
 
   const handleCancel = (id) => run('cancelFlow', async () => {
     const booking = bookings.find(b => b.id === id) || detailModal;
-    const groupSize = getGroupMembers(booking).length;
+    // "Hủy cả nhóm" bỏ qua khách đã đến / đã xong → chỉ đếm khách sẽ bị hủy; không còn ai khác để hủy cùng thì hỏi như lịch lẻ
+    const cancellable = cancellableMembers(getGroupMembers(booking));
+    const groupSize = cancellable.some(b => b.id !== id) ? cancellable.length : 0;
 
-    let group = false;
+    let scope;
     if (groupSize > 1 && detailGroupMode && detailModal?.id === id) {
       if (!(await confirmDialog({ message: `Hủy lịch cho cả nhóm ${groupSize} khách?`, confirmText: `Hủy cả nhóm (${groupSize})`, cancelText: 'Không', danger: true }))) {
         return;
       }
-      group = true;
-    } else if (groupSize > 1) {
+      scope = 'group';
+    } else if (groupSize > 0) {
       const choice = await confirmDialog({
         title: 'Hủy lịch nhóm',
         message: `Lịch này thuộc nhóm ${groupSize} khách. Hủy cả nhóm hay chỉ khách này?`,
@@ -506,15 +536,16 @@ function Bookings() {
         danger: true
       });
       if (!choice) return;
-      group = choice === true;
+      scope = choice === true ? 'group' : 'booking';
     } else if (!(await confirmDialog({ message: 'Bạn có chắc muốn hủy lịch hẹn này?', confirmText: 'Hủy lịch', cancelText: 'Không', danger: true }))) {
       return;
     }
 
     await run('cancel', async () => {
       try {
-        await deleteBooking(id, { group });
-        notify(group ? `Đã hủy cả nhóm ${groupSize} khách!` : 'Đã hủy lịch hẹn thành công!');
+        const result = await cancelConfirmingScope(id, scope);
+        if (!result) return;
+        notifyCancelled(result);
         loadBookings();
         setDetailModal(null);
         setShowDetailMore(false);
@@ -527,10 +558,23 @@ function Bookings() {
   // --- Context menu khi giữ lâu thẻ lịch (mobile list view). item = 1 phần tử của mobileListItems ---
   const handleCheckInItem = (item) => run(`checkin:${item.key}`, async () => {
     try {
-      // Backend tự check-in cả nhóm nếu lịch thuộc nhóm. Khách trễ chồng lên lịch kế tiếp → hỏi "Vẫn lưu?"
-      const checkedIn = await saveConfirmingConflict(allow => checkInBooking(item.lead.id, allow ? { allow_conflict: true } : undefined));
+      // Lịch thuộc nhóm → backend báo SCOPE_REQUIRED → hỏi "Cả nhóm / Chỉ khách này" rồi gửi lại kèm scope.
+      // Khách trễ chồng lên lịch kế tiếp / quá giờ nhận khách + thời gian chờ → hỏi "Vẫn lưu?"
+      const checkIn = (scope) => saveConfirmingConflict(allow => checkInBooking(item.lead.id, {
+        ...(scope && { scope }),
+        ...(allow && { allow_conflict: true })
+      }));
+      let checkedIn;
+      try {
+        checkedIn = await checkIn();
+      } catch (err) {
+        if (err?.status !== 409 || err.data?.code !== 'SCOPE_REQUIRED') throw err;
+        const scope = await askScope(err.data.group_size, 'Check-in');
+        if (!scope) return;
+        checkedIn = await checkIn(scope);
+      }
       if (!checkedIn) return;
-      notify(item.guestCount > 1 ? `Đã báo cả nhóm ${item.guestCount} khách tới!` : 'Đã báo khách tới!');
+      notify(checkedIn.checked_in > 1 ? `Đã báo cả nhóm ${checkedIn.checked_in} khách tới!` : 'Đã báo khách tới!');
       loadBookings();
     } catch (err) {
       toast.error(err.message);
@@ -538,17 +582,20 @@ function Bookings() {
   });
 
   const handleCancelItem = (item) => run(`cancel:${item.key}`, async () => {
-    const group = item.guestCount > 1;
+    const count = cancellableMembers(item.members).length;
+    const group = count > 1;
     const ok = await confirmDialog({
-      message: group ? `Hủy lịch cho cả nhóm ${item.guestCount} khách?` : 'Bạn có chắc muốn hủy lịch hẹn này?',
-      confirmText: group ? `Hủy cả nhóm (${item.guestCount})` : 'Hủy lịch',
+      message: group ? `Hủy lịch cho cả nhóm ${count} khách?` : 'Bạn có chắc muốn hủy lịch hẹn này?',
+      confirmText: group ? `Hủy cả nhóm (${count})` : 'Hủy lịch',
       cancelText: 'Không',
       danger: true
     });
     if (!ok) return;
     try {
-      await deleteBooking(item.lead.id, { group });
-      notify(group ? `Đã hủy cả nhóm ${item.guestCount} khách!` : 'Đã hủy lịch hẹn thành công!');
+      // Thẻ gộp cả nhóm → Cả nhóm; thẻ 1 khách mà backend báo còn khách cùng nhóm → hỏi
+      const result = await cancelConfirmingScope(item.lead.id, group ? 'group' : undefined);
+      if (!result) return;
+      notifyCancelled(result);
       loadBookings();
     } catch (err) {
       toast.error(err.message);
@@ -640,8 +687,11 @@ function Bookings() {
       return await save(false);
     } catch (err) {
       if (err?.status !== 409 || err.data?.code !== 'BOOKING_CONFLICT') throw err;
-      const reasons = [...new Set((err.data.conflicts || []).map(c =>
-        c.message || `${c.customer_name}: ${formatTime(c.start_time)} - ${formatTime(c.end_time)}`))];
+      // Dời cả nhóm: backend ghi kèm guest_name → nói rõ vướng mắc của khách nào
+      const reasons = [...new Set((err.data.conflicts || []).map(c => {
+        const reason = c.message || `${c.customer_name}: ${formatTime(c.start_time)} - ${formatTime(c.end_time)}`;
+        return c.guest_name ? `${c.guest_name}: ${reason}` : reason;
+      }))];
       const keepSaving = await confirmDialog({
         title: 'Cần xác nhận',
         message: `${reasons.map(r => `• ${r}`).join('\n')}\n\nVẫn lưu?`,
@@ -653,12 +703,22 @@ function Bookings() {
     }
   };
 
-  const updateBookingConfirmingConflict = (id, payload) =>
-    saveConfirmingConflict(allow => updateBooking(id, allow ? { ...payload, allow_conflict: true } : payload));
+  // Sửa / kéo thả: lịch thuộc nhóm đổi ngày / giờ → backend báo 409 SCOPE_REQUIRED (kèm group_size) → hỏi
+  // "Cả nhóm / Chỉ khách này" rồi gửi lại kèm scope. Backend quyết định khi nào cần hỏi, dashboard không tự đoán.
+  const updateBookingConfirmingConflict = async (id, payload) => {
+    try {
+      return await saveConfirmingConflict(allow => updateBooking(id, allow ? { ...payload, allow_conflict: true } : payload));
+    } catch (err) {
+      if (err?.status !== 409 || err.data?.code !== 'SCOPE_REQUIRED' || payload.scope) throw err;
+      const scope = await askScope(err.data.group_size);
+      if (!scope) return null;
+      return await updateBookingConfirmingConflict(id, { ...payload, scope });
+    }
+  };
 
-  const handleDragConfirm = (applyToGroup = false) => run('dragConfirm', async () => {
+  const handleDragConfirm = () => run('dragConfirm', async () => {
     if (!dragConfirm) return;
-    setDragSavingMode(applyToGroup ? 'group' : 'single');
+    setDragSaving(true);
     try {
       const bk = dragConfirm.booking;
       const saved = await updateBookingConfirmingConflict(bk.id, {
@@ -667,8 +727,7 @@ function Bookings() {
         employee_id: dragConfirm.toStaffId === UNASSIGNED_COLUMN_ID ? null : dragConfirm.toStaffId,
         start_time: dragConfirm.newStart,
         end_time: dragConfirm.newEnd,
-        booking_date: dragConfirm.newDate,
-        apply_to_group: applyToGroup
+        booking_date: dragConfirm.newDate
       });
       if (saved) {
         notifySaved(saved, 'Đã cập nhật lịch hẹn!');
@@ -678,7 +737,7 @@ function Bookings() {
       toast.error('Lỗi: ' + err.message);
     }
     setDragConfirm(null);
-    setDragSavingMode(null);
+    setDragSaving(false);
   });
 
   // Đang lưu thay đổi kéo-thả → không cho đóng popup (bấm ra ngoài / Esc / "Hủy, giữ nguyên")
@@ -1044,19 +1103,6 @@ function Bookings() {
       return;
     }
 
-    // Lịch nhóm đổi ngày/giờ bắt đầu → hỏi dời cả nhóm hay chỉ khách này
-    let applyToGroup = false;
-    const groupSize = getGroupMembers(detailModal).length;
-    const timingChanged = detailEdit.booking_date !== detailModal.booking_date
-      || detailEdit.start_time !== (detailModal.start_time || '').substring(0, 5);
-    if (groupSize > 1 && timingChanged && detailGroupMode) {
-      applyToGroup = true;
-    } else if (groupSize > 1 && timingChanged) {
-      const choice = await askMoveGroup(groupSize);
-      if (choice === null) return;
-      applyToGroup = choice;
-    }
-
     await run('saveDetail', async () => {
       try {
         // 1. Update Booking
@@ -1068,9 +1114,11 @@ function Bookings() {
           end_time: detailEdit.end_time,
           employee_id: detailEdit.employee_id || null,
           notes: detailEdit.notes,
-          customer_id: detailEdit.customer_id || null,
-          apply_to_group: applyToGroup
+          customer_id: detailEdit.customer_id || null
         };
+        // Mở chi tiết từ thẻ nhóm (đã chọn cả nhóm) → gửi luôn scope 'group', không hỏi lại.
+        // Còn lại: lịch thuộc nhóm đổi ngày / giờ thì backend báo SCOPE_REQUIRED → hỏi (updateBookingConfirmingConflict)
+        if (detailGroupMode && getGroupMembers(detailModal).length > 1) bookingUpdate.scope = 'group';
 
         if (!bookingUpdate.customer_id && detailEdit.customer_name) {
           bookingUpdate.temporary_name = detailEdit.customer_name;
@@ -1227,6 +1275,7 @@ function Bookings() {
     if (!detailModal || !detailEdit) return false;
     return (
       detailEdit.service_id !== (detailModal.service_id || detailModal.services?.id) ||
+      detailEdit.branch_id !== (detailModal.branch_id || detailModal.branches?.id) ||
       detailEdit.booking_date !== detailModal.booking_date ||
       detailEdit.start_time !== (detailModal.start_time || '').substring(0, 5) ||
       detailEdit.end_time !== (detailModal.end_time || '').substring(0, 5) ||
@@ -1262,6 +1311,8 @@ function Bookings() {
           notes: booking.notes || '',
           internal_note: null // Clear warning
         };
+        // Cảnh báo chống spam gắn với cả lần đặt online → tắt cho cả nhóm, không hỏi "Cả nhóm / Chỉ khách này"
+        if (getGroupMembers(booking).length > 1) bookingUpdate.scope = 'group';
 
         await updateBooking(booking.id, bookingUpdate);
 
@@ -1496,7 +1547,7 @@ function Bookings() {
         dragConfirmRef={dragConfirmRef}
         handleDragCancel={handleDragCancel}
         handleDragConfirm={handleDragConfirm}
-        dragSavingMode={dragSavingMode}
+        dragSaving={dragSaving}
       />
     </div >
   );
