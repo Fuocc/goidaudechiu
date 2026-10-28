@@ -23,7 +23,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done. Update this file as work 
 - Confirmation turned off in Settings → staff (and the AI for staff) skip **all** warnings: overlap, off shift, no bed, nobody free (saved unassigned). Online bookings are never affected.
 - Staff create with no therapist chosen and nobody free → warn; "Vẫn lưu" saves it **unassigned** (shown in a "Chưa xếp NV" column).
 - AI overlap (create, move, edit, late check-in): the AI refuses and asks "Vẫn lưu?" in chat. Saving needs a one-time server token tied to that exact change (valid 5 min), so the model can't skip the question. Logged-in staff only. If confirmation is turned off in Settings, the AI saves like the calendar does.
-- AI moves a booking to another branch: keep the therapist if they work at the new branch that day and are free; otherwise pick a free, on-shift therapist + free bed there (tour order, no buffer). Nobody free → refuse, booking unchanged. The bed is always re-picked for the new branch.
+- AI moves a booking to another branch: keep the therapist if they work at the new branch that day and are free; otherwise pick a free, on-shift therapist + free bed there (tour order, no buffer). Nobody free → blocked (`no_employee`), booking unchanged; "Vẫn lưu" with the confirm token saves it unassigned, like staff (spec #8, agreed 28/10). The bed is always re-picked for the new branch.
 - Undo restores the previous state without an overlap question.
 
 ### Group rules (agreed 23/10)
@@ -38,6 +38,8 @@ Words as in `GLOSSARY.md`: **Booking** = one guest, **Group** = Bookings of gues
 - **Who picks the scope:** every change states it (one guest / whole Group); the backend never guesses.
   - Staff: asked "Cả nhóm / Chỉ khách này" whenever a group-wide field changes; **Cả nhóm is the default button**. Changing only per-guest fields → no question.
   - AI: whole Group unless the command singles out one guest. If it does but doesn't say which (all guests carry "Miss Mia"), the AI asks, listing therapist / time / service.
+    - AI tools (`update_booking`, `check_in_booking`, `delete_booking`; agreed 28/10): "one guest" on a Booking whose name matches another active guest in the Group → nothing is saved, the tool returns every guest (therapist / time / service). The AI resends with the chosen guest's id and `guest_confirmed: true` (also when the user replied to that guest's card). A missing scope counts as `group`, also for the confirm token.
+    - AI `update_booking` takes only: date, start time, service, branch, therapist (this guest), notes, scope. Anything else from the model is dropped. One Booking (+ its Group) per call. Several services per Booking: later, its own ticket.
 - **Times:** "Cả nhóm" → every guest gets the **same new start time**, each keeps their own service length. Date-only change → each keeps their own start time. "Chỉ khách này" → the others don't move. Check-in → "now" for whoever is checked in.
 - **Drag or edit that changes therapist and time together:** therapist applies to this guest only; the question is only about the time.
 - **All-or-nothing:** one "Vẫn lưu?" lists every guest's conflicts; confirming saves all, otherwise nothing is saved.
@@ -87,7 +89,7 @@ Rules: "Group rules" and "Time limits" above. One fresh session per ticket (`/im
 | 1 | [x] #9 Prefactor: Booking change module + staff edit of a single Booking (23/10; the 3 check-in guard tests still need a run between 10:30 and 20:00, tracked in #10) | now |
 | 2 | [x] #10 Staff move a Group (Cả nhóm / Chỉ khách này) (24/10; check-in guard tests from #9 ran and passed) · [x] #11 Start-time limits (24/10; Last booking time = `close`, midnight refused, fallback 08:00–20:00) | #9 done |
 | 3 | [x] #12 Staff group-wide fields (26/10; Contact rule + chosen-therapist rule added to "Group rules"; AI branch change still its own logic, moves to #15) · [x] #13 Cancel as status (26/10; cancel + status with scope, leaving cancelled through the engine, Cả nhóm skips arrived / completed; no status buttons yet, they come with §7) · [x] #14 Check-in scope + Late arrival grace (24/10; real-app check, AI confirm-token scope fix + its guard test, and the AI guest list when the guest is unclear carried to #15) | #12, #13: #10 done · #14: #10 and #11 done |
-| 4 | [ ] #15 AI update_booking through the module (+ pending from #14, see the issue comment) | #12 and #11 done |
+| 4 | [x] #15 AI update_booking through the module (28/10; allow-list, notes replace before → after, one token per Group, guest list when unclear for update / check-in / cancel, check-in token on normalised scope; real-app check incl. #14's; multi-service per Booking left for its own ticket) | #12 and #11 done |
 | 5 | [ ] #16 Undo + AI reassign through the module | #15 and #13 done |
 
 Running tickets in parallel:
@@ -139,22 +141,6 @@ Requirements from testing:
 ## 9. Performance (P2)
 - [ ] Remove duplicate API calls on load (~5 s, 20+ requests today)
 - [ ] One bootstrap request for branches/services/settings
-
-## 10. Design system (P1) — spec #17, decisions in [docs/design-system.md](docs/design-system.md)
-Agreed 24/10. This is a tidy-up that keeps today's look, not a redesign. Done: colours + accent prototype (24/10, verdict: **keep today's look**, no theme picker, Lato rejected for Vietnamese, Bricolage for all text). The tickets are sub-issues of #17, with native "blocked by" links on GitHub. One fresh session per ticket, with the owner's approval before code. The two prototypes (#19, #27) close only on the owner's verdict.
-
-| Wave | Tickets (same wave = can run in parallel) | Starts when |
-|---|---|---|
-| 1 | [ ] #18 Tracer: tokens, style check (`npm run test:styles`), `/styleguide`, Employees moved over · [ ] #19 Prototype: shared components in today's look | now |
-| 2 | [ ] #20 Core components + Phosphor · [ ] #21 Tooltip · [ ] #23 Modal (desktop) · [ ] #24 Toast styling · [ ] #27 Prototype: mobile patterns (with §7) | #20, #21, #23: #18 and #19 done · #24: #18 done · #27: #19 done |
-| 3 | [ ] #22 DatePicker, then remove Chakra + `next-themes` · [ ] #25 Services, Branches, Settings · [ ] #26 Customers, Schedules · [ ] #28 Sidebar, layout, breakpoints · [ ] #29 UserSettings, ShareLink, sign-in · [ ] #30 AI chat panel · [ ] #31 Bookings toolbar + list | #22: #21 · #25, #26: #20 and #23 · #28, #30: #20 and #27 · #29: #20 · #31: #20 and #21 |
-| 4 | [ ] #32 Bookings calendar + modals, with the mobile patterns | #22, #23, #27 and #31 done |
-| 5 | [ ] #33 Contract: remove old variables and icon packages, empty the allowlist | all of the above done |
-
-- **Done when:** the style check's allowlist is empty, Chakra and `react-icons` are gone from the dashboard's dependencies, and every page has been checked at 375 / 768 / 1280px.
-- ~~Accent theme picker~~ dropped 24/10. One `--accent` token keeps it easy to add later.
-- Page tickets touch shared components: if a page needs a component changed, change it in its own slice first and re-check `/styleguide`.
-- Parallel tickets in wave 3 touch shared styles: give each its own branch or worktree off `dev` and merge one at a time, re-running `npm run test:styles` and the build after each merge.
 
 ---
 

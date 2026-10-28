@@ -94,7 +94,7 @@ function service(name) {
 function employee(index) { return ctx.employees[index]; }
 
 /** Ghi thẳng 1 lịch mẫu vào DB (không qua code đang test). */
-async function insertFixture({ employeeId = null, bedId = null, branchId = ctx.branch.id, date = TEST_DATE, start, end, name = 'Fixture', status = 'confirmed', serviceName = 'Ý dễ chịu', groupId = null, customerId = null }) {
+async function insertFixture({ employeeId = null, bedId = null, branchId = ctx.branch.id, date = TEST_DATE, start, end, name = 'Fixture', status = 'confirmed', serviceName = 'Ý dễ chịu', groupId = null, customerId = null, notes = null }) {
   const { data, error } = await supabase.from('bookings').insert({
     branch_id: branchId,
     employee_id: employeeId,
@@ -109,7 +109,8 @@ async function insertFixture({ employeeId = null, bedId = null, branchId = ctx.b
     temporary_name: customerId ? null : TEST_PREFIX + name,
     num_guests: 1,
     total_price: 0,
-    group_booking_id: groupId // khách đi nhóm: các fixture cùng groupId
+    group_booking_id: groupId, // khách đi nhóm: các fixture cùng groupId
+    notes
   }).select('*').single();
   if (error) throw error;
   return data;

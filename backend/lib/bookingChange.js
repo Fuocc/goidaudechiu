@@ -181,8 +181,8 @@ const UPDATED_SELECT = `
  * @param opts.scope    'booking' | 'group' | undefined (lịch thuộc nhóm đổi field áp cho cả nhóm mà không gửi → SCOPE_REQUIRED)
  * @param opts.change   service_id, branch_id, employee_id, booking_date, start_time, end_time, notes,
  *                      internal_note, customer_id, temporary_name, customer_update ({ name, phone, email, habits })
- * @param opts.confirm  true = đã bấm "Vẫn lưu" cho vướng mắc
- * @returns { ok: true, booking, before, groupUpdatedIds } | { ok: false, code: 'SCOPE_REQUIRED', groupSize }
+ * @param opts.confirm  true = đã bấm "Vẫn lưu" cho vướng mắc; hoặc (conflicts) => boolean (token xác nhận của AI)
+ * @returns { ok: true, booking, before, groupUpdatedIds, groupBookings, snapshot } | { ok: false, code: 'SCOPE_REQUIRED', groupSize }
  *        | { ok: false, code: 'BOOKING_CONFLICT', conflicts } | { ok: false, status, error }
  */
 async function changeBooking(supabase, { source, bookingId, scope, change, confirm = false, broadcast = () => { } }) {
@@ -307,7 +307,7 @@ async function changeBooking(supabase, { source, bookingId, scope, change, confi
         items,
         excludeIds: items.map(it => it.ref),
         lockDates: [...new Set(rows.flatMap(r => [r.from.booking_date, r.eff.booking_date]))],
-        override: confirm === true,
+        override: typeof confirm === 'function' ? confirm : confirm === true,
         // Lịch đổi vị trí → gắn NV + giường do engine xếp; lịch chỉ đổi ghi chú / khách đặt… → ghi đúng phần đổi
         build: (assignments) => {
           const byRef = new Map(assignments.map(a => [a.ref, a]));
@@ -345,13 +345,16 @@ async function changeBooking(supabase, { source, bookingId, scope, change, confi
   broadcast('booking.updated', updated);
 
   const groupUpdatedIds = siblings.map(s => s.id);
+  let groupBookings = [];
   if (groupUpdatedIds.length) {
     const { data: moved, error: movedErr } = await supabase.from('bookings').select(UPDATED_SELECT).in('id', groupUpdatedIds);
     if (movedErr) throw movedErr;
-    (moved || []).forEach(m => broadcast('booking.updated', m));
+    groupBookings = moved || [];
+    groupBookings.forEach(m => broadcast('booking.updated', m));
   }
 
-  return { ok: true, booking: updated, before: booking, groupUpdatedIds };
+  // snapshot = mọi dòng trong lệnh trước khi đổi — để AI hoàn tác
+  return { ok: true, booking: updated, before: booking, groupUpdatedIds, groupBookings, snapshot: rows.map(r => r.from) };
 }
 
 /**
