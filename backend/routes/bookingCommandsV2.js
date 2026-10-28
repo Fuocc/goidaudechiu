@@ -9,7 +9,7 @@ const { loadTourOrder, sortByTourOrder } = require('../lib/tourOrder');
 const { signUndoAction } = require('../lib/undoToken');
 const { checkInBooking } = require('../lib/checkIn');
 const { changeBooking, changeStatus, reassignEmployee } = require('../lib/bookingChange');
-const { toBookingChange, normalizeScope, guestChoice } = require('../lib/aiBookingChange');
+const { toBookingChange, normalizeScope, guestChoice, matchContact, bareName } = require('../lib/aiBookingChange');
 const { placeBookings, withMessages, summarizeConflicts } = require('../lib/bookingEngine');
 const { branchDayHours } = require('../lib/branchHours');
 const { issueConfirmToken, consumeConfirmToken, rememberPending, peekPending } = require('../lib/confirmToken');
@@ -85,6 +85,15 @@ async function askWhichGuest(bookingId, scope, guestConfirmed) {
 async function aiScope(params) {
   const scope = normalizeScope(params.scope);
   return { scope, ask: await askWhichGuest(params.booking_id, scope, params.guest_confirmed) };
+}
+
+// Lời người dùng của lượt chat: lệnh này + lượt người dùng trước đó (VD giờ nói trước khi AI hỏi khách nào).
+// Tool gọi ngoài chat (không có lệnh) → undefined = không lọc
+function userTextsOf(req) {
+  const { command, conversation_history: history } = req?.body || {};
+  if (typeof command !== 'string') return undefined;
+  const previous = Array.isArray(history) ? history.filter(m => m?.role === 'user').at(-1)?.text : undefined;
+  return [command, previous].filter(t => typeof t === 'string');
 }
 
 // Initialize Gemini SDK
@@ -187,6 +196,8 @@ const spaTools = [
         branch_id: { type: "string", description: "UUID chi nhánh mới nếu đổi chi nhánh." },
         employee_id: { type: "string", description: "UUID nhân viên mới cho ĐÚNG khách này nếu đổi thợ." },
         notes: { type: "string", description: "TOÀN BỘ ghi chú mới (thay hẳn ghi chú cũ). Ghi chú hiện tại có trong search_bookings: muốn thêm thì gửi ghi chú cũ + phần mới; muốn xóa bớt thì gửi phần còn lại." },
+        customer_name: { type: "string", description: "Tên khách đặt mới khi người dùng nêu tên khách cho lịch (VD \"Chị Linh - 4050\" → \"Chị Linh\"). Hệ thống tự gắn hồ sơ khách hoặc lưu tên riêng. KHÔNG ghi tên khách vào notes." },
+        phone_hint: { type: "string", description: "Vài số trong SĐT khách người dùng nêu kèm tên (VD \"Chị Linh - 4050\" → \"4050\"). Đây là SĐT, KHÔNG phải giờ." },
         customer_name_hint: {
           type: "string",
           description: "Tên khách được nhắc trong lệnh gốc (nếu có). Hệ thống sẽ đối chiếu với tên thật của lịch hẹn trước khi sửa để tránh sửa nhầm lịch của khách khác."
@@ -784,7 +795,35 @@ async function executeTool(toolName, params, context) {
 
       const { scope, ask } = await aiScope(params);
       if (ask) return ask;
-      const { change } = toBookingChange(params, booking);
+      // Tên (+ số SĐT) khách đặt → gắn hồ sơ / tên riêng; nhiều hồ sơ cùng tên + số → chưa lưu, hỏi lại
+      let contact;
+      // "Chỉ khách này" trong nhóm: khách đó mang tên riêng, không gắn hồ sơ khác nhóm (ROADMAP › Contact)
+      if (params.customer_name && scope === 'booking' && booking.group_booking_id) {
+        contact = { temporaryName: String(params.customer_name).trim() };
+      } else if (params.customer_name) {
+        const { data: found, error: custErr } = await supabase.from('customers').select('id, name, phone')
+          .ilike('name', `%${bareName(params.customer_name)}%`);
+        if (custErr) throw custErr;
+        contact = matchContact({ name: params.customer_name, phoneHint: params.phone_hint, customers: found || [] });
+        if (contact.candidates) {
+          return {
+            success: false,
+            needs_contact_choice: true,
+            reason: 'Có nhiều hồ sơ khách cùng tên và cùng các số SĐT này. Chưa lưu gì.',
+            candidates: contact.candidates,
+            hint: 'Liệt kê các hồ sơ (tên + SĐT) và hỏi người dùng là ai. Sau khi họ chọn → gọi lại update_booking với customer_name + phone_hint là SĐT đầy đủ của hồ sơ đó.'
+          };
+        }
+      }
+      const { change, ignoredStartTime } = toBookingChange(params, booking, { userTexts: userTextsOf(context.req), contact });
+      // Giờ model gửi mà người dùng không nói → đã bỏ; báo lý do để AI nói lại, không im lặng
+      const ignored = ignoredStartTime && {
+        ignored_start_time: {
+          sent: ignoredStartTime,
+          kept: String(booking.start_time).slice(0, 5),
+          reason: `Bỏ giờ ${ignoredStartTime}: người dùng không nói giờ trong lệnh này hay lượt trước → lịch giữ giờ ${String(booking.start_time).slice(0, 5)}. Muốn dời giờ thì hỏi người dùng giờ mới.`
+        }
+      };
 
       // Token xác nhận gắn với tham số đã chuẩn hóa (thiếu scope = group) → gửi lại kèm scope: "group" vẫn khớp
       const { end_time: _derived, ...requestedFields } = change;
@@ -798,10 +837,10 @@ async function executeTool(toolName, params, context) {
         broadcast
       });
       if (!result.ok) {
-        if (result.code === 'BOOKING_CONFLICT') return aiBlocked(context, 'update_booking', tokenParams, { conflicts: result.conflicts }, 'Chưa cập nhật: ');
+        if (result.code === 'BOOKING_CONFLICT') return { ...aiBlocked(context, 'update_booking', tokenParams, { conflicts: result.conflicts }, 'Chưa cập nhật: '), ...ignored };
         // Từ chối hẳn (VD vượt qua nửa đêm) → không có token
-        if (result.code) return aiBlocked(context, 'update_booking', tokenParams, { refused: { code: result.code, message: result.error } }, 'Chưa cập nhật: ');
-        return { error: result.error };
+        if (result.code) return { ...aiBlocked(context, 'update_booking', tokenParams, { refused: { code: result.code, message: result.error } }, 'Chưa cập nhật: '), ...ignored };
+        return { error: result.error, ...ignored };
       }
 
       const bookings = [result.booking, ...result.groupBookings];
@@ -811,6 +850,7 @@ async function executeTool(toolName, params, context) {
         bookings,
         count: bookings.length,
         snapshot: result.snapshot,
+        ...ignored,
         // Ghi chú luôn thay bằng nội dung mới → trả trước / sau để AI trích lại cho người dùng
         ...(change.notes !== undefined && { notes: { before: booking.notes || '', after: result.booking.notes || '' } })
       };
@@ -1271,9 +1311,15 @@ ${employeesStr}
   - Lệnh dạng "Tour" + ngày + danh sách tên nhân viên (VD: "Tour 12/06: 1.Hân 2.Trang 3.Nị"), HOẶC lệnh CHỈ liệt kê tên nhân viên nối tiếp nhau (cách nhau bằng dấu cách/xuống dòng/phẩy) mà KHÔNG có giờ hẹn, tên khách hay dịch vụ → gọi set_staff_duty NGAY, KHÔNG gọi tool nào khác trước. Trích orderedStaffNames theo đúng thứ tự xuất hiện (bỏ số thứ tự "1.", "2." và dòng phân cách "---", "==="). Nhân viên hiện đang ở chi nhánh khác vẫn có thể xuất hiện trong danh sách — hệ thống sẽ tự chuyển họ sang chi nhánh hiện tại, không cần hỏi lại.
   - Lệnh xóa/bỏ lịch trực tour trong ngày (VD: "bỏ tour hôm nay", "xóa lịch trực tour, cho tất cả đi làm bình thường") → gọi set_staff_duty với orderedStaffNames: [] (mảng rỗng). KHÔNG được trả lời là đã xóa nếu không gọi tool này.
   - Tìm lịch → search_bookings
+  - Nhiều khách cùng lúc (VD "2 kl", "3 khách", "2yvv") → gọi create_booking ĐÚNG 1 LẦN với num_guests = số khách (hệ thống tự tạo nhóm). KHÔNG gọi create_booking nhiều lần cho từng khách, KHÔNG tự đặt tên kiểu "Khách Lạ (2)".
   - Tạo lịch → gọi create_booking NGAY (service_id và id nhân viên lấy từ DỮ LIỆU SPA). create_booking tự kiểm tra lịch trống và tự xếp nhân viên theo thứ tự tour → KHÔNG gọi get_spa_context hay get_available_staff trước.
   - Sửa lịch hoặc lệnh có tên khách + dịch vụ không có giờ → search_bookings → update_booking (dịch vụ/nhân viên lấy từ DỮ LIỆU SPA; update_booking tự chặn trùng lịch). Chỉ tạo mới nếu không tìm thấy lịch.
   - update_booking trên lịch nhóm: mặc định cả nhóm (VD "dời nhóm chị Mia sang 16h" → 1 lần gọi, KHÔNG hỏi lại); người dùng chỉ rõ 1 khách ("chỉ khách này", "1 người trong nhóm") → scope: "booking". Dời sang ngày khác → booking_date.
+  - update_booking CHỈ gửi start_time / booking_date khi người dùng YÊU CẦU dời giờ / ngày (có giờ như "18h50", "6g", "lùi 30p" hoặc ngày). Đổi dịch vụ, tên khách, ghi chú → KHÔNG gửi start_time, lịch giữ giờ cũ.
+  - Dãy số đứng riêng (VD "4050", "1568") là số trong SĐT khách, KHÔNG BAO GIỜ là giờ. Giờ luôn có h / g / : / "giờ".
+  - Người dùng nêu tên khách (+ vài số SĐT) cho lịch đã có (VD trả lời thẻ lịch: "Chị Linh - 4050 - 2yvv") → update_booking với customer_name="Chị Linh", phone_hint="4050" (+ service_id theo mã "yvv"). KHÔNG ghi tên / SĐT vào notes.
+  - update_booking trả ignored_start_time → giờ đó KHÔNG được lưu. Nói rõ lý do (reason) cho người dùng, nêu giờ lịch đang giữ, và hỏi giờ mới nếu họ muốn dời. KHÔNG báo là đã dời giờ.
+  - update_booking trả needs_contact_choice:true → CHƯA lưu gì. Liệt kê các hồ sơ trong candidates (tên + SĐT) và hỏi là ai. Người dùng chọn → gọi lại update_booking với customer_name + phone_hint là SĐT đầy đủ của hồ sơ đó.
   - Sửa ghi chú: notes là TOÀN BỘ ghi chú mới, thay hẳn ghi chú cũ (ghi chú hiện tại có trong search_bookings). Thêm ý mới → gửi ghi chú cũ + ý mới. Trả lời PHẢI nêu ghi chú trước → sau (lấy từ notes.before / notes.after của kết quả).
   - Khách đến/tới/vô/vào spa → search_bookings → check_in_booking. KHÔNG tạo lịch mới. Lịch nhóm: mặc định cả nhóm; chỉ 1 khách trong nhóm tới → scope: "booking" (chưa rõ khách nào → hỏi, nêu NV / giờ / dịch vụ từng khách).
   - Hủy lịch → search_bookings → delete_booking. Lịch nhóm: mặc định cả nhóm; chỉ hủy 1 khách trong nhóm → scope: "booking" (chưa rõ khách nào → hỏi, nêu NV / giờ / dịch vụ từng khách).

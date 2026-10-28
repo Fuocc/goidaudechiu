@@ -117,8 +117,8 @@ async function insertFixture({ employeeId = null, bedId = null, branchId = ctx.b
 }
 
 /** Ghi thẳng 1 hồ sơ khách mẫu (tên mang TEST_PREFIX → được dọn cùng dữ liệu test). */
-async function insertCustomer(name) {
-  const { data, error } = await supabase.from('customers').insert({ name: TEST_PREFIX + name, phone: nextPhone() }).select('*').single();
+async function insertCustomer(name, phone = nextPhone()) {
+  const { data, error } = await supabase.from('customers').insert({ name: TEST_PREFIX + name, phone }).select('*').single();
   if (error) throw error;
   return data;
 }
@@ -215,7 +215,8 @@ async function bookingRow(id) {
 }
 
 /** Gọi đúng hàm tool mà AI dùng (không qua Gemini → kết quả xác định). */
-function aiTool(name, params) {
+/** chat: { command, conversation_history } như AI chat gửi lên (không truyền = tool gọi ngoài chat). */
+function aiTool(name, params, chat) {
   const { executeTool } = require('../routes/bookingCommandsV2');
   if (typeof executeTool !== 'function') throw new Error('routes/bookingCommandsV2 chưa export executeTool');
   return executeTool(name, params, {
@@ -224,7 +225,7 @@ function aiTool(name, params) {
     todayDateStr: TODAY,
     dbBranches: ctx.allBranches,
     canManageStaff: true,
-    req: { app: { get: () => () => { } }, auth: { id: 'test-admin', role: 'admin', level: 2 } }
+    req: { app: { get: () => () => { } }, auth: { id: 'test-admin', role: 'admin', level: 2 }, body: chat }
   });
 }
 

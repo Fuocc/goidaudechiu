@@ -1329,3 +1329,98 @@ describe('AI dồn lịch của nhân viên nghỉ', () => {
     assert.ok(rowNext.employee_id && rowNext.employee_id !== from.id, 'lịch chưa bắt đầu sang NV khác');
   });
 });
+
+// 28/10 — AI gắn khách đặt (Contact) qua update_booking: tên + vài số SĐT (ROADMAP › "Group rules" › AI tools)
+describe('AI sửa lịch: gắn khách đặt theo tên + số SĐT', () => {
+  async function groupOfTwo() {
+    const groupId = crypto.randomUUID();
+    const a = await h.insertFixture({ employeeId: h.employee(0).id, bedId: h.ctx.beds[0].id, start: '14:00', end: '15:00', name: 'Khách Lạ', groupId, notes: 'Ghi chú cũ' });
+    const b = await h.insertFixture({ employeeId: h.employee(1).id, bedId: h.ctx.beds[1].id, start: '14:00', end: '15:00', name: 'Khách Lạ', groupId, notes: 'Ghi chú cũ' });
+    return { a, b };
+  }
+
+  test('tên + số SĐT khớp đúng 1 hồ sơ → cả nhóm gắn hồ sơ đó, ghi chú giữ nguyên', T, async () => {
+    const linh = await h.insertCustomer('AI Linh');
+    const { a, b } = await groupOfTwo();
+    const r = await h.aiTool('update_booking', { booking_id: a.id, customer_name: linh.name, phone_hint: linh.phone.slice(-4) });
+    assert.equal(aiOk(r), true, JSON.stringify(r));
+    for (const id of [a.id, b.id]) {
+      const row = await h.bookingRow(id);
+      assert.equal(row.customer_id, linh.id);
+      assert.equal(row.temporary_name, null);
+      assert.equal(row.notes, 'Ghi chú cũ', 'tên không vào ghi chú');
+    }
+  });
+
+  test('tên + số SĐT khớp từ 2 hồ sơ → chưa lưu gì, trả các hồ sơ (tên + SĐT) để hỏi lại', T, async () => {
+    const one = await h.insertCustomer('AI Linh Twin');
+    const two = await h.insertCustomer('AI Linh Twin', `0988${one.phone.slice(-6)}`);
+    const { a } = await groupOfTwo();
+    const r = await h.aiTool('update_booking', { booking_id: a.id, customer_name: one.name, phone_hint: one.phone.slice(-4) });
+    assert.equal(aiOk(r), false, JSON.stringify(r));
+    assert.equal(r.needs_contact_choice, true, JSON.stringify(r));
+    assert.deepEqual(r.candidates.map(c => c.customer_id).sort(), [one.id, two.id].sort());
+    assert.ok(r.candidates.every(c => c.phone), 'mỗi hồ sơ kèm SĐT');
+    const row = await h.bookingRow(a.id);
+    assert.equal(row.customer_id, null, 'chưa lưu gì');
+    assert.equal(row.temporary_name, a.temporary_name);
+  });
+
+  test('chỉ khách này (lịch trong nhóm) + tên khớp hồ sơ → khách đó mang tên riêng, không gắn hồ sơ khác; khách kia giữ nguyên', T, async () => {
+    const linh = await h.insertCustomer('AI Linh Solo');
+    const { a, b } = await groupOfTwo();
+    const r = await h.aiTool('update_booking', { booking_id: a.id, scope: 'booking', guest_confirmed: true, customer_name: linh.name, phone_hint: linh.phone.slice(-4) });
+    assert.equal(aiOk(r), true, JSON.stringify(r));
+    const rowA = await h.bookingRow(a.id);
+    assert.equal(rowA.customer_id, null, 'không gắn 1 khách trong nhóm vào hồ sơ khác');
+    assert.equal(rowA.temporary_name, linh.name);
+    const rowB = await h.bookingRow(b.id);
+    assert.equal(rowB.temporary_name, b.temporary_name);
+    assert.equal(rowB.customer_id, null);
+  });
+
+  test('tên không khớp hồ sơ nào → cả nhóm mang tên riêng đó, ghi chú giữ nguyên', T, async () => {
+    const { a, b } = await groupOfTwo();
+    const name = h.TEST_PREFIX + 'AI Không Có Hồ Sơ';
+    const r = await h.aiTool('update_booking', { booking_id: a.id, customer_name: name, phone_hint: '0000' });
+    assert.equal(aiOk(r), true, JSON.stringify(r));
+    for (const id of [a.id, b.id]) {
+      const row = await h.bookingRow(id);
+      assert.equal(row.temporary_name, name);
+      assert.equal(row.customer_id, null);
+      assert.equal(row.notes, 'Ghi chú cũ');
+    }
+  });
+});
+
+// 28/10 — AI không tự dời giờ khi người dùng không nói giờ (VD SĐT "4050" bị đọc thành 18:50); "Vẫn lưu" lọc y vậy
+describe('AI sửa lịch: giờ người dùng không nói', () => {
+  const hhmm = (t) => String(t).slice(0, 5);
+
+  test('lời người dùng không nói giờ → giữ giờ cũ, vẫn đổi dịch vụ, kết quả nêu lý do bỏ giờ', T, async () => {
+    const a = await h.insertFixture({ employeeId: h.employee(0).id, bedId: h.ctx.beds[0].id, start: '14:00', end: '15:00', name: 'AI Không Giờ' });
+    const r = await h.aiTool('update_booking', { booking_id: a.id, start_time: '18:50', service_id: h.service('Ý vội vàng').id },
+      { command: 'Chị Linh - 4050 - 2yvv', conversation_history: [] });
+    assert.equal(aiOk(r), true, JSON.stringify(r));
+    const row = await h.bookingRow(a.id);
+    assert.equal(hhmm(row.start_time), '14:00', 'giữ giờ cũ');
+    assert.equal(row.service_id, h.service('Ý vội vàng').id, 'vẫn đổi dịch vụ');
+    assert.equal(r.ignored_start_time?.sent, '18:50', JSON.stringify(r));
+    assert.equal(typeof r.ignored_start_time?.reason, 'string');
+  });
+
+  test('"dời 16h" bị chặn → "vẫn lưu" kèm token (giờ ở lượt trước) → lưu 16:00', T, async () => {
+    const a = await h.insertFixture({ employeeId: h.employee(0).id, bedId: h.ctx.beds[0].id, start: '14:00', end: '15:00', name: 'AI Vẫn Lưu' });
+    await h.insertFixture({ employeeId: h.employee(0).id, bedId: h.ctx.beds[2].id, start: '16:30', end: '17:30', name: 'AI Vẫn Lưu busy' });
+    const params = { booking_id: a.id, start_time: '16:00', employee_id: h.employee(0).id };
+    const blocked = await h.aiTool('update_booking', params, { command: 'dời 16h', conversation_history: [] });
+    assert.equal(aiOk(blocked), false, JSON.stringify(blocked));
+    assert.equal(typeof blocked.confirm_token, 'string', JSON.stringify(blocked));
+    const saved = await h.aiTool('update_booking', { ...params, confirm_token: blocked.confirm_token }, {
+      command: 'vẫn lưu',
+      conversation_history: [{ role: 'user', text: 'dời 16h' }, { role: 'model', text: 'NV đang bận. Vẫn lưu?' }]
+    });
+    assert.equal(aiOk(saved), true, JSON.stringify(saved));
+    assert.equal(hhmm((await h.bookingRow(a.id)).start_time), '16:00');
+  });
+});

@@ -16,6 +16,12 @@ _Avoid_: group booking, nhóm lịch
 The person a Group is booked under (name, phone, customer profile), e.g. "Miss Mia". Every guest in the Group carries the Contact unless given their own name; the others are shown as "Friend of Miss Mia".
 _Avoid_: lead guest, main customer, khách chính
 
+## Staff
+
+**Home branch**:
+The one branch a therapist belongs to at a time. A therapist works at a branch on a given day only if it is their Home branch and they have a shift that day.
+_Avoid_: "works at" for a branch the therapist is only covering for a day
+
 ## Opening hours
 
 **Last booking time**:
