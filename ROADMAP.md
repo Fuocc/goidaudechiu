@@ -24,7 +24,8 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done. Update this file as work 
 - Staff create with no therapist chosen and nobody free → warn; "Vẫn lưu" saves it **unassigned** (shown in a "Chưa xếp NV" column).
 - AI overlap (create, move, edit, late check-in): the AI refuses and asks "Vẫn lưu?" in chat. Saving needs a one-time server token tied to that exact change (valid 5 min), so the model can't skip the question. Logged-in staff only. If confirmation is turned off in Settings, the AI saves like the calendar does.
 - AI moves a booking to another branch: keep the therapist if they work at the new branch that day and are free; otherwise pick a free, on-shift therapist + free bed there (tour order, no buffer). Nobody free → blocked (`no_employee`), booking unchanged; "Vẫn lưu" with the confirm token saves it unassigned, like staff (spec #8, agreed 28/10). The bed is always re-picked for the new branch.
-- Undo restores the previous state without an overlap question.
+- Undo restores the previous state without an overlap question. Time, therapist, bed and branch go back through the booking engine: the old therapist is restored exactly (overlap accepted); the old bed is kept if free, otherwise another free bed is picked, so a bed is never double-booked (agreed 28/10). Undo of an AI create still deletes the rows it created.
+- AI reassign (therapist off sick, moved branch): moves that therapist's `pending` / `confirmed` Bookings of the day and online holds to the chosen therapist if free, otherwise the first free on-shift therapist (tour order), keeping each start time. `arrived` and `completed` Bookings keep their therapist (history / treatment in progress; staff change those by hand). Nobody free → that Booking stays and is reported (agreed 28/10).
 
 ### Group rules (agreed 23/10)
 
@@ -90,7 +91,7 @@ Rules: "Group rules" and "Time limits" above. One fresh session per ticket (`/im
 | 2 | [x] #10 Staff move a Group (Cả nhóm / Chỉ khách này) (24/10; check-in guard tests from #9 ran and passed) · [x] #11 Start-time limits (24/10; Last booking time = `close`, midnight refused, fallback 08:00–20:00) | #9 done |
 | 3 | [x] #12 Staff group-wide fields (26/10; Contact rule + chosen-therapist rule added to "Group rules"; AI branch change still its own logic, moves to #15) · [x] #13 Cancel as status (26/10; cancel + status with scope, leaving cancelled through the engine, Cả nhóm skips arrived / completed; no status buttons yet, they come with §7) · [x] #14 Check-in scope + Late arrival grace (24/10; real-app check, AI confirm-token scope fix + its guard test, and the AI guest list when the guest is unclear carried to #15) | #12, #13: #10 done · #14: #10 and #11 done |
 | 4 | [x] #15 AI update_booking through the module (28/10; allow-list, notes replace before → after, one token per Group, guest list when unclear for update / check-in / cancel, check-in token on normalised scope; real-app check incl. #14's; multi-service per Booking left for its own ticket) | #12 and #11 done |
-| 5 | [ ] #16 Undo + AI reassign through the module | #15 and #13 done |
+| 5 | [x] #16 Undo + AI reassign through the module (28/10; Undo restores through the booking engine — old therapist exact, bed re-picked if taken, never asks; reassign skips arrived / completed; real-app check of AI Group move / cancel + Undo) | #15 and #13 done |
 
 Running tickets in parallel:
 - **Never run `npm run test:guard` in two sessions at once.** Every guard test wipes all `TEST-GUARD · ` data in the one shared Supabase, so parallel runs delete each other's fixtures. Code in parallel; take turns running the guard suite.

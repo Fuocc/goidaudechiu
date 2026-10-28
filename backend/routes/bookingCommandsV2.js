@@ -8,7 +8,7 @@ const { hasRole } = require('../middleware/auth');
 const { loadTourOrder, sortByTourOrder } = require('../lib/tourOrder');
 const { signUndoAction } = require('../lib/undoToken');
 const { checkInBooking } = require('../lib/checkIn');
-const { changeBooking, changeStatus } = require('../lib/bookingChange');
+const { changeBooking, changeStatus, reassignEmployee } = require('../lib/bookingChange');
 const { toBookingChange, normalizeScope, guestChoice } = require('../lib/aiBookingChange');
 const { placeBookings, withMessages, summarizeConflicts } = require('../lib/bookingEngine');
 const { branchDayHours } = require('../lib/branchHours');
@@ -770,113 +770,6 @@ async function executeTool(toolName, params, context) {
       return { success: true, count: created.length, bookings: created };
     }
 
-    // case 'create_booking': {
-    //   const { num_guests = 1, ...bookingParams } = params;
-    //   const broadcast = context.req.app.get('broadcastSSE') || (() => {});
-
-    //   // Better handle for edge cases like 3cb17, 2ng, 3kh
-    //   // if (bookingParams.notes) {
-    //   //   bookingParams.notes = bookingParams.notes.replace(/^\d+(ng|kh|khách)?\s*/i, '');
-    //   // }
-
-    //   // Walk-in: round to nearest 5 minutes
-    //   if (params.is_walk_in && params.start_time) {
-    //     const [h, m] = params.start_time.split(':').map(Number);
-    //     const totalMinutes = h * 60 + m;
-    //     const rounded = Math.ceil(totalMinutes / 5) * 5;
-    //     bookingParams.start_time = `${String(Math.floor(rounded / 60)).padStart(2, '0')}:${String(rounded % 60).padStart(2, '0')}`;
-    //   }
-
-    //   // Look up service durations from DB
-    //   let duration = params.duration_minutes || 0;
-    //   let serviceNames = [];
-
-    //   if (!params.duration_minutes) {
-    //     const allServiceIds = [params.service_id, ...(params.extra_service_ids || [])].filter(Boolean);
-    //     const { data: services } = await supabase
-    //       .from('services')
-    //       .select('id, name, duration_minutes')
-    //       .in('id', allServiceIds);
-
-    //     if (services?.length) {
-    //       duration = services.reduce((sum, s) => sum + (s.duration_minutes || 0), 0);
-    //       serviceNames = services.map(s => s.name);
-    //     }
-    //   }
-
-    //   if (serviceNames.length > 1 && !bookingParams.notes) {
-    //     bookingParams.notes = serviceNames.join(' + ');
-    //   }
-
-    //   if (!duration) duration = 60;
-    //   delete bookingParams.extra_service_ids;
-    //   delete bookingParams.employee_ids;
-
-    //   // Compute end_time
-    //   if (bookingParams.start_time) {
-    //     const [h, m] = bookingParams.start_time.split(':').map(Number);
-    //     const endMinutes = h * 60 + m + duration;
-    //     bookingParams.end_time = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
-    //   }
-
-    //   // Resolve requested staff
-    //   const requestedIds = params.employee_ids || [];
-    //   const lockedIds = new Set(requestedIds.filter(Boolean));
-
-    //   // Fetch available staff excluding locked and busy
-    //   const { data: onDutyStaff } = await supabase
-    //     .from('employee_schedules')
-    //     .select('employee_id, employees!inner(id, name, branch_id)')
-    //     .eq('date', bookingParams.booking_date)
-    //     .eq('is_day_off', false)
-    //     .eq('employees.branch_id', branch_id)
-    //     .eq('employees.is_active', true);
-
-    //   const { data: overlapping } = await supabase
-    //     .from('bookings')
-    //     .select('employee_id')
-    //     .eq('booking_date', bookingParams.booking_date)
-    //     .eq('branch_id', branch_id)
-    //     .neq('status', 'cancelled')
-    //     .lt('start_time', bookingParams.end_time)
-    //     .gt('end_time', bookingParams.start_time);
-
-    //   const busyIds = new Set(overlapping?.map(b => b.employee_id) || []);
-    //   const availableStaff = onDutyStaff
-    //     ?.filter(s => !busyIds.has(s.employee_id) && !lockedIds.has(s.employee_id))
-    //     .map(s => s.employee_id) || [];
-
-    //   // Block if not enough staff for auto-assignment
-    //   const autoNeeded = num_guests - lockedIds.size;
-    //   if (availableStaff.length < autoNeeded) {
-    //     return {
-    //       success: false,
-    //       blocked: true,
-    //       reason: `Không đủ nhân viên rảnh. Cần ${autoNeeded} nhân viên tự động nhưng chỉ còn ${availableStaff.length} trống.`
-    //     };
-    //   }
-
-    //   // Build rows
-    //   const group_booking_id = num_guests > 1 ? crypto.randomUUID() : null;
-    //   let autoIndex = 0;
-    //   const rows = Array.from({ length: num_guests }, (_, i) => ({
-    //     ...bookingParams,
-    //     branch_id,
-    //     group_booking_id,
-    //     employee_id: requestedIds[i] || availableStaff[autoIndex++]
-    //   }));
-
-    //   const { data: inserted, error } = await supabase
-    //     .from('bookings')
-    //     .insert(rows)
-    //     .select('*, employees(name), services(name), branches(name)');
-
-    //   if (error) return { error: error.message };
-    //   inserted.forEach(b => broadcast('booking.created', b));
-
-    //   return { success: true, count: inserted.length, bookings: inserted };
-    // }
-
     case 'update_booking': {
       // Adapter mỏng quanh Booking change: cùng quy tắc nhóm, giờ, chi nhánh, vướng mắc như trên lịch (spec #8)
       const broadcast = context.req.app.get('broadcastSSE') || (() => { });
@@ -1144,63 +1037,17 @@ async function executeTool(toolName, params, context) {
   }
 
     case 'reassign_staff_bookings': {
-    const broadcast = context.req.app.get('broadcastSSE') || (() => { });
-    const targetDate = params.date || todayDateStr;
-    const fromId = params.from_employee_id;
-    if (!fromId) return { error: 'Thiếu from_employee_id.' };
-
-    const { data: bookingsToMove, error: fetchErr } = await supabase
-      .from('bookings')
-      .select('id, start_time, end_time, employee_id, branch_id, bed_id')
-      .eq('booking_date', targetDate)
-      .eq('employee_id', fromId)
-      .neq('status', 'cancelled')
-      .order('start_time', { ascending: true });
-
-    if (fetchErr) return { error: fetchErr.message };
-    if (!bookingsToMove || bookingsToMove.length === 0) {
+    // Adapter mỏng quanh Booking change: chỉ dồn lịch chưa bắt đầu, khách đã đến / đã xong giữ NV (ROADMAP › Booking rules)
+    if (!params.from_employee_id) return { error: 'Thiếu from_employee_id.' };
+    const { moved, unassignedIds: unassigned } = await reassignEmployee(supabase, {
+      source: 'ai',
+      fromEmployeeId: params.from_employee_id,
+      toEmployeeId: params.to_employee_id || null,
+      date: params.date || todayDateStr,
+      broadcast: context.req.app.get('broadcastSSE') || (() => { })
+    });
+    if (!moved.length && !unassigned.length) {
       return { success: true, moved: 0, message: 'Nhân viên này không có lịch hẹn nào cần chuyển trong ngày.' };
-    }
-
-    // Mỗi lịch: người nhận được chỉ định nếu rảnh + trong ca, không thì người rảnh đầu tiên theo tour
-    // (trừ chính người đang nghỉ). Ghi qua booking engine → không bao giờ dồn thành lịch chồng nhau.
-    const moved = [];
-    const unassigned = [];
-
-    for (const booking of bookingsToMove) {
-      const result = await placeBookings(supabase, {
-        source: 'ai',
-        branchId: booking.branch_id,
-        date: targetDate,
-        items: [{
-          ref: booking.id,
-          start: String(booking.start_time).slice(0, 5),
-          end: String(booking.end_time).slice(0, 5),
-          employeeId: params.to_employee_id || null,
-          autoEmployee: true,
-          fallbackAuto: true,
-          excludeEmployeeIds: [fromId],
-          bedId: booking.bed_id,
-          skipStartLimit: true // chỉ đổi NV, giờ bắt đầu giữ nguyên
-        }],
-        excludeIds: [booking.id],
-        build: (assignments) => ({
-          updates: assignments.map(a => ({ id: a.ref, set: { employee_id: a.employee_id, bed_id: a.bed_id } }))
-        })
-      });
-
-      if (!result.ok) {
-        unassigned.push(booking.id);
-        continue;
-      }
-
-      const { data: updated } = await supabase
-        .from('bookings')
-        .select('*, employees(name), services(name), branches(name)')
-        .eq('id', booking.id)
-        .single();
-      if (updated) broadcast('booking.updated', updated);
-      moved.push({ booking_id: booking.id, new_employee_id: result.assignments[0].employee_id });
     }
 
     return {
@@ -1622,4 +1469,5 @@ ${employeesStr}
 
 // Cho test tích hợp (integration/bookingGuard.spec.js) gọi đúng tool AI mà không qua Gemini
 router.executeTool = executeTool;
+router.buildAction = buildAction;
 module.exports = router;

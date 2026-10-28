@@ -420,3 +420,89 @@ test('hủy Cả nhóm bắt đầu từ khách đã đến / đã xong → bỏ
   const one = planStatusChange({ booking: groupA({ status: 'arrived' }), group: [groupB()], status: 'cancelled', scope: 'booking' });
   assert.deepEqual(idsOf(one), ['A']);
 });
+
+// --- Hoàn tác (#16): khôi phục trạng thái trước thao tác của AI, đổi vị trí thì qua booking engine ---
+const { planRestore } = require('./bookingChange');
+
+test('hoàn tác lịch đã dời giờ + đổi NV → về đúng giờ + NV cũ qua booking engine, giữ giường cũ nếu trống, không hỏi giờ nhận khách', () => {
+  const snapshot = booking();
+  const current = booking({ start_time: '17:00:00', end_time: '18:00:00', employee_id: 'e2', bed_id: 'bed2' });
+  const plan = planRestore([{ current, snapshot }]);
+  assert.equal(only(plan).placementChanged, true);
+  assert.deepEqual(only(plan).set, { employee_id: 'e1', bed_id: 'bed1', start_time: '15:00:00', end_time: '16:00:00' });
+  assert.deepEqual(plan.batches, [{
+    branchId: 'br1', date: '2026-11-09',
+    items: [{ ref: 'bk1', start: '15:00:00', end: '16:00:00', employeeId: 'e1', bedId: 'bed1', name: null, skipStartLimit: true }]
+  }]);
+});
+
+test('hoàn tác hủy (cancelled → confirmed) → lịch chiếm lại chỗ cũ, qua booking engine', () => {
+  const plan = planRestore([{ current: booking({ status: 'cancelled' }), snapshot: booking() }]);
+  assert.deepEqual(only(plan).set, { status: 'confirmed' });
+  assert.equal(only(plan).placementChanged, true);
+  assert.equal(plan.batches[0].items[0].employeeId, 'e1');
+});
+
+test('hoàn tác chỉ ghi chú / dịch vụ / về trạng thái hủy → ghi thẳng, không qua booking engine', () => {
+  const notes = planRestore([{ current: booking({ notes: 'Mới', service_id: 's2', total_price: 1 }), snapshot: booking() }]);
+  assert.deepEqual(only(notes).set, { service_id: 's1', total_price: 300000, notes: 'Ghi chú cũ' });
+  assert.equal(only(notes).placementChanged, false);
+  assert.deepEqual(notes.batches, []);
+
+  // Về trạng thái hủy thì giải phóng chỗ, kể cả khi giờ cũng đổi
+  const cancel = planRestore([{ current: booking({ start_time: '17:00:00' }), snapshot: booking({ status: 'cancelled' }) }]);
+  assert.equal(only(cancel).placementChanged, false);
+  assert.deepEqual(only(cancel).set, { start_time: '15:00:00', status: 'cancelled' });
+});
+
+test('hoàn tác nhóm ở nhiều chi nhánh / ngày → 1 lệnh booking engine cho mỗi (chi nhánh, ngày)', () => {
+  const plan = planRestore([
+    { current: booking({ id: 'A', start_time: '17:00:00' }), snapshot: booking({ id: 'A' }) },
+    { current: booking({ id: 'B', booking_date: '2026-11-10' }), snapshot: booking({ id: 'B' }) },
+    { current: booking({ id: 'C', branch_id: 'br2' }), snapshot: booking({ id: 'C', branch_id: 'br3' }) }
+  ]);
+  assert.deepEqual(plan.batches.map(b => [b.branchId, b.date, b.items.map(it => it.ref)]), [
+    ['br1', '2026-11-09', ['A', 'B']],
+    ['br3', '2026-11-09', ['C']]
+  ]);
+});
+
+test('hoàn tác bỏ qua trạng thái lạ và field ngoài danh sách khôi phục', () => {
+  const plan = planRestore([{ current: booking(), snapshot: booking({ status: 'deleted', bed_id: 'bed1', created_at: 'x', hold_expires_at: 'y' }) }]);
+  assert.deepEqual(only(plan).set, {});
+  assert.equal(only(plan).placementChanged, false);
+});
+
+// --- AI dồn lịch của 1 NV (#16) — ROADMAP › "Booking rules" (AI reassign) ---
+const { planReassign } = require('./bookingChange');
+
+test('dồn lịch: chỉ lịch chưa bắt đầu (pending / confirmed, kể cả giữ chỗ); NV nhận nếu rảnh, không thì tự xếp theo tour, trừ NV nghỉ; giữ giờ bắt đầu', () => {
+  const plan = planReassign({
+    bookings: [
+      booking({ id: 'done', status: 'completed', start_time: '09:00:00', end_time: '10:00:00' }),
+      booking({ id: 'now', status: 'arrived', start_time: '12:30:00', end_time: '14:00:00' }),
+      booking({ id: 'next', status: 'confirmed' }),
+      booking({ id: 'hold', status: 'pending', start_time: '16:30:00', end_time: '17:30:00', internal_note: 'GIỮ CHỖ TẠM THỜI' }),
+      booking({ id: 'gone', status: 'cancelled' })
+    ],
+    fromEmployeeId: 'e1',
+    toEmployeeId: 'e2'
+  });
+  assert.deepEqual(plan.map(p => p.ref), ['next', 'hold']);
+  assert.deepEqual(plan[0], {
+    ref: 'next', branchId: 'br1', date: '2026-11-09', start: '15:00:00', end: '16:00:00',
+    employeeId: 'e2', autoEmployee: true, fallbackAuto: true, excludeEmployeeIds: ['e1'], bedId: 'bed1', skipStartLimit: true
+  });
+
+  const auto = planReassign({ bookings: [booking()], fromEmployeeId: 'e1' });
+  assert.equal(auto[0].employeeId, null, 'không chỉ định người nhận → tự xếp');
+});
+
+test('hoàn tác: booking engine chỉ bỏ qua lịch đang được xếp lại hoặc về trạng thái hủy; khách không đổi vị trí vẫn giữ giường của mình', () => {
+  const plan = planRestore([
+    { current: booking({ id: 'A', start_time: '17:00:00', end_time: '18:00:00' }), snapshot: booking({ id: 'A' }) },
+    { current: booking({ id: 'B', notes: 'Mới', bed_id: 'bed2' }), snapshot: booking({ id: 'B', bed_id: 'bed2' }) },
+    { current: booking({ id: 'C', bed_id: 'bed3' }), snapshot: booking({ id: 'C', bed_id: 'bed3', status: 'cancelled' }) }
+  ]);
+  assert.deepEqual(plan.excludeIds, ['A', 'C']);
+});

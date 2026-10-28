@@ -13,8 +13,8 @@ const {
   releaseActiveHoldsForIp, checkSlotBudget, computeSpamFlag
 } = require('../lib/antiSpam');
 const { checkInBooking } = require('../lib/checkIn');
-const { changeBooking, changeStatus } = require('../lib/bookingChange');
-const { UNDO_RESTORE_FIELDS, UNDO_MAX_AGE_MS, fingerprintRow, verifyUndoAction } = require('../lib/undoToken');
+const { changeBooking, changeStatus, restoreBookings } = require('../lib/bookingChange');
+const { UNDO_MAX_AGE_MS, fingerprintRow, verifyUndoAction } = require('../lib/undoToken');
 
 // ---- Kiểm tra dữ liệu đầu vào (dùng cho request từ landing page / chưa đăng nhập) ----
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -526,12 +526,11 @@ router.delete('/hold', async (req, res) => {
  * Hoàn tác các thao tác của AI chat. Body: { actions: [{ type, booking_ids, snapshot?, after, iat, uid, sig }] }
  * Action phải do chính server ký lúc AI thực hiện (xem lib/undoToken.js) — client không tự tạo/sửa được.
  *  - type 'create'                      → xóa các lịch vừa tạo (chỉ lịch tạo trong 24h và chưa hoàn thành)
- *  - type 'update' | 'check_in' | 'cancel' → khôi phục toàn bộ các trường từ snapshot (kể cả status)
+ *  - type 'update' | 'check_in' | 'cancel' → khôi phục các trường từ snapshot (kể cả status) qua Booking change:
+ *    booking engine, không hỏi "Vẫn lưu?", giường cũ đã có người → giường trống khác
  * Lịch đã bị thay đổi sau thao tác của AI (dấu vân tay khác `after`) sẽ bị bỏ qua, không ghi đè.
  * Các action được hoàn tác theo thứ tự ngược (thao tác sau cùng hoàn tác trước).
  */
-const UNDO_VALID_STATUSES = ['pending', 'confirmed', 'arrived', 'completed', 'cancelled'];
-
 router.post('/undo', async (req, res) => {
   try {
     const actions = Array.isArray(req.body?.actions) ? req.body.actions : [];
@@ -586,44 +585,21 @@ router.post('/undo', async (req, res) => {
         }
       } else if (['update', 'check_in', 'cancel'].includes(action.type)) {
         const snapshot = Array.isArray(action.snapshot) ? action.snapshot : [];
+        const rows = [];
         for (const row of snapshot) {
           // Chỉ khôi phục những lịch thuộc đúng action này
           if (!row || typeof row.id !== 'string' || !ids.includes(row.id)) continue;
-          // Đã có người sửa lịch sau thao tác của AI (hoặc đã hoàn tác rồi) → không ghi đè
+          // Đã có người sửa lịch sau thao tác của AI (hoặc đã hoàn tác rồi / đã bị xóa) → không ghi đè
           if (!unchangedSinceAction(row.id)) {
             skipped.push(row.id);
             continue;
           }
-
-          const patch = {};
-          for (const field of UNDO_RESTORE_FIELDS) {
-            if (field in row) patch[field] = row[field];
-          }
-          if (patch.status && !UNDO_VALID_STATUSES.includes(patch.status)) delete patch.status;
-          if (Object.keys(patch).length === 0) continue;
-
-          const { data: updated, error: updErr } = await supabase
-            .from('bookings')
-            .update(patch)
-            .eq('id', row.id)
-            .select(`
-              *,
-              customers(name, phone),
-              services(name, duration_minutes, price, color),
-              employees(name),
-              beds(name),
-              branches(name)
-            `)
-            .maybeSingle();
-          if (updErr) throw updErr;
-
-          if (updated) {
-            broadcast('booking.updated', updated);
-            restored.push(row.id);
-          } else {
-            skipped.push(row.id); // lịch đã bị xóa hẳn
-          }
+          rows.push({ current: currentById.get(row.id), snapshot: row });
         }
+        // Cả nhóm khôi phục trong 1 bước, qua Booking change (booking engine, không hỏi "Vẫn lưu?")
+        const { restoredIds, failedIds } = await restoreBookings(supabase, { rows, broadcast });
+        restored.push(...restoredIds);
+        skipped.push(...failedIds);
       }
     }
 

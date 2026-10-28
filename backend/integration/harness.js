@@ -228,6 +228,20 @@ function aiTool(name, params) {
   });
 }
 
+/** Gọi tool AI + tạo action hoàn tác đã ký đúng như AI chat (buildAction + signUndoAction). */
+async function aiAction(name, params) {
+  const { buildAction } = require('../routes/bookingCommandsV2');
+  const { signUndoAction } = require('../lib/undoToken');
+  const result = await aiTool(name, params);
+  const action = buildAction(name, result);
+  return { result, action: action && await signUndoAction(action, 'test-admin') };
+}
+
+/** Bấm "Hoàn tác" trên tin nhắn AI (cùng người đã ra lệnh: test-admin). */
+function undo(actions, { role = 'admin' } = {}) {
+  return http('POST', '/undo', { role, body: { actions } });
+}
+
 function aiCreate({ start, employeeId, serviceName = 'Ý dễ chịu', guests = 1, date = TEST_DATE, name = 'AI' }) {
   const params = { temporary_name: TEST_PREFIX + name, booking_date: date, start_time: start, num_guests: guests, service_id: service(serviceName).id };
   if (employeeId) params.employee_ids = [employeeId];
@@ -353,7 +367,7 @@ module.exports = {
   setup, teardown, cleanup, toMin, toHHMM, vnNowMinutes,
   service, employee, insertFixture, insertCustomer, occupyStaff,
   withHours, availableStarts,
-  onlineBook, onlineHold, staffBook, staffUpdate, staffCheckIn, staffCancel, staffStatus, bookingRow, aiTool, aiCreate,
+  onlineBook, onlineHold, staffBook, staffUpdate, staffCheckIn, staffCancel, staffStatus, bookingRow, aiTool, aiAction, undo, aiCreate,
   activeBookings, findOverlaps, getSetting, withSetting, withShift,
   otherBranch, withBedsInactive, withoutSetting, expireHolds
 };

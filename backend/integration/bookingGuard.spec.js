@@ -1208,3 +1208,124 @@ describe('AI check-in nhóm: token + hỏi khách nào', () => {
     assert.equal((await h.bookingRow(late.id)).status, 'arrived');
   });
 });
+
+// #16 — Hoàn tác thao tác AI qua Booking change (ROADMAP › "Booking rules": Undo; "Group rules": Undo)
+describe('Hoàn tác thao tác AI', () => {
+  // A 14:00–15:00 (NV 0, giường 0), B 14:30–16:00 (NV 1, giường 1), cùng nhóm
+  async function groupOfTwo() {
+    const groupId = crypto.randomUUID();
+    const a = await h.insertFixture({ employeeId: h.employee(0).id, bedId: h.ctx.beds[0].id, start: '14:00', end: '15:00', name: 'Undo A', groupId });
+    const b = await h.insertFixture({ employeeId: h.employee(1).id, bedId: h.ctx.beds[1].id, start: '14:30', end: '16:00', name: 'Undo B', groupId });
+    return { a, b };
+  }
+  const hhmm = (t) => String(t).slice(0, 5);
+  async function aiMoveGroup(a) {
+    const { result, action } = await h.aiAction('update_booking', { booking_id: a.id, start_time: '16:00' });
+    assert.equal(aiOk(result), true, JSON.stringify(result));
+    assert.ok(action?.sig, 'có action hoàn tác đã ký');
+    return action;
+  }
+
+  test('AI dời nhóm rồi Hoàn tác → mọi khách về đúng giờ, NV, giường cũ', T, async () => {
+    const { a, b } = await groupOfTwo();
+    const action = await aiMoveGroup(a);
+    const r = await h.undo([action]);
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    assert.deepEqual([...r.data.restored].sort(), [a.id, b.id].sort());
+    for (const from of [a, b]) {
+      const row = await h.bookingRow(from.id);
+      assert.equal(hhmm(row.start_time), hhmm(from.start_time));
+      assert.equal(hhmm(row.end_time), hhmm(from.end_time));
+      assert.equal(row.employee_id, from.employee_id);
+      assert.equal(row.bed_id, from.bed_id);
+    }
+  });
+
+  test('AI hủy cả nhóm rồi Hoàn tác → mọi khách về trạng thái cũ', T, async () => {
+    const { a, b } = await groupOfTwo();
+    const { result, action } = await h.aiAction('delete_booking', { booking_id: a.id });
+    assert.equal(aiOk(result), true, JSON.stringify(result));
+    const r = await h.undo([action]);
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    assert.equal((await h.bookingRow(a.id)).status, 'confirmed');
+    assert.equal((await h.bookingRow(b.id)).status, 'confirmed');
+    await assertNoOverlaps();
+  });
+
+  test('Hoàn tác bỏ qua lịch đã bị sửa sau thao tác của AI, vẫn khôi phục các lịch khác', T, async () => {
+    const { a, b } = await groupOfTwo();
+    const action = await aiMoveGroup(a);
+    const edited = await h.staffUpdate(await h.bookingRow(b.id), { notes: 'Sửa sau AI', scope: 'booking' });
+    assert.equal(edited.status, 200, JSON.stringify(edited.data));
+
+    const r = await h.undo([action]);
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    assert.deepEqual(r.data.skipped, [b.id]);
+    assert.equal(hhmm((await h.bookingRow(a.id)).start_time), '14:00');
+    const rowB = await h.bookingRow(b.id);
+    assert.equal(hhmm(rowB.start_time), '16:00', 'B giữ nguyên thay đổi mới');
+    assert.equal(rowB.notes, 'Sửa sau AI');
+  });
+
+  test('NV cũ đã có lịch khác ở giờ cũ → Hoàn tác vẫn khôi phục đúng NV, không hỏi "Vẫn lưu?"', T, async () => {
+    const { a } = await groupOfTwo();
+    const action = await aiMoveGroup(a);
+    await h.insertFixture({ employeeId: h.employee(0).id, bedId: h.ctx.beds[2].id, start: '14:00', end: '15:00', name: 'Undo taken' });
+
+    const r = await h.undo([action]);
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    const row = await h.bookingRow(a.id);
+    assert.equal(hhmm(row.start_time), '14:00');
+    assert.equal(row.employee_id, h.employee(0).id);
+  });
+
+  test('giường cũ đã có người dùng ở giờ cũ → Hoàn tác về đúng giờ + NV, lấy giường trống khác (không chồng giường)', T, async () => {
+    const { a } = await groupOfTwo();
+    const action = await aiMoveGroup(a);
+    await h.insertFixture({ employeeId: h.employee(2).id, bedId: h.ctx.beds[0].id, start: '14:00', end: '15:00', name: 'Undo bed taken' });
+
+    const r = await h.undo([action]);
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    const row = await h.bookingRow(a.id);
+    assert.equal(hhmm(row.start_time), '14:00');
+    assert.equal(row.employee_id, h.employee(0).id);
+    assert.ok(row.bed_id, 'có giường');
+    assert.notEqual(row.bed_id, h.ctx.beds[0].id, 'không chồng lên giường đang dùng');
+    await assertNoOverlaps();
+  });
+});
+
+// #16 — AI dồn lịch của 1 NV qua Booking change (ROADMAP › "Booking rules": AI reassign)
+describe('AI dồn lịch của nhân viên nghỉ', () => {
+  test('dồn sang NV rảnh; lịch không ai nhận được thì giữ nguyên và được báo lại', T, async () => {
+    const from = h.employee(0);
+    const x = await h.insertFixture({ employeeId: from.id, bedId: h.ctx.beds[0].id, start: '10:00', end: '11:00', name: 'Reassign X' });
+    const y = await h.insertFixture({ employeeId: from.id, bedId: h.ctx.beds[0].id, start: '16:00', end: '17:00', name: 'Reassign Y' });
+    for (const emp of h.ctx.employees.slice(1)) {
+      await h.insertFixture({ employeeId: emp.id, start: '16:00', end: '17:00', name: `Reassign busy ${emp.name}` });
+    }
+
+    const r = await h.aiTool('reassign_staff_bookings', { from_employee_id: from.id, date: h.TEST_DATE });
+    assert.equal(aiOk(r), true, JSON.stringify(r));
+    assert.deepEqual(r.unassigned_booking_ids, [y.id]);
+    const rowX = await h.bookingRow(x.id);
+    assert.ok(rowX.employee_id && rowX.employee_id !== from.id, 'X sang NV khác');
+    assert.equal(String(rowX.start_time).slice(0, 5), '10:00', 'giữ giờ bắt đầu');
+    assert.equal((await h.bookingRow(y.id)).employee_id, from.id, 'Y giữ nguyên');
+    await assertNoOverlaps();
+  });
+
+  test('khách đã đến / đã xong giữ NV của mình; chỉ dồn lịch chưa bắt đầu', T, async () => {
+    const from = h.employee(0);
+    const done = await h.insertFixture({ employeeId: from.id, bedId: h.ctx.beds[0].id, start: '09:00', end: '10:00', name: 'Reassign done', status: 'completed' });
+    const now = await h.insertFixture({ employeeId: from.id, bedId: h.ctx.beds[0].id, start: '12:00', end: '13:00', name: 'Reassign now', status: 'arrived' });
+    const next = await h.insertFixture({ employeeId: from.id, bedId: h.ctx.beds[0].id, start: '15:00', end: '16:00', name: 'Reassign next' });
+
+    const r = await h.aiTool('reassign_staff_bookings', { from_employee_id: from.id, date: h.TEST_DATE });
+    assert.equal(aiOk(r), true, JSON.stringify(r));
+    assert.equal((await h.bookingRow(done.id)).employee_id, from.id);
+    assert.equal((await h.bookingRow(now.id)).employee_id, from.id);
+    const rowNext = await h.bookingRow(next.id);
+    assert.ok(rowNext.employee_id && rowNext.employee_id !== from.id, 'lịch chưa bắt đầu sang NV khác');
+  });
+});

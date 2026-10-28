@@ -47,7 +47,8 @@ Run locally: `npm run dev --prefix backend` (port 3000) and `npm run dev --prefi
 ## Git
 
 - Work on `dev`. `main` only changes by merging a pull request.
-- Commit or push only when the owner asks, including inside skills: `/implement` and `/implement-spec` stop before committing and report what is ready.
+- Outside skills, commit or push only when the owner asks.
+- Matt Pocock skills (`/implement`, `/implement-spec`, …) commit to `dev` themselves once the work is approved, done and re-tested, without asking again. Stop and ask before committing only when something needs the owner's approval: a test that can't pass without changing a rule, a skipped check, a change outside the approved plan, or a decision the owner hasn't made. Pushing still needs the owner's request.
 - Commit messages are in English, in the format `feat(scope): …` or `fix(scope): …`.
 
 ## Agent skills

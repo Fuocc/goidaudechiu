@@ -163,6 +163,71 @@ function planStatusChange({ booking, status, scope, group = [] }) {
   };
 }
 
+// Field được khôi phục khi hoàn tác (cũng là field tính dấu vân tay — lib/undoToken.js)
+const RESTORE_FIELDS = [
+  'service_id', 'employee_id', 'bed_id', 'branch_id', 'customer_id', 'temporary_name',
+  'num_guests', 'booking_date', 'start_time', 'end_time', 'status', 'total_price',
+  'notes', 'internal_note', 'group_booking_id'
+];
+const RESTORE_STATUSES = ['pending', 'confirmed', 'arrived', 'completed', 'cancelled'];
+const PLACEMENT_FIELDS = ['employee_id', 'bed_id', 'branch_id', 'booking_date', 'start_time', 'end_time'];
+
+/**
+ * Bước lên kế hoạch hoàn tác (thuần): mỗi lịch { current, snapshot } → phần cần ghi để về đúng snapshot.
+ * Lịch quay lại chiếm chỗ (đổi giờ / NV / giường / chi nhánh / ngày, hoặc rời trạng thái hủy) → qua booking engine:
+ * NV cũ giữ đúng người, giường cũ giữ nếu trống, không xét lại giờ nhận khách muộn nhất.
+ * @returns {{ targets: { id, set, placementChanged }[], batches: { branchId, date, items }[], excludeIds: string[] }}
+ *   batches: 1 lệnh booking engine cho mỗi (chi nhánh, ngày) đích
+ *   excludeIds: lịch booking engine bỏ qua (đang xếp lại / về trạng thái hủy); khách không đổi vị trí vẫn giữ chỗ
+ */
+function planRestore(rows) {
+  const same = (key, a, b) => (key === 'start_time' || key === 'end_time'
+    ? toMinutes(a) === toMinutes(b)
+    : (a ?? null) === (b ?? null));
+  const targets = [];
+  const batches = [];
+  const excludeIds = [];
+  for (const { current, snapshot } of rows) {
+    const set = {};
+    for (const key of RESTORE_FIELDS) {
+      if (!(key in snapshot) || same(key, current[key], snapshot[key])) continue;
+      if (key === 'status' && !RESTORE_STATUSES.includes(snapshot.status)) continue;
+      set[key] = snapshot[key];
+    }
+    const status = set.status ?? current.status;
+    const placementChanged = status !== 'cancelled'
+      && (current.status === 'cancelled' || PLACEMENT_FIELDS.some(key => key in set));
+    targets.push({ id: current.id, set, placementChanged });
+    if (placementChanged || status === 'cancelled') excludeIds.push(current.id);
+    if (!placementChanged) continue;
+
+    const eff = { ...current, ...set };
+    let batch = batches.find(b => b.branchId === eff.branch_id && b.date === eff.booking_date);
+    if (!batch) batches.push(batch = { branchId: eff.branch_id, date: eff.booking_date, items: [] });
+    batch.items.push({
+      ref: current.id, start: eff.start_time, end: eff.end_time, employeeId: eff.employee_id,
+      bedId: eff.bed_id, name: eff.temporary_name, skipStartLimit: true
+    });
+  }
+  return { targets, batches, excludeIds };
+}
+
+/**
+ * Bước lên kế hoạch dồn lịch của 1 NV (thuần) — ROADMAP › "Booking rules" (AI reassign).
+ * Chỉ lịch chưa bắt đầu (pending / confirmed, kể cả giữ chỗ); khách đã đến / đã xong giữ NV (lịch sử, đang làm).
+ * Mỗi lịch: NV nhận nếu rảnh + trong ca, không thì người rảnh đầu tiên theo tour (trừ NV nghỉ); giữ giờ bắt đầu.
+ * @returns item booking engine cho từng lịch (mỗi lịch xếp riêng: không ai nhận lịch này vẫn dồn được lịch khác)
+ */
+function planReassign({ bookings, fromEmployeeId, toEmployeeId = null }) {
+  return bookings
+    .filter(b => b.status === 'pending' || b.status === 'confirmed')
+    .map(b => ({
+      ref: b.id, branchId: b.branch_id, date: b.booking_date, start: b.start_time, end: b.end_time,
+      employeeId: toEmployeeId || null, autoEmployee: true, fallbackAuto: true,
+      excludeEmployeeIds: [fromEmployeeId], bedId: b.bed_id, skipStartLimit: true
+    }));
+}
+
 const UPDATED_SELECT = `
   *,
   customers(name, phone, email, habits),
@@ -450,6 +515,99 @@ async function changeStatus(supabase, { source, bookingId, scope, status, confir
   };
 }
 
+/**
+ * Hoàn tác thao tác AI: đưa các lịch về đúng snapshot, không hỏi "Vẫn lưu?" (ROADMAP › "Booking rules": Undo).
+ * Mọi dòng ghi qua booking engine (khóa theo ngày, 1 lệnh cho mỗi chi nhánh + ngày đích): NV cũ giữ đúng người
+ * dù đã có lịch khác; giường cũ đã có người → lấy giường trống khác, không chồng giường.
+ * Người gọi đã lọc lịch bị sửa sau thao tác của AI (dấu vân tay — lib/undoToken.js).
+ *
+ * @param opts.rows  [{ current, snapshot }] — dòng hiện tại + dòng trước thao tác của AI
+ * @returns { restoredIds, failedIds }
+ */
+async function restoreBookings(supabase, { rows, broadcast = () => { } }) {
+  if (!rows.length) return { restoredIds: [], failedIds: [] };
+  const plan = planRestore(rows);
+  const setOf = new Map(plan.targets.map(t => [t.id, t.set]));
+  const effOf = new Map(rows.map(({ current }) => [current.id, { ...current, ...setOf.get(current.id) }]));
+  const lockDates = [...new Set(rows.flatMap(({ current }) => [current.booking_date, effOf.get(current.id).booking_date]))];
+
+  // Lịch không chiếm lại chỗ (ghi chú, dịch vụ, về trạng thái hủy…) ghi cùng lệnh đầu tiên
+  const placedIds = new Set(plan.batches.flatMap(b => b.items.map(it => it.ref)));
+  const others = plan.targets.filter(t => !placedIds.has(t.id) && Object.keys(t.set).length).map(t => t.id);
+  const [first] = rows;
+  const batches = plan.batches.length || !others.length
+    ? plan.batches
+    : [{ branchId: effOf.get(first.current.id).branch_id, date: effOf.get(first.current.id).booking_date, items: [] }];
+
+  const restoredIds = plan.targets.filter(t => !placedIds.has(t.id) && !others.includes(t.id)).map(t => t.id);
+  const failedIds = [];
+  for (const [i, batch] of batches.entries()) {
+    const ids = [...batch.items.map(it => it.ref), ...(i === 0 ? others : [])];
+    const result = await placeBookings(supabase, {
+      source: 'staff',
+      branchId: batch.branchId,
+      date: batch.date,
+      items: batch.items,
+      excludeIds: plan.excludeIds,
+      lockDates,
+      override: true, // hoàn tác không bao giờ hỏi "Vẫn lưu?"
+      build: (assignments) => {
+        const byRef = new Map(assignments.map(a => [a.ref, a]));
+        return {
+          updates: ids.map(id => {
+            const a = byRef.get(id);
+            return { id, set: a ? { ...setOf.get(id), employee_id: a.employee_id, bed_id: a.bed_id } : setOf.get(id) };
+          })
+        };
+      }
+    });
+    (result.ok ? restoredIds : failedIds).push(...ids);
+  }
+
+  if (restoredIds.length) {
+    const { data: restored, error } = await supabase.from('bookings').select(UPDATED_SELECT).in('id', restoredIds);
+    if (error) throw error;
+    (restored || []).forEach(r => broadcast('booking.updated', r));
+  }
+  return { restoredIds, failedIds };
+}
+
+/**
+ * Dồn lịch trong ngày của 1 NV (nghỉ đột xuất / chuyển chi nhánh) sang NV khác — xem planReassign.
+ * Mỗi lịch xếp riêng qua booking engine (không bao giờ thành lịch chồng nhau); không ai nhận → giữ nguyên, báo lại.
+ * @returns { moved: [{ booking_id, new_employee_id }], unassignedIds }
+ */
+async function reassignEmployee(supabase, { source, fromEmployeeId, toEmployeeId, date, broadcast = () => { } }) {
+  const { data: bookings, error } = await supabase.from('bookings').select('*')
+    .eq('booking_date', date).eq('employee_id', fromEmployeeId).neq('status', 'cancelled')
+    .order('start_time', { ascending: true });
+  if (error) throw error;
+
+  const moved = [];
+  const unassignedIds = [];
+  for (const { branchId, date: day, ...item } of planReassign({ bookings: bookings || [], fromEmployeeId, toEmployeeId })) {
+    const result = await placeBookings(supabase, {
+      source,
+      branchId,
+      date: day,
+      items: [item],
+      excludeIds: [item.ref],
+      build: (assignments) => ({
+        updates: assignments.map(a => ({ id: a.ref, set: { employee_id: a.employee_id, bed_id: a.bed_id } }))
+      })
+    });
+    if (!result.ok) {
+      unassignedIds.push(item.ref);
+      continue;
+    }
+    const { data: updated, error: selErr } = await supabase.from('bookings').select(UPDATED_SELECT).eq('id', item.ref).single();
+    if (selErr) throw selErr;
+    broadcast('booking.updated', updated);
+    moved.push({ booking_id: item.ref, new_employee_id: result.assignments[0].employee_id });
+  }
+  return { moved, unassignedIds };
+}
+
 async function rotateTour(supabase, branchId, employeeId) {
   const tourKey = `tour_order_${branchId}`;
   const { data: settingData } = await supabase.from('settings').select('value').eq('key', tourKey).maybeSingle();
@@ -460,4 +618,4 @@ async function rotateTour(supabase, branchId, employeeId) {
   await supabase.from('settings').upsert({ key: tourKey, value: tour }, { onConflict: 'key' });
 }
 
-module.exports = { planChange, planCheckIn, planStatusChange, changeBooking, changeStatus };
+module.exports = { planChange, planCheckIn, planStatusChange, planRestore, planReassign, changeBooking, changeStatus, restoreBookings, reassignEmployee, RESTORE_FIELDS };
